@@ -1,0 +1,134 @@
+from rest_framework import serializers
+from .models import Department, Employee, Attendance, LeaveType, LeaveRequest, Payroll
+
+
+class DepartmentSerializer(serializers.ModelSerializer):
+    employee_count = serializers.ReadOnlyField()
+    head_name = serializers.CharField(source='head.name', read_only=True)
+    
+    class Meta:
+        model = Department
+        fields = [
+            'id', 'name', 'description', 'head', 'head_name',
+            'employee_count', 'created_at', 'updated_at'
+        ]
+        read_only_fields = ['id', 'created_at', 'updated_at']
+
+
+class EmployeeSerializer(serializers.ModelSerializer):
+    department_name = serializers.CharField(source='department.name', read_only=True)
+    pf_employee = serializers.ReadOnlyField()
+    pf_employer = serializers.ReadOnlyField()
+    total_pf = serializers.ReadOnlyField()
+    gross_salary = serializers.ReadOnlyField()
+    
+    class Meta:
+        model = Employee
+        fields = [
+            'id', 'name', 'dob', 'gender', 'phone', 'email',
+            'department', 'department_name', 'designation', 'employment_type',
+            'join_date', 'basic_salary', 'pf_employee', 'pf_employer',
+            'total_pf', 'gross_salary', 'status', 'user',
+            'created_at', 'updated_at'
+        ]
+        read_only_fields = ['id', 'created_at', 'updated_at']
+
+
+class EmployeeCreateSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Employee
+        fields = [
+            'id', 'name', 'dob', 'gender', 'phone', 'email',
+            'department', 'designation', 'employment_type', 'join_date',
+            'basic_salary', 'status', 'user'
+        ]
+        read_only_fields = ['id']
+
+
+class AttendanceSerializer(serializers.ModelSerializer):
+    employee_name = serializers.CharField(source='employee.name', read_only=True)
+    department_name = serializers.CharField(source='employee.department.name', read_only=True)
+    hours_worked = serializers.ReadOnlyField()
+    
+    class Meta:
+        model = Attendance
+        fields = [
+            'id', 'employee', 'employee_name', 'department_name',
+            'date', 'status', 'check_in', 'check_out', 'remarks',
+            'hours_worked', 'created_at', 'updated_at'
+        ]
+        read_only_fields = ['id', 'created_at', 'updated_at']
+
+
+class BulkAttendanceSerializer(serializers.Serializer):
+    """Serializer for bulk attendance marking"""
+    date = serializers.DateField()
+    records = serializers.ListField(
+        child=serializers.DictField()
+    )
+    
+    def validate_records(self, value):
+        """Validate attendance records"""
+        for record in value:
+            if 'employee' not in record:
+                raise serializers.ValidationError("Each record must have an employee ID")
+            if 'status' not in record:
+                raise serializers.ValidationError("Each record must have a status")
+        return value
+
+
+class LeaveTypeSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = LeaveType
+        fields = [
+            'id', 'name', 'days_allowed', 'description', 'is_paid',
+            'created_at', 'updated_at'
+        ]
+        read_only_fields = ['id', 'created_at', 'updated_at']
+
+
+class LeaveRequestSerializer(serializers.ModelSerializer):
+    employee_name = serializers.CharField(source='employee.name', read_only=True)
+    leave_type_name = serializers.CharField(source='leave_type.name', read_only=True)
+    approved_by_name = serializers.CharField(source='approved_by.username', read_only=True)
+    days_requested = serializers.ReadOnlyField()
+    
+    class Meta:
+        model = LeaveRequest
+        fields = [
+            'id', 'employee', 'employee_name', 'leave_type', 'leave_type_name',
+            'start_date', 'end_date', 'reason', 'status', 'days_requested',
+            'approved_by', 'approved_by_name', 'approved_at', 'rejection_reason',
+            'created_at', 'updated_at'
+        ]
+        read_only_fields = ['id', 'approved_by', 'approved_at', 'created_at', 'updated_at']
+        extra_kwargs = {
+            'employee': {'required': False, 'allow_null': True}  # Make employee optional, will be set from current user
+        }
+    
+    def validate(self, data):
+        """Custom validation"""
+        # Validate date range
+        if 'start_date' in data and 'end_date' in data:
+            if data['end_date'] < data['start_date']:
+                raise serializers.ValidationError({
+                    'end_date': 'End date must be after start date'
+                })
+        
+        # Employee will be set in the view's perform_create method if not provided
+        return data
+
+
+class PayrollSerializer(serializers.ModelSerializer):
+    employee_name = serializers.CharField(source='employee.name', read_only=True)
+    department_name = serializers.CharField(source='employee.department.name', read_only=True)
+    
+    class Meta:
+        model = Payroll
+        fields = [
+            'id', 'employee', 'employee_name', 'department_name',
+            'month', 'year', 'basic_salary', 'allowances', 'gross_salary',
+            'deductions', 'net_salary', 'status', 'processed_date',
+            'created_at', 'updated_at'
+        ]
+        read_only_fields = ['id', 'processed_date', 'created_at', 'updated_at']
