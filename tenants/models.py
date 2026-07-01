@@ -45,6 +45,12 @@ class Tenant(models.Model):
     email = models.EmailField(blank=True)
     phone = models.CharField(max_length=20, blank=True)
     address = models.TextField(blank=True)
+    pan_vat_number = models.CharField(
+        max_length=50,
+        blank=True,
+        help_text="PAN or VAT registration number",
+    )
+    website = models.CharField(max_length=255, blank=True)
     
     # Accounting Details
     accounting_start_date = models.DateField(

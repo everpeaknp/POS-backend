@@ -282,15 +282,33 @@ class TenantViewSet(viewsets.ModelViewSet):
                 {'error': 'No active tenant found'},
                 status=status.HTTP_404_NOT_FOUND
             )
-        
-        # Only allow certain fields to be updated
-        allowed_fields = ['name', 'business_type', 'owner_name', 'email', 'phone', 'address']
+
+        tenant = request.user.tenant
+        from .membership_models import UserTenantMembership
+        from rest_framework.exceptions import PermissionDenied
+
+        membership = UserTenantMembership.objects.filter(
+            user=request.user, tenant=tenant
+        ).first()
+        is_admin = (
+            tenant.created_by_id == request.user.id
+            or (membership and membership.role == 'admin')
+            or request.user.role == 'admin'
+        )
+        if not is_admin:
+            raise PermissionDenied('Only organization admins can update settings')
+
+        allowed_fields = [
+            'name', 'business_type', 'owner_name', 'email', 'phone', 'address',
+            'pan_vat_number', 'website', 'workspace_name',
+            'accounting_start_date', 'vat_registered',
+        ]
         update_data = {k: v for k, v in request.data.items() if k in allowed_fields}
-        
-        serializer = self.get_serializer(request.user.tenant, data=update_data, partial=True)
+
+        serializer = self.get_serializer(tenant, data=update_data, partial=True)
         serializer.is_valid(raise_exception=True)
         serializer.save()
-        
+
         return Response(serializer.data)
 
 
