@@ -85,8 +85,8 @@ class TenantProfileSerializer(serializers.ModelSerializer):
     class Meta:
         model = Tenant
         fields = [
-            'id', 'name', 'slug', 'business_type', 'is_active',
-            'plan_type', 'active_modules'
+            'id', 'name', 'slug', 'workspace_name', 'email', 'business_type', 'is_active',
+            'plan_type', 'active_modules',
         ]
         read_only_fields = fields
 

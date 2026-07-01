@@ -26,6 +26,7 @@ class AppearancePreferences(models.Model):
     
     TIMEZONE_CHOICES = [
         ('UTC', 'UTC (GMT+0:00)'),
+        ('Asia/Kathmandu', 'Nepal Time (GMT+5:45)'),
         ('America/New_York', 'Eastern Time (GMT-5:00)'),
         ('America/Chicago', 'Central Time (GMT-6:00)'),
         ('America/Denver', 'Mountain Time (GMT-7:00)'),
@@ -39,6 +40,11 @@ class AppearancePreferences(models.Model):
         ('Australia/Sydney', 'Sydney (GMT+10:00)'),
     ]
     
+    DATE_CALENDAR_CHOICES = [
+        ('AD', 'Gregorian (AD)'),
+        ('BS', 'Bikram Sambat (BS)'),
+    ]
+
     user = models.OneToOneField(
         settings.AUTH_USER_MODEL,
         on_delete=models.CASCADE,
@@ -66,6 +72,13 @@ class AppearancePreferences(models.Model):
         choices=TIMEZONE_CHOICES,
         default='UTC',
         help_text='Preferred timezone'
+    )
+
+    date_calendar_system = models.CharField(
+        max_length=2,
+        choices=DATE_CALENDAR_CHOICES,
+        default='AD',
+        help_text='Preferred calendar for displaying dates'
     )
     
     # Display settings

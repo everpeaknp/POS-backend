@@ -15,6 +15,9 @@ def set_current_tenant(tenant):
     _thread_locals.tenant = tenant
 
 
+from tenants.utils import get_request_tenant
+
+
 class TenantMiddleware(MiddlewareMixin):
     """
     Middleware to identify and set the current tenant based on authenticated user.
@@ -28,7 +31,7 @@ class TenantMiddleware(MiddlewareMixin):
         tenant = None
         
         if request.user and request.user.is_authenticated:
-            tenant = getattr(request.user, 'tenant', None)
+            tenant = get_request_tenant(request.user)
         
         set_current_tenant(tenant)
         request.tenant = tenant

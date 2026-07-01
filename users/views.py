@@ -165,6 +165,65 @@ from rest_framework import permissions as drf_permissions
 from .permission_models import RolePermission, get_default_permissions, initialize_tenant_permissions
 from .serializers import PermissionsMatrixSerializer, UpdatePermissionsSerializer
 from .permissions import IsAdminOrManager
+from tenants.utils import get_request_tenant
+
+ROLE_DISPLAY_MAP = {
+    'admin': 'Admin',
+    'manager': 'Manager',
+    'supervisor': 'Supervisor',
+    'accountant': 'Accountant',
+    'cashier': 'Cashier',
+    'viewer': 'Viewer',
+}
+
+MODULE_DISPLAY_MAP = {
+    'dashboard': 'Dashboard',
+    'sales': 'Sales',
+    'purchase': 'Purchase',
+    'inventory': 'Inventory',
+    'accounting': 'Accounting',
+    'construction': 'Construction',
+    'reports': 'Reports',
+    'settings': 'Settings',
+    'hr': 'HR',
+    'pos': 'POS',
+}
+
+ACTION_DISPLAY_MAP = {
+    'view': 'View',
+    'create': 'Create',
+    'edit': 'Edit',
+    'delete': 'Delete',
+    'export': 'Export',
+    'approve': 'Approve',
+}
+
+
+def get_effective_role(user, tenant):
+    from tenants.membership_models import UserTenantMembership
+    membership = UserTenantMembership.objects.filter(user=user, tenant=tenant).first()
+    if membership:
+        return membership.role
+    return user.role
+
+
+def build_permissions_matrix(permissions_qs):
+    matrix = {
+        'Admin': {},
+        'Manager': {},
+        'Supervisor': {},
+        'Accountant': {},
+        'Cashier': {},
+        'Viewer': {},
+    }
+    for perm in permissions_qs:
+        role_display = ROLE_DISPLAY_MAP.get(perm.role, perm.role)
+        module_display = MODULE_DISPLAY_MAP.get(perm.module, perm.module)
+        action_display = ACTION_DISPLAY_MAP.get(perm.action, perm.action)
+        key = f"{module_display}-{action_display}"
+        if role_display in matrix:
+            matrix[role_display][key] = perm.allowed
+    return matrix
 
 
 @extend_schema(
@@ -370,7 +429,7 @@ def get_permissions(request):
     Get the complete permissions matrix for all roles.
     Returns permissions in the format expected by the frontend.
     """
-    tenant = request.user.tenant
+    tenant = get_request_tenant(request.user)
     
     if not tenant:
         return Response(
@@ -386,59 +445,37 @@ def get_permissions(request):
         initialize_tenant_permissions(tenant)
         permissions = RolePermission.objects.filter(tenant=tenant)
     
-    # Build the permissions matrix
-    matrix = {
-        'Admin': {},
-        'Manager': {},
-        'Supervisor': {},
-        'Accountant': {},
-        'Cashier': {},
-        'Viewer': {},
-    }
-    
-    # Map database role names to display names
-    role_map = {
-        'admin': 'Admin',
-        'manager': 'Manager',
-        'supervisor': 'Supervisor',
-        'accountant': 'Accountant',
-        'cashier': 'Cashier',
-        'viewer': 'Viewer',
-    }
-    
-    # Map database module names to display names
-    module_map = {
-        'dashboard': 'Dashboard',
-        'sales': 'Sales',
-        'purchase': 'Purchase',
-        'inventory': 'Inventory',
-        'accounting': 'Accounting',
-        'construction': 'Construction',
-        'reports': 'Reports',
-        'settings': 'Settings',
-        'hr': 'HR',
-        'pos': 'POS',
-    }
-    
-    # Map database action names to display names
-    action_map = {
-        'view': 'View',
-        'create': 'Create',
-        'edit': 'Edit',
-        'delete': 'Delete',
-        'export': 'Export',
-        'approve': 'Approve',
-    }
-    
-    for perm in permissions:
-        role_display = role_map.get(perm.role, perm.role)
-        module_display = module_map.get(perm.module, perm.module)
-        action_display = action_map.get(perm.action, perm.action)
-        
-        key = f"{module_display}-{action_display}"
-        matrix[role_display][key] = perm.allowed
-    
+    matrix = build_permissions_matrix(permissions)
     return Response(matrix, status=status.HTTP_200_OK)
+
+
+@extend_schema(
+    tags=['Permissions'],
+    summary='Get current user permissions',
+    description='Returns the permission matrix slice for the authenticated user\'s role.',
+)
+@api_view(['GET'])
+@permission_classes([drf_permissions.IsAuthenticated])
+def get_my_permissions(request):
+    """Get permissions for the current user's role within their active organization."""
+    tenant = get_request_tenant(request.user)
+    if not tenant:
+        return Response({}, status=status.HTTP_200_OK)
+
+    role = get_effective_role(request.user, tenant)
+    permissions = RolePermission.objects.filter(tenant=tenant, role=role)
+    if not permissions.exists():
+        initialize_tenant_permissions(tenant)
+        permissions = RolePermission.objects.filter(tenant=tenant, role=role)
+
+    role_display = ROLE_DISPLAY_MAP.get(role, role.capitalize())
+    role_perms = {}
+    for perm in permissions:
+        module_display = MODULE_DISPLAY_MAP.get(perm.module, perm.module)
+        action_display = ACTION_DISPLAY_MAP.get(perm.action, perm.action)
+        role_perms[f"{module_display}-{action_display}"] = perm.allowed
+
+    return Response({role_display: role_perms}, status=status.HTTP_200_OK)
 
 
 @extend_schema(
@@ -458,7 +495,7 @@ def update_permissions(request):
     """
     from django.db import transaction
     
-    tenant = request.user.tenant
+    tenant = get_request_tenant(request.user)
     
     if not tenant:
         return Response(
@@ -585,6 +622,7 @@ def get_appearance_preferences(request):
             'theme': 'light',
             'language': 'en-US',
             'timezone': 'UTC',
+            'date_calendar_system': 'AD',
             'compact_mode': False,
             'smooth_animations': True,
         }
@@ -594,6 +632,7 @@ def get_appearance_preferences(request):
         'theme': preferences.theme,
         'language': preferences.language,
         'timezone': preferences.timezone,
+        'date_calendar_system': preferences.date_calendar_system,
         'compact_mode': preferences.compact_mode,
         'smooth_animations': preferences.smooth_animations,
     })
@@ -629,6 +668,7 @@ def update_appearance_preferences(request):
         'theme': preferences.theme,
         'language': preferences.language,
         'timezone': preferences.timezone,
+        'date_calendar_system': preferences.date_calendar_system,
         'compact_mode': preferences.compact_mode,
         'smooth_animations': preferences.smooth_animations,
     })

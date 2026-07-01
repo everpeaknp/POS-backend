@@ -1,0 +1,77 @@
+/**
+ * KHATA Admin - AdminLTE 4 / Jazzmin 3 layout fixes
+ * Targets app-* classes used by Jazzmin 3 (not legacy main-sidebar/content-wrapper).
+ */
+
+/* Keep the admin shell on a stable grid layout */
+.app-wrapper {
+    display: grid !important;
+    grid-template-areas:
+        "lte-app-sidebar lte-app-header"
+        "lte-app-sidebar lte-app-main"
+        "lte-app-sidebar lte-app-footer" !important;
+    grid-template-rows: min-content 1fr min-content !important;
+    grid-template-columns: auto 1fr !important;
+    min-height: 100vh;
+}
+
+.app-sidebar {
+    grid-area: lte-app-sidebar !important;
+}
+
+.app-header {
+    grid-area: lte-app-header !important;
+}
+
+.app-main {
+    grid-area: lte-app-main !important;
+    min-width: 0;
+}
+
+.app-footer {
+    grid-area: lte-app-footer !important;
+}
+
+/* Sidebar links: icon + label on one line */
+.sidebar-menu .nav-link {
+    display: flex !important;
+    align-items: center !important;
+    gap: 0.5rem;
+}
+
+.sidebar-menu .nav-link .nav-icon {
+    display: inline-flex !important;
+    align-items: center;
+    justify-content: center;
+    width: 1.5rem;
+    flex-shrink: 0;
+}
+
+.sidebar-menu .nav-link p {
+    display: inline !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    flex: 1;
+    min-width: 0;
+}
+
+/* Light, readable admin chrome */
+body {
+    background-color: var(--bs-body-bg) !important;
+}
+
+.app-content {
+    padding-top: 1rem;
+}
+
+.app-content-header {
+    background-color: var(--bs-body-bg);
+    border-bottom: 1px solid var(--bs-border-color);
+    padding: 1rem 0;
+    margin-bottom: 0.5rem;
+}
+
+/* Navbar search fields */
+.app-header .form-control-navbar {
+    min-width: 10rem;
+}

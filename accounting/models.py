@@ -34,6 +34,10 @@ class Account(TenantModel):
         ('Other Income', 'Other Income'),
         ('COGS', 'COGS'),
         ('Operating', 'Operating'),
+        ('Administrative', 'Administrative'),
+        ('Other Expense', 'Other Expense'),
+        ('Other Asset', 'Other Asset'),
+        ('Drawing', 'Drawing'),
     ]
     
     STATUS_CHOICES = [

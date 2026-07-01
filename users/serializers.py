@@ -97,6 +97,8 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
                 'id': tenant.id,
                 'name': tenant.name,
                 'slug': tenant.slug,
+                'workspace_name': tenant.workspace_name,
+                'email': tenant.email,
                 'business_type': tenant.business_type,
                 'plan_type': tenant.plan_type,
                 'active_modules': tenant.active_modules,
@@ -110,12 +112,15 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
 class TenantSerializer(serializers.ModelSerializer):
     class Meta:
         model = Tenant
-        fields = ['id', 'name', 'slug', 'business_type', 'is_active', 'plan_type', 'active_modules']
+        fields = [
+            'id', 'name', 'slug', 'workspace_name', 'email', 'business_type',
+            'is_active', 'plan_type', 'active_modules',
+        ]
         read_only_fields = ['id', 'slug']
 
 
 class UserSerializer(serializers.ModelSerializer):
-    tenant = TenantSerializer(read_only=True)
+    tenant = serializers.SerializerMethodField()
     password = serializers.CharField(write_only=True, required=False, min_length=8)
     permissions = serializers.SerializerMethodField()
     role = serializers.SerializerMethodField()
@@ -124,7 +129,13 @@ class UserSerializer(serializers.ModelSerializer):
     class Meta:
         model = User
         fields = ['id', 'username', 'email', 'first_name', 'last_name', 'role', 'phone', 'avatar', 'tenant', 'password', 'is_active', 'last_login', 'date_joined', 'permissions']
-        read_only_fields = ['id', 'tenant', 'last_login', 'date_joined', 'permissions']
+        read_only_fields = ['id', 'last_login', 'date_joined', 'permissions']
+
+    def get_tenant(self, obj):
+        tenant = obj.get_tenant()
+        if not tenant:
+            return None
+        return TenantSerializer(tenant).data
     
     def get_role(self, obj):
         """
@@ -133,14 +144,12 @@ class UserSerializer(serializers.ModelSerializer):
         """
         # Get the current request's tenant from context
         request = self.context.get('request')
-        if request and hasattr(request, 'user') and request.user.tenant:
-            # Import here to avoid circular import
+        tenant = obj.get_tenant()
+        if tenant:
             from tenants.membership_models import UserTenantMembership
-            
-            # Get the membership for this user in the current tenant
             membership = UserTenantMembership.objects.filter(
                 user=obj,
-                tenant=request.user.tenant
+                tenant=tenant
             ).first()
             
             if membership:
@@ -296,19 +305,17 @@ class RegisterSerializer(serializers.ModelSerializer):
     
     def create(self, validated_data):
         try:
-            # Auto-generate username from email if not provided
-            if 'username' not in validated_data or not validated_data['username']:
-                email = validated_data.get('email', '')
-                username = email.split('@')[0] if email else 'user'
-                
-                # Ensure uniqueness by appending number if needed
-                base_username = username
-                counter = 1
-                while User.objects.filter(username=username).exists():
-                    username = f"{base_username}{counter}"
-                    counter += 1
-                
-                validated_data['username'] = username
+            email = validated_data.get('email', '')
+            username = validated_data.get('username') or (email.split('@')[0] if email else 'user')
+
+            # Ensure username is unique even when provided by the client
+            base_username = username
+            counter = 1
+            while User.objects.filter(username=username).exists():
+                username = f"{base_username}{counter}"
+                counter += 1
+
+            validated_data['username'] = username
             
             # Create user WITHOUT tenant (tenant=None)
             # User will create organization manually after login
@@ -408,11 +415,15 @@ class AppearancePreferencesSerializer(serializers.Serializer):
     )
     timezone = serializers.ChoiceField(
         choices=[
-            'UTC', 'America/New_York', 'America/Chicago', 'America/Denver',
+            'UTC', 'Asia/Kathmandu', 'America/New_York', 'America/Chicago', 'America/Denver',
             'America/Los_Angeles', 'Europe/London', 'Europe/Paris', 'Asia/Dubai',
             'Asia/Kolkata', 'Asia/Singapore', 'Asia/Tokyo', 'Australia/Sydney'
         ],
         default='UTC'
+    )
+    date_calendar_system = serializers.ChoiceField(
+        choices=['AD', 'BS'],
+        default='AD'
     )
     compact_mode = serializers.BooleanField(default=False)
     smooth_animations = serializers.BooleanField(default=True)

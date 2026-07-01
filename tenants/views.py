@@ -176,6 +176,43 @@ class TenantViewSet(viewsets.ModelViewSet):
         
         serializer = TenantProfileSerializer(tenant)
         return Response(serializer.data)
+
+    @extend_schema(
+        summary='Switch active organization',
+        description='Set the authenticated user\'s active tenant to this organization (must be a member or creator).',
+    )
+    @action(detail=True, methods=['post'])
+    def switch(self, request, slug=None):
+        """Switch the user's active tenant context."""
+        from tenants.utils import user_has_tenant_access
+        from django.contrib.auth import get_user_model
+        from .membership_models import UserTenantMembership
+
+        tenant = self.get_object()
+        user = request.user
+
+        if not user_has_tenant_access(user, tenant):
+            return Response(
+                {'error': 'You do not have access to this organization'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        User = get_user_model()
+        updates = {'tenant': tenant}
+        membership = UserTenantMembership.objects.filter(user=user, tenant=tenant).first()
+        if membership:
+            updates['role'] = membership.role
+        elif tenant.created_by_id == user.id:
+            updates['role'] = 'admin'
+
+        User.objects.filter(pk=user.pk).update(**updates)
+        user.refresh_from_db()
+
+        serializer = TenantProfileSerializer(tenant)
+        return Response({
+            'message': f'Switched to {tenant.name}',
+            'tenant': serializer.data,
+        })
     
     @extend_schema(
         summary='Activate a module for tenant',

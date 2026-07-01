@@ -423,3 +423,64 @@ def record_payment_from_customer(customer, amount, reference):
             }
         ]
     )
+
+
+def apply_entry_balances(entry):
+    """Update account.balance fields when a journal entry is posted."""
+    for line in entry.lines.all():
+        account = line.account
+        if account.type in ['Assets', 'Expense']:
+            account.balance += line.debit - line.credit
+        else:
+            account.balance += line.credit - line.debit
+        account.save()
+
+
+def get_opening_balance_equity_account(tenant):
+    """Equity offset account for opening balance journal entries."""
+    account, _ = Account.objects.get_or_create(
+        tenant=tenant,
+        code='3900',
+        defaults={
+            'name': 'Opening Balance Equity',
+            'type': 'Equity',
+            'sub_type': 'Capital',
+            'status': 'active',
+            'level': 0,
+        }
+    )
+    return account
+
+
+def create_account_opening_balance(account, amount, date, balance_side, tenant):
+    """
+    Post an opening balance journal entry for a new account.
+    balance_side: 'debit' or 'credit' — the normal side of the opening amount.
+    """
+    amount = Decimal(str(amount))
+    if amount <= 0:
+        return None
+
+    equity = get_opening_balance_equity_account(tenant)
+    side = str(balance_side).lower()
+
+    if side == 'debit':
+        entries = [
+            {'account': account, 'debit': amount, 'credit': Decimal('0')},
+            {'account': equity, 'debit': Decimal('0'), 'credit': amount},
+        ]
+    else:
+        entries = [
+            {'account': account, 'debit': Decimal('0'), 'credit': amount},
+            {'account': equity, 'debit': amount, 'credit': Decimal('0')},
+        ]
+
+    entry = create_journal_entry(
+        tenant=tenant,
+        description=f"Opening balance for {account.code} - {account.name}",
+        entries=entries,
+        reference=f"OB-{account.code}",
+        date=date,
+    )
+    apply_entry_balances(entry)
+    return entry

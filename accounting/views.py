@@ -2,6 +2,7 @@ from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
+from rest_framework.exceptions import PermissionDenied
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework.filters import SearchFilter, OrderingFilter
 from drf_spectacular.utils import extend_schema, extend_schema_view, OpenApiParameter
@@ -10,6 +11,7 @@ from django.db.models import Sum, Q
 from decimal import Decimal
 
 from .models import Account, JournalEntry, JournalLine, BankAccount, BankTransaction, TaxRule, VATReturn
+from tenants.utils import get_request_tenant
 from .serializers import (
     AccountSerializer, JournalEntrySerializer, BankAccountSerializer,
     BankTransactionSerializer, TaxRuleSerializer, VATReturnSerializer
@@ -38,10 +40,16 @@ class AccountViewSet(viewsets.ModelViewSet):
     ordering = ['code']
     
     def get_queryset(self):
-        return Account.objects.filter(tenant=self.request.user.tenant)
+        tenant = get_request_tenant(self.request.user)
+        if not tenant:
+            return Account.objects.none()
+        return Account.objects.filter(tenant=tenant)
     
     def perform_create(self, serializer):
-        serializer.save(tenant=self.request.user.tenant)
+        tenant = get_request_tenant(self.request.user)
+        if not tenant:
+            raise PermissionDenied("No active organization. Please select an organization first.")
+        serializer.save(tenant=tenant)
     
     @extend_schema(
         tags=['Accounting - Chart of Accounts'],
@@ -70,36 +78,58 @@ class AccountViewSet(viewsets.ModelViewSet):
         account = self.get_object()
         from_date = request.query_params.get('from_date')
         to_date = request.query_params.get('to_date')
-        
-        lines = JournalLine.objects.filter(
-            tenant=request.user.tenant,
+        tenant = get_request_tenant(request.user)
+        is_debit_type = account.type in ['Assets', 'Expense']
+
+        def line_delta(line):
+            if is_debit_type:
+                return line.debit - line.credit
+            return line.credit - line.debit
+
+        base_qs = JournalLine.objects.filter(
+            tenant=tenant,
             account=account,
-            journal_entry__status='posted'
+            journal_entry__status='posted',
         )
-        
+
+        balance = Decimal('0.00')
+        ledger_data = []
+
+        if from_date:
+            prior_lines = base_qs.filter(journal_entry__date__lt=from_date).select_related('journal_entry')
+            for line in prior_lines:
+                balance += line_delta(line)
+            if balance != 0:
+                ledger_data.append({
+                    'date': from_date,
+                    'reference': 'B/F',
+                    'description': 'Opening balance',
+                    'debit': float(balance) if is_debit_type and balance > 0 else float(abs(balance)) if not is_debit_type and balance < 0 else 0.0,
+                    'credit': float(balance) if not is_debit_type and balance > 0 else float(abs(balance)) if is_debit_type and balance < 0 else 0.0,
+                    'balance': float(balance),
+                    'source': 'Opening',
+                })
+
+        lines = base_qs
         if from_date:
             lines = lines.filter(journal_entry__date__gte=from_date)
         if to_date:
             lines = lines.filter(journal_entry__date__lte=to_date)
-        
+
         lines = lines.select_related('journal_entry').order_by('journal_entry__date', 'id')
-        
-        # Calculate running balance
-        balance = Decimal('0.00')
-        ledger_data = []
-        
+
         for line in lines:
-            balance += line.debit - line.credit
+            balance += line_delta(line)
             ledger_data.append({
                 'date': line.journal_entry.date,
                 'reference': line.journal_entry.entry_number,
                 'description': line.description,
-                'debit': line.debit,
-                'credit': line.credit,
-                'balance': balance,
-                'source': line.journal_entry.type
+                'debit': float(line.debit),
+                'credit': float(line.credit),
+                'balance': float(balance),
+                'source': line.journal_entry.type,
             })
-        
+
         return Response(ledger_data)
     
     @extend_schema(
@@ -114,81 +144,68 @@ class AccountViewSet(viewsets.ModelViewSet):
     def trial_balance(self, request):
         """Get trial balance report"""
         as_of_date = request.query_params.get('as_of_date')
-        
-        # Get all active accounts with level > 0 (leaf accounts)
-        accounts = self.get_queryset().filter(status='active', level__gt=0).order_by('type', 'code')
-        
+        tenant = get_request_tenant(request.user)
+
+        accounts = self.get_queryset().filter(status='active').order_by('type', 'code')
+
         trial_balance_data = []
         total_debit = Decimal('0.00')
         total_credit = Decimal('0.00')
-        
+
         for account in accounts:
-            # Calculate balance for this account up to as_of_date
             lines = JournalLine.objects.filter(
-                tenant=request.user.tenant,
+                tenant=tenant,
                 account=account,
-                journal_entry__status='posted'
+                journal_entry__status='posted',
             )
-            
+
             if as_of_date:
                 lines = lines.filter(journal_entry__date__lte=as_of_date)
-            
-            # Calculate net balance
+
             aggregates = lines.aggregate(
                 total_debit=Sum('debit'),
-                total_credit=Sum('credit')
+                total_credit=Sum('credit'),
             )
-            
+
             debit_sum = aggregates['total_debit'] or Decimal('0.00')
             credit_sum = aggregates['total_credit'] or Decimal('0.00')
-            balance = debit_sum - credit_sum
-            
-            # Determine if this account type normally has debit or credit balance
+            net = debit_sum - credit_sum
+
+            if net == 0:
+                continue
+
             is_debit_type = account.type in ['Assets', 'Expense']
-            
-            # Only include accounts with non-zero balance
-            if balance != 0:
-                if is_debit_type:
-                    debit_balance = abs(balance) if balance > 0 else Decimal('0.00')
-                    credit_balance = abs(balance) if balance < 0 else Decimal('0.00')
+
+            if is_debit_type:
+                if net > 0:
+                    debit_balance, credit_balance = net, Decimal('0.00')
                 else:
-                    debit_balance = abs(balance) if balance > 0 else Decimal('0.00')
-                    credit_balance = abs(balance) if balance < 0 else Decimal('0.00')
-                
-                # For normal balance side
-                if is_debit_type and balance > 0:
-                    debit_balance = balance
-                    credit_balance = Decimal('0.00')
-                elif is_debit_type and balance < 0:
-                    debit_balance = Decimal('0.00')
-                    credit_balance = abs(balance)
-                elif not is_debit_type and balance > 0:
-                    debit_balance = balance
-                    credit_balance = Decimal('0.00')
-                else:
-                    debit_balance = Decimal('0.00')
-                    credit_balance = abs(balance)
-                
-                total_debit += debit_balance
-                total_credit += credit_balance
-                
-                trial_balance_data.append({
-                    'id': account.id,
-                    'code': account.code,
-                    'name': account.name,
-                    'type': account.type,
-                    'level': account.level,
-                    'debit': debit_balance,
-                    'credit': credit_balance,
-                    'balance': balance
-                })
-        
+                    debit_balance, credit_balance = Decimal('0.00'), abs(net)
+            elif net < 0:
+                debit_balance, credit_balance = Decimal('0.00'), abs(net)
+            else:
+                debit_balance, credit_balance = net, Decimal('0.00')
+
+            total_debit += debit_balance
+            total_credit += credit_balance
+
+            trial_balance_data.append({
+                'id': account.id,
+                'code': account.code,
+                'name': account.name,
+                'type': account.type,
+                'level': account.level,
+                'debit': float(debit_balance),
+                'credit': float(credit_balance),
+                'balance': float(net),
+            })
+
         return Response({
-            'as_of_date': as_of_date,
+            'as_of_date': as_of_date or timezone.now().date().isoformat(),
             'accounts': trial_balance_data,
-            'total_debit': total_debit,
-            'total_credit': total_credit,
-            'is_balanced': abs(total_debit - total_credit) < Decimal('0.01')
+            'total_debit': float(total_debit),
+            'total_credit': float(total_credit),
+            'is_balanced': abs(total_debit - total_credit) < Decimal('0.01'),
         })
     
     @extend_schema(
@@ -205,45 +222,42 @@ class AccountViewSet(viewsets.ModelViewSet):
         """Get profit & loss statement"""
         from_date = request.query_params.get('from_date')
         to_date = request.query_params.get('to_date')
-        
-        # Get all active income and expense accounts
+        tenant = get_request_tenant(request.user)
+
+        if not from_date:
+            from_date = timezone.now().replace(day=1).date().isoformat()
+        if not to_date:
+            to_date = timezone.now().date().isoformat()
+
         accounts = self.get_queryset().filter(
             status='active',
-            level__gt=0,
-            type__in=['Income', 'Expense']
+            type__in=['Income', 'Expense'],
         ).order_by('type', 'code')
-        
+
         income_accounts = []
         expense_accounts = []
         total_income = Decimal('0.00')
         total_expenses = Decimal('0.00')
-        
+
         for account in accounts:
-            # Calculate balance for this account within date range
             lines = JournalLine.objects.filter(
-                tenant=request.user.tenant,
+                tenant=tenant,
                 account=account,
-                journal_entry__status='posted'
+                journal_entry__status='posted',
             )
-            
-            if from_date:
-                lines = lines.filter(journal_entry__date__gte=from_date)
-            if to_date:
-                lines = lines.filter(journal_entry__date__lte=to_date)
-            
-            # Calculate net balance
+
+            lines = lines.filter(journal_entry__date__gte=from_date, journal_entry__date__lte=to_date)
+
             aggregates = lines.aggregate(
                 total_debit=Sum('debit'),
-                total_credit=Sum('credit')
+                total_credit=Sum('credit'),
             )
-            
+
             debit_sum = aggregates['total_debit'] or Decimal('0.00')
             credit_sum = aggregates['total_credit'] or Decimal('0.00')
-            
-            # For Income accounts: credit increases income (normal credit balance)
-            # For Expense accounts: debit increases expense (normal debit balance)
+
             if account.type == 'Income':
-                amount = credit_sum - debit_sum  # Net credit is income
+                amount = credit_sum - debit_sum
                 if amount != 0:
                     total_income += amount
                     income_accounts.append({
@@ -251,10 +265,10 @@ class AccountViewSet(viewsets.ModelViewSet):
                         'code': account.code,
                         'name': account.name,
                         'sub_type': account.sub_type,
-                        'amount': amount
+                        'amount': float(amount),
                     })
-            else:  # Expense
-                amount = debit_sum - credit_sum  # Net debit is expense
+            else:
+                amount = debit_sum - credit_sum
                 if amount != 0:
                     total_expenses += amount
                     expense_accounts.append({
@@ -262,28 +276,25 @@ class AccountViewSet(viewsets.ModelViewSet):
                         'code': account.code,
                         'name': account.name,
                         'sub_type': account.sub_type,
-                        'amount': amount
+                        'amount': float(amount),
                     })
-        
-        # Calculate net profit/loss
+
         net_profit = total_income - total_expenses
-        
-        # Calculate margins
         income_margin = (net_profit / total_income * 100) if total_income > 0 else Decimal('0.00')
-        
+
         return Response({
             'from_date': from_date,
             'to_date': to_date,
             'income': {
                 'accounts': income_accounts,
-                'total': total_income
+                'total': float(total_income),
             },
             'expenses': {
                 'accounts': expense_accounts,
-                'total': total_expenses
+                'total': float(total_expenses),
             },
-            'net_profit': net_profit,
-            'net_margin': income_margin
+            'net_profit': float(net_profit),
+            'net_margin': float(income_margin),
         })
     
     @extend_schema(
@@ -297,142 +308,148 @@ class AccountViewSet(viewsets.ModelViewSet):
     @action(detail=False, methods=['get'])
     def balance_sheet(self, request):
         """Get balance sheet report"""
-        as_of_date = request.query_params.get('as_of_date')
-        
-        # Get all active accounts with level > 0 (leaf accounts)
+        as_of_date = request.query_params.get('as_of_date') or timezone.now().date().isoformat()
+        tenant = get_request_tenant(request.user)
+
         accounts = self.get_queryset().filter(
             status='active',
-            level__gt=0,
-            type__in=['Assets', 'Liabilities', 'Equity']
+            type__in=['Assets', 'Liabilities', 'Equity'],
         ).order_by('type', 'sub_type', 'code')
-        
+
         assets_data = {'current': [], 'fixed': [], 'other': []}
         liabilities_data = {'current': [], 'long_term': [], 'other': []}
         equity_data = []
-        
+
         total_assets = Decimal('0.00')
         total_liabilities = Decimal('0.00')
         total_equity = Decimal('0.00')
-        
-        for account in accounts:
-            # Calculate balance for this account up to as_of_date
+
+        def balance_as_of(account):
             lines = JournalLine.objects.filter(
-                tenant=request.user.tenant,
+                tenant=tenant,
                 account=account,
-                journal_entry__status='posted'
+                journal_entry__status='posted',
+                journal_entry__date__lte=as_of_date,
             )
-            
-            if as_of_date:
-                lines = lines.filter(journal_entry__date__lte=as_of_date)
-            
-            # Calculate net balance
             aggregates = lines.aggregate(
                 total_debit=Sum('debit'),
-                total_credit=Sum('credit')
+                total_credit=Sum('credit'),
             )
-            
             debit_sum = aggregates['total_debit'] or Decimal('0.00')
             credit_sum = aggregates['total_credit'] or Decimal('0.00')
-            balance = debit_sum - credit_sum
-            
-            # Skip accounts with zero balance
-            if balance == 0:
+            net = debit_sum - credit_sum
+            if account.type in ['Assets', 'Expense']:
+                return net
+            return credit_sum - debit_sum
+
+        for account in accounts:
+            amount = balance_as_of(account)
+            if amount == 0:
                 continue
-            
+
             account_data = {
                 'id': account.id,
                 'code': account.code,
                 'name': account.name,
                 'sub_type': account.sub_type,
-                'amount': abs(balance)  # Always show positive amounts
+                'amount': float(amount),
             }
-            
-            # Categorize by type and sub_type
+
             if account.type == 'Assets':
-                # Assets have normal debit balance
-                if balance < 0:
-                    # Contra asset - reduce total
-                    account_data['amount'] = -abs(balance)
-                
-                total_assets += balance
-                
-                # Categorize by sub_type
-                if 'Current' in account.sub_type or 'Cash' in account.sub_type or 'Receivable' in account.sub_type:
+                total_assets += amount
+                sub_type = account.sub_type or ''
+                if any(k in sub_type for k in ('Current', 'Cash', 'Receivable', 'Bank')):
                     assets_data['current'].append(account_data)
-                elif 'Fixed' in account.sub_type or 'Property' in account.sub_type or 'Equipment' in account.sub_type:
+                elif any(k in sub_type for k in ('Fixed', 'Property', 'Equipment')):
                     assets_data['fixed'].append(account_data)
                 else:
                     assets_data['other'].append(account_data)
-                    
+
             elif account.type == 'Liabilities':
-                # Liabilities have normal credit balance (negative in our calculation)
-                amount = abs(balance)
-                if balance > 0:
-                    # Contra liability
-                    amount = -balance
-                
-                total_liabilities += abs(balance)
-                
-                account_data['amount'] = amount
-                
-                # Categorize by sub_type
-                if 'Current' in account.sub_type or 'Payable' in account.sub_type:
+                total_liabilities += amount
+                sub_type = account.sub_type or ''
+                if any(k in sub_type for k in ('Current', 'Payable')):
                     liabilities_data['current'].append(account_data)
-                elif 'Long' in account.sub_type or 'Term' in account.sub_type:
+                elif any(k in sub_type for k in ('Long', 'Term')):
                     liabilities_data['long_term'].append(account_data)
                 else:
                     liabilities_data['other'].append(account_data)
-                    
+
             elif account.type == 'Equity':
-                # Equity has normal credit balance (negative in our calculation)
-                amount = abs(balance)
-                if balance > 0:
-                    # Contra equity
-                    amount = -balance
-                
-                total_equity += abs(balance)
-                
-                account_data['amount'] = amount
+                total_equity += amount
                 equity_data.append(account_data)
-        
-        # Calculate totals for each category
+
+        # Include unclosed P&L in equity so Assets = Liabilities + Equity
+        pl_accounts = self.get_queryset().filter(
+            status='active',
+            type__in=['Income', 'Expense'],
+        )
+        net_income = Decimal('0.00')
+        for account in pl_accounts:
+            lines = JournalLine.objects.filter(
+                tenant=tenant,
+                account=account,
+                journal_entry__status='posted',
+                journal_entry__date__lte=as_of_date,
+            )
+            aggregates = lines.aggregate(
+                total_debit=Sum('debit'),
+                total_credit=Sum('credit'),
+            )
+            debit_sum = aggregates['total_debit'] or Decimal('0.00')
+            credit_sum = aggregates['total_credit'] or Decimal('0.00')
+            if account.type == 'Income':
+                net_income += credit_sum - debit_sum
+            else:
+                net_income -= debit_sum - credit_sum
+
+        if net_income != 0:
+            equity_data.append({
+                'id': 'current-earnings',
+                'code': '',
+                'name': 'Current Year Earnings',
+                'sub_type': 'Retained',
+                'amount': float(net_income),
+            })
+            total_equity += net_income
+
         total_current_assets = sum(acc['amount'] for acc in assets_data['current'])
         total_fixed_assets = sum(acc['amount'] for acc in assets_data['fixed'])
         total_other_assets = sum(acc['amount'] for acc in assets_data['other'])
-        
+
         total_current_liabilities = sum(acc['amount'] for acc in liabilities_data['current'])
         total_long_term_liabilities = sum(acc['amount'] for acc in liabilities_data['long_term'])
         total_other_liabilities = sum(acc['amount'] for acc in liabilities_data['other'])
-        
+
         total_liab_equity = total_liabilities + total_equity
         is_balanced = abs(total_assets - total_liab_equity) < Decimal('0.01')
-        
+
         return Response({
             'as_of_date': as_of_date,
             'assets': {
                 'current': assets_data['current'],
                 'fixed': assets_data['fixed'],
                 'other': assets_data['other'],
-                'total_current': total_current_assets,
-                'total_fixed': total_fixed_assets,
-                'total_other': total_other_assets,
-                'total': total_assets
+                'total_current': float(total_current_assets),
+                'total_fixed': float(total_fixed_assets),
+                'total_other': float(total_other_assets),
+                'total': float(total_assets),
             },
             'liabilities': {
                 'current': liabilities_data['current'],
                 'long_term': liabilities_data['long_term'],
                 'other': liabilities_data['other'],
-                'total_current': total_current_liabilities,
-                'total_long_term': total_long_term_liabilities,
-                'total_other': total_other_liabilities,
-                'total': total_liabilities
+                'total_current': float(total_current_liabilities),
+                'total_long_term': float(total_long_term_liabilities),
+                'total_other': float(total_other_liabilities),
+                'total': float(total_liabilities),
             },
             'equity': {
                 'accounts': equity_data,
-                'total': total_equity
+                'total': float(total_equity),
             },
-            'total_liabilities_equity': total_liab_equity,
-            'is_balanced': is_balanced
+            'total_liabilities_equity': float(total_liab_equity),
+            'is_balanced': is_balanced,
         })
 
 
@@ -458,10 +475,16 @@ class JournalEntryViewSet(viewsets.ModelViewSet):
     ordering = ['-date', '-entry_number']
     
     def get_queryset(self):
-        return JournalEntry.objects.filter(tenant=self.request.user.tenant).prefetch_related('lines__account')
+        tenant = get_request_tenant(self.request.user)
+        if not tenant:
+            return JournalEntry.objects.none()
+        return JournalEntry.objects.filter(tenant=tenant).prefetch_related('lines__account')
     
     def perform_create(self, serializer):
-        serializer.save(tenant=self.request.user.tenant)
+        tenant = get_request_tenant(self.request.user)
+        if not tenant:
+            raise PermissionDenied("No active organization. Please select an organization first.")
+        serializer.save(tenant=tenant)
     
     def destroy(self, request, *args, **kwargs):
         instance = self.get_object()
@@ -485,6 +508,12 @@ class JournalEntryViewSet(viewsets.ModelViewSet):
         if entry.status != 'draft':
             return Response(
                 {'error': 'Only draft entries can be posted'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        if entry.total_debit != entry.total_credit:
+            return Response(
+                {'error': f'Debits ({entry.total_debit}) must equal credits ({entry.total_credit}) before posting'},
                 status=status.HTTP_400_BAD_REQUEST
             )
         
@@ -527,13 +556,13 @@ class JournalEntryViewSet(viewsets.ModelViewSet):
             'date': request.data.get('date', timezone.now().date()),
             'description': f"Reversal of {entry.entry_number}: {entry.description}",
             'type': 'Adjustment',
-            'tenant': request.user.tenant,
+            'tenant': get_request_tenant(request.user),
         }
         
         reversal_entry = JournalEntry.objects.create(**reversal_data)
         
         # Generate entry number
-        last_entry = JournalEntry.objects.filter(tenant=request.user.tenant).order_by('-id').first()
+        last_entry = JournalEntry.objects.filter(tenant=get_request_tenant(request.user)).order_by('-id').first()
         if last_entry and last_entry.entry_number.startswith('JE-'):
             try:
                 last_num = int(last_entry.entry_number.split('-')[1])
@@ -550,7 +579,7 @@ class JournalEntryViewSet(viewsets.ModelViewSet):
         for line in entry.lines.all():
             JournalLine.objects.create(
                 journal_entry=reversal_entry,
-                tenant=request.user.tenant,
+                tenant=get_request_tenant(request.user),
                 account=line.account,
                 description=line.description,
                 debit=line.credit,  # Swap
@@ -605,10 +634,30 @@ class BankAccountViewSet(viewsets.ModelViewSet):
     ordering = ['bank_name']
     
     def get_queryset(self):
-        return BankAccount.objects.filter(tenant=self.request.user.tenant)
+        tenant = get_request_tenant(self.request.user)
+        if not tenant:
+            return BankAccount.objects.none()
+        return BankAccount.objects.filter(tenant=tenant)
     
     def perform_create(self, serializer):
-        serializer.save(tenant=self.request.user.tenant)
+        tenant = get_request_tenant(self.request.user)
+        if not tenant:
+            raise PermissionDenied("No active organization. Please select an organization first.")
+        bank_account = serializer.save(tenant=tenant)
+        if bank_account.balance and bank_account.balance > 0:
+            BankTransaction.objects.create(
+                tenant=tenant,
+                bank_account=bank_account,
+                date=timezone.now().date(),
+                reference='OPENING',
+                description='Opening balance',
+                type='Opening',
+                debit=Decimal('0.00'),
+                credit=bank_account.balance,
+                balance=bank_account.balance,
+                reconciled=True,
+                reconciled_date=timezone.now().date(),
+            )
     
     @extend_schema(
         tags=['Accounting - Bank Accounts'],
@@ -620,7 +669,7 @@ class BankAccountViewSet(viewsets.ModelViewSet):
         """Get bank statement"""
         bank_account = self.get_object()
         transactions = BankTransaction.objects.filter(
-            tenant=request.user.tenant,
+            tenant=get_request_tenant(request.user),
             bank_account=bank_account
         ).order_by('-date', '-id')
         
@@ -647,10 +696,16 @@ class BankTransactionViewSet(viewsets.ModelViewSet):
     ordering = ['-date']
     
     def get_queryset(self):
-        return BankTransaction.objects.filter(tenant=self.request.user.tenant)
+        tenant = get_request_tenant(self.request.user)
+        if not tenant:
+            return BankTransaction.objects.none()
+        return BankTransaction.objects.filter(tenant=tenant)
     
     def perform_create(self, serializer):
-        serializer.save(tenant=self.request.user.tenant)
+        tenant = get_request_tenant(self.request.user)
+        if not tenant:
+            raise PermissionDenied("No active organization. Please select an organization first.")
+        serializer.save(tenant=tenant)
     
     @extend_schema(
         tags=['Accounting - Bank Transactions'],
@@ -688,10 +743,16 @@ class TaxRuleViewSet(viewsets.ModelViewSet):
     ordering = ['name']
     
     def get_queryset(self):
-        return TaxRule.objects.filter(tenant=self.request.user.tenant)
+        tenant = get_request_tenant(self.request.user)
+        if not tenant:
+            return TaxRule.objects.none()
+        return TaxRule.objects.filter(tenant=tenant)
     
     def perform_create(self, serializer):
-        serializer.save(tenant=self.request.user.tenant)
+        tenant = get_request_tenant(self.request.user)
+        if not tenant:
+            raise PermissionDenied("No active organization. Please select an organization first.")
+        serializer.save(tenant=tenant)
 
 
 @extend_schema_view(
@@ -713,10 +774,16 @@ class VATReturnViewSet(viewsets.ModelViewSet):
     ordering = ['-from_date']
     
     def get_queryset(self):
-        return VATReturn.objects.filter(tenant=self.request.user.tenant)
+        tenant = get_request_tenant(self.request.user)
+        if not tenant:
+            return VATReturn.objects.none()
+        return VATReturn.objects.filter(tenant=tenant)
     
     def perform_create(self, serializer):
-        serializer.save(tenant=self.request.user.tenant)
+        tenant = get_request_tenant(self.request.user)
+        if not tenant:
+            raise PermissionDenied("No active organization. Please select an organization first.")
+        serializer.save(tenant=tenant)
     
     @extend_schema(
         tags=['Accounting - VAT Returns'],

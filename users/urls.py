@@ -3,7 +3,7 @@ from rest_framework_simplejwt.views import TokenRefreshView
 from drf_spectacular.utils import extend_schema
 from .views import (
     RegisterView, UserProfileView, UserViewSet, CustomTokenObtainPairView, 
-    AuditLogViewSet, get_permissions, update_permissions,
+    AuditLogViewSet, get_permissions, get_my_permissions, update_permissions,
     update_user_profile, change_password, get_notification_preferences,
     update_notification_preferences, get_active_sessions, revoke_session,
     get_appearance_preferences, update_appearance_preferences
@@ -35,6 +35,7 @@ urlpatterns = [
     
     # Permissions
     path('permissions/', get_permissions, name='get_permissions'),
+    path('permissions/me/', get_my_permissions, name='get_my_permissions'),
     path('permissions/update/', update_permissions, name='update_permissions'),
     
     # Users

@@ -6,21 +6,51 @@ from decimal import Decimal
 class AccountSerializer(serializers.ModelSerializer):
     """Serializer for Chart of Accounts"""
     parent_name = serializers.CharField(source='parent.name', read_only=True)
+    opening_balance = serializers.DecimalField(
+        max_digits=12, decimal_places=2, required=False, write_only=True, default=Decimal('0')
+    )
+    opening_balance_date = serializers.DateField(required=False, write_only=True, allow_null=True)
+    balance_type = serializers.ChoiceField(
+        choices=['debit', 'credit', 'Debit', 'Credit'],
+        required=False, write_only=True, default='debit'
+    )
     
     class Meta:
         model = Account
         fields = [
             'id', 'code', 'name', 'type', 'sub_type', 'level', 'parent', 'parent_name',
-            'balance', 'status', 'description', 'created_at', 'updated_at'
+            'balance', 'status', 'description', 'created_at', 'updated_at',
+            'opening_balance', 'opening_balance_date', 'balance_type',
         ]
         read_only_fields = ['id', 'created_at', 'updated_at', 'parent_name']
     
     def validate(self, data):
-        # Ensure parent is of same type
-        if data.get('parent'):
-            if data['parent'].type != data['type']:
-                raise serializers.ValidationError("Parent account must be of the same type")
+        parent = data.get('parent')
+        account_type = data.get('type') or (self.instance.type if self.instance else None)
+        if parent and account_type and parent.type != account_type:
+            raise serializers.ValidationError("Parent account must be of the same type")
+        if parent:
+            data['level'] = parent.level + 1
+        elif 'parent' in data and data.get('parent') is None:
+            data['level'] = 0
         return data
+
+    def create(self, validated_data):
+        opening_balance = validated_data.pop('opening_balance', Decimal('0')) or Decimal('0')
+        opening_balance_date = validated_data.pop('opening_balance_date', None)
+        balance_type = validated_data.pop('balance_type', 'debit')
+        tenant = validated_data['tenant']
+
+        account = super().create(validated_data)
+
+        if opening_balance > 0:
+            from .services import create_account_opening_balance
+            create_account_opening_balance(
+                account, opening_balance, opening_balance_date, balance_type, tenant
+            )
+            account.refresh_from_db()
+
+        return account
 
 
 class JournalLineSerializer(serializers.ModelSerializer):
@@ -80,11 +110,17 @@ class JournalEntrySerializer(serializers.ModelSerializer):
         if len(lines) < 2:
             raise serializers.ValidationError("Journal entry must have at least 2 lines")
         
-        # Calculate totals
         total_debit = sum(line.get('debit', Decimal('0.00')) for line in lines)
         total_credit = sum(line.get('credit', Decimal('0.00')) for line in lines)
         
-        if total_debit != total_credit:
+        # Draft entries may be saved unbalanced; balance is enforced on post
+        status = 'draft'
+        if self.instance:
+            status = self.instance.status
+        elif getattr(self, 'initial_data', None):
+            status = self.initial_data.get('status', 'draft')
+        
+        if status != 'draft' and total_debit != total_credit:
             raise serializers.ValidationError(
                 f"Debits ({total_debit}) must equal credits ({total_credit})"
             )
@@ -184,7 +220,27 @@ class BankTransactionSerializer(serializers.ModelSerializer):
             'type', 'debit', 'credit', 'balance', 'reconciled', 'reconciled_date',
             'journal_entry', 'journal_entry_number', 'created_at', 'updated_at'
         ]
-        read_only_fields = ['id', 'bank_account_name', 'journal_entry_number', 'created_at', 'updated_at']
+        read_only_fields = ['id', 'bank_account_name', 'journal_entry_number', 'created_at', 'updated_at', 'balance']
+
+    def create(self, validated_data):
+        bank_account = validated_data['bank_account']
+        debit = validated_data.get('debit', Decimal('0')) or Decimal('0')
+        credit = validated_data.get('credit', Decimal('0')) or Decimal('0')
+
+        last_tx = (
+            BankTransaction.objects.filter(bank_account=bank_account)
+            .order_by('-date', '-id')
+            .first()
+        )
+        prev_balance = last_tx.balance if last_tx else bank_account.balance
+        new_balance = prev_balance + credit - debit
+        validated_data['balance'] = new_balance
+
+        transaction = super().create(validated_data)
+
+        bank_account.balance = new_balance
+        bank_account.save(update_fields=['balance', 'updated_at'])
+        return transaction
 
 
 class TaxRuleSerializer(serializers.ModelSerializer):
@@ -214,11 +270,15 @@ class VATReturnSerializer(serializers.ModelSerializer):
         read_only_fields = ['id', 'return_number', 'net_payable', 'created_at', 'updated_at']
     
     def validate(self, data):
-        # Calculate net payable
-        output_tax = data.get('output_tax', Decimal('0.00'))
-        input_tax = data.get('input_tax', Decimal('0.00'))
+        output_tax = data.get(
+            'output_tax',
+            self.instance.output_tax if self.instance else Decimal('0.00'),
+        )
+        input_tax = data.get(
+            'input_tax',
+            self.instance.input_tax if self.instance else Decimal('0.00'),
+        )
         data['net_payable'] = output_tax - input_tax
-        
         return data
     
     def create(self, validated_data):

@@ -169,12 +169,23 @@ def get_user_permissions(user):
         dict: Dictionary with module-action keys and boolean values
         Example: {'sales-view': True, 'sales-create': False, ...}
     """
-    if not user or not user.is_authenticated or not user.tenant:
+    if not user or not user.is_authenticated:
         return {}
     
+    from tenants.utils import get_request_tenant
+    from tenants.membership_models import UserTenantMembership
+    tenant = get_request_tenant(user)
+    if not tenant:
+        return {}
+
+    role = user.role
+    membership = UserTenantMembership.objects.filter(user=user, tenant=tenant).first()
+    if membership:
+        role = membership.role
+    
     permissions = RolePermission.objects.filter(
-        tenant=user.tenant,
-        role=user.role,
+        tenant=tenant,
+        role=role,
         allowed=True
     )
     
