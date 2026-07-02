@@ -9,6 +9,24 @@ from inventory.models import Stock, StockMovement, Warehouse
 from tenants.middleware import get_current_tenant
 
 
+def _resolve_tenant(tenant=None, product=None, warehouse=None):
+    """Resolve tenant from explicit arg, request context, or related objects."""
+    if tenant is not None:
+        return tenant
+
+    tenant = get_current_tenant()
+    if tenant:
+        return tenant
+
+    if warehouse is not None and getattr(warehouse, 'tenant_id', None):
+        return warehouse.tenant
+
+    if product is not None and getattr(product, 'tenant_id', None):
+        return product.tenant
+
+    return None
+
+
 def resolve_warehouse_for_product(product, tenant, warehouse_id=None):
     """Pick warehouse for a stock movement."""
     if warehouse_id:
@@ -35,11 +53,12 @@ def stock_in(
     notes='',
     reason='',
     performed_by=None,
+    tenant=None,
 ):
     """
     Add stock to warehouse and create movement record.
     """
-    tenant = get_current_tenant()
+    tenant = _resolve_tenant(tenant=tenant, product=product, warehouse=warehouse)
     if not tenant:
         raise ValueError("No tenant in context. Cannot perform stock operation.")
 
@@ -84,11 +103,12 @@ def stock_out(
     notes='',
     reason='',
     performed_by=None,
+    tenant=None,
 ):
     """
     Remove stock from warehouse and create movement record.
     """
-    tenant = get_current_tenant()
+    tenant = _resolve_tenant(tenant=tenant, product=product, warehouse=warehouse)
     if not tenant:
         raise ValueError("No tenant in context. Cannot perform stock operation.")
 
@@ -135,7 +155,7 @@ def stock_out(
         return movement, stock.quantity
 
 
-def stock_transfer(product, from_warehouse, to_warehouse, quantity, reference_type='', reference_id=None, notes='', reason='', performed_by=None):
+def stock_transfer(product, from_warehouse, to_warehouse, quantity, reference_type='', reference_id=None, notes='', reason='', performed_by=None, tenant=None):
     """Transfer stock between warehouses."""
     if from_warehouse.id == to_warehouse.id:
         raise ValueError("Cannot transfer to the same warehouse.")
@@ -143,6 +163,8 @@ def stock_transfer(product, from_warehouse, to_warehouse, quantity, reference_ty
     quantity = Decimal(str(quantity))
     if quantity <= 0:
         raise ValueError(f"Quantity must be positive. Got: {quantity}")
+
+    tenant = _resolve_tenant(tenant=tenant, product=product, warehouse=from_warehouse)
 
     with transaction.atomic():
         from_movement, from_stock_qty = stock_out(
@@ -154,6 +176,7 @@ def stock_transfer(product, from_warehouse, to_warehouse, quantity, reference_ty
             reason=reason or f"Transfer to {to_warehouse.name}",
             notes=notes,
             performed_by=performed_by,
+            tenant=tenant,
         )
 
         from_movement.movement_type = 'transfer'
@@ -169,6 +192,7 @@ def stock_transfer(product, from_warehouse, to_warehouse, quantity, reference_ty
             reason=reason or f"Transfer from {from_warehouse.name}",
             notes=notes,
             performed_by=performed_by,
+            tenant=tenant,
         )
 
         to_movement.movement_type = 'transfer'
@@ -178,7 +202,7 @@ def stock_transfer(product, from_warehouse, to_warehouse, quantity, reference_ty
         return from_movement, to_movement, from_stock_qty, to_stock_qty
 
 
-def stock_adjustment(product, warehouse, quantity, reference_type='', reference_id=None, notes='', reason='', performed_by=None):
+def stock_adjustment(product, warehouse, quantity, reference_type='', reference_id=None, notes='', reason='', performed_by=None, tenant=None):
     """Adjust stock quantity (positive adds, negative removes)."""
     if not notes or not str(notes).strip():
         raise ValueError("Notes are required for stock adjustments. Must provide reason.")
@@ -186,6 +210,8 @@ def stock_adjustment(product, warehouse, quantity, reference_type='', reference_
     quantity = Decimal(str(quantity))
     if quantity == 0:
         raise ValueError("Adjustment quantity cannot be zero.")
+
+    tenant = _resolve_tenant(tenant=tenant, product=product, warehouse=warehouse)
 
     if quantity > 0:
         return stock_in(
@@ -197,6 +223,7 @@ def stock_adjustment(product, warehouse, quantity, reference_type='', reference_
             reason=reason or 'Stock adjustment',
             notes=notes,
             performed_by=performed_by,
+            tenant=tenant,
         )
 
     return stock_out(
@@ -208,6 +235,7 @@ def stock_adjustment(product, warehouse, quantity, reference_type='', reference_
         reason=reason or 'Stock adjustment',
         notes=notes,
         performed_by=performed_by,
+        tenant=tenant,
     )
 
 
@@ -275,6 +303,7 @@ def apply_sales_order_stock(sales_order, performed_by=None, warehouse_id=None):
             reason=f"Sales Order {sales_order.order_number}",
             notes=f"Stock allocated on confirmation",
             performed_by=performed_by,
+            tenant=sales_order.tenant,
         )
         movements.append(movement)
 
@@ -304,6 +333,7 @@ def reverse_sales_order_stock(sales_order, performed_by=None):
             reason=f"Cancelled Sales Order {sales_order.order_number}",
             notes="Stock restored on cancellation",
             performed_by=performed_by,
+            tenant=sales_order.tenant,
         )
         movements.append(movement)
 
@@ -329,6 +359,7 @@ def apply_purchase_receive_stock(purchase_order, line, quantity, performed_by=No
         reason=f"Received from PO {purchase_order.po_number}",
         notes=f"PO line {line.id}",
         performed_by=performed_by,
+        tenant=purchase_order.tenant,
     )
 
 

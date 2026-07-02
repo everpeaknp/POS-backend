@@ -1,3 +1,5 @@
+from tenants.utils import get_request_tenant
+
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
@@ -299,7 +301,10 @@ class SalesOrderViewSet(viewsets.ModelViewSet):
     
     def get_queryset(self):
         """Filter by current tenant"""
-        return SalesOrder.objects.filter(tenant=self.request.user.tenant).select_related('customer', 'created_by').prefetch_related('lines__product')
+        tenant = get_request_tenant(self.request.user)
+        if not tenant:
+            return SalesOrder.objects.none()
+        return SalesOrder.objects.filter(tenant=tenant).select_related('customer', 'created_by').prefetch_related('lines__product')
     
     def get_serializer_class(self):
         if self.action in ['create', 'update', 'partial_update']:
@@ -333,7 +338,7 @@ class SalesOrderViewSet(viewsets.ModelViewSet):
                         order_number = "SO-0001"
                     
                     serializer.save(
-                        tenant=self.request.user.tenant,
+                        tenant=get_request_tenant(self.request.user),
                         created_by=self.request.user, 
                         order_number=order_number
                     )
@@ -1017,15 +1022,34 @@ class PaymentReceivedViewSet(viewsets.ModelViewSet):
     ordering = ['-date', '-created_at']
     
     def get_queryset(self):
-        return PaymentReceived.objects.filter(tenant=self.request.user.tenant).select_related(
+        tenant = get_request_tenant(self.request.user)
+        if not tenant:
+            return PaymentReceived.objects.none()
+        return PaymentReceived.objects.filter(tenant=tenant).select_related(
             'customer', 'invoice', 'received_by'
         )
     
     def perform_create(self, serializer):
-        serializer.save(
-            tenant=self.request.user.tenant,
-            received_by=self.request.user
-        )
+        from django.db import transaction
+        from django.db.utils import IntegrityError
+        from rest_framework.exceptions import ValidationError
+
+        tenant = get_request_tenant(self.request.user)
+        if not tenant:
+            raise ValidationError({'detail': 'No tenant in context'})
+
+        max_retries = 5
+        for attempt in range(max_retries):
+            try:
+                with transaction.atomic():
+                    serializer.save(
+                        tenant=tenant,
+                        received_by=self.request.user,
+                    )
+                return
+            except IntegrityError:
+                if attempt == max_retries - 1:
+                    raise ValidationError({'detail': 'Could not generate a unique payment number. Please try again.'})
 
 
 

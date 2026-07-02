@@ -33,7 +33,10 @@ class SalesOrderLineSerializer(serializers.ModelSerializer):
         read_only_fields = ['id', 'amount']
     
     def validate(self, data):
-        """Validate stock availability"""
+        """Validate stock availability when confirming an order."""
+        if not self.context.get('require_stock', False):
+            return data
+
         product = data.get('product')
         quantity = data.get('quantity')
         
@@ -78,9 +81,19 @@ class SalesOrderCreateSerializer(serializers.ModelSerializer):
             'payment_type', 'subtotal', 'discount', 'tax', 'total', 'notes', 'lines'
         ]
         read_only_fields = ['id', 'order_number']
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        status_value = (self.initial_data or {}).get('status', 'Draft')
+        require_stock = status_value in ('Confirmed', 'Delivered')
+        self.fields['lines'].child.context['require_stock'] = require_stock
     
     def validate_lines(self, lines_data):
-        """Validate all line items have sufficient stock"""
+        """Validate line stock only when confirming or delivering."""
+        status_value = (self.initial_data or {}).get('status', 'Draft')
+        if status_value not in ('Confirmed', 'Delivered'):
+            return lines_data
+
         from inventory.models import Product
         
         for line_data in lines_data:
@@ -121,13 +134,16 @@ class SalesOrderCreateSerializer(serializers.ModelSerializer):
                 from sales.stock_integration import handle_sales_order_status_change
                 request = self.context.get('request')
                 performed_by = request.user if request else None
-                handle_sales_order_status_change(
-                    sales_order,
-                    old_status='Draft',
-                    new_status=status_value,
-                    performed_by=performed_by,
-                    warehouse_id=warehouse_id,
-                )
+                try:
+                    handle_sales_order_status_change(
+                        sales_order,
+                        old_status='Draft',
+                        new_status=status_value,
+                        performed_by=performed_by,
+                        warehouse_id=warehouse_id,
+                    )
+                except ValueError as exc:
+                    raise serializers.ValidationError(str(exc))
 
         return sales_order
     

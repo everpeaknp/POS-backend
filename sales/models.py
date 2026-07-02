@@ -481,7 +481,7 @@ class PaymentReceived(TenantModel):
         ('other', 'Other'),
     ]
     
-    payment_number = models.CharField(max_length=50, unique=True, db_index=True)
+    payment_number = models.CharField(max_length=50, db_index=True)
     date = models.DateField()
     customer = models.ForeignKey(
         Customer,
@@ -526,6 +526,7 @@ class PaymentReceived(TenantModel):
     class Meta:
         db_table = 'sales_payments_received'
         ordering = ['-date', '-created_at']
+        unique_together = [['tenant', 'payment_number']]
         indexes = [
             models.Index(fields=['tenant', 'customer', 'date']),
             models.Index(fields=['tenant', 'payment_method']),
@@ -543,17 +544,21 @@ class PaymentReceived(TenantModel):
         # Check if this is a new record
         is_new = self.pk is None
         
-        if is_new:
-            # Generate payment number
-            last_payment = PaymentReceived.objects.filter(tenant=self.tenant).order_by('-id').first()
+        if is_new and not self.payment_number:
+            last_payment = (
+                PaymentReceived.objects.filter(tenant=self.tenant)
+                .select_for_update()
+                .order_by('-id')
+                .first()
+            )
             if last_payment and last_payment.payment_number.startswith('PAY-'):
                 try:
                     last_num = int(last_payment.payment_number.split('-')[1])
                     self.payment_number = f"PAY-{last_num + 1:05d}"
-                except:
-                    self.payment_number = f"PAY-00001"
+                except (ValueError, IndexError):
+                    self.payment_number = "PAY-00001"
             else:
-                self.payment_number = f"PAY-00001"
+                self.payment_number = "PAY-00001"
         
         # Use atomic transaction for financial integrity
         with transaction.atomic():
