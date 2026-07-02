@@ -329,6 +329,60 @@ class ProductViewSet(viewsets.ModelViewSet):
         serializer = StockMovementSerializer(movements, many=True)
         return Response(serializer.data)
 
+    @extend_schema(
+        tags=['Inventory - Products'],
+        summary='Get product activity',
+        description='Stock movements plus linked purchase and sales orders for this product.',
+    )
+    @action(detail=True, methods=['get'])
+    def activity(self, request, pk=None):
+        """Get movements and linked purchase/sales documents for a product."""
+        product = self.get_object()
+        tenant = request.user.tenant
+
+        movements = product.movements.select_related(
+            'warehouse', 'from_warehouse', 'to_warehouse', 'performed_by'
+        ).all()[:50]
+
+        from purchase.models import PurchaseOrderLine
+        from sales.models import SalesOrderLine
+
+        po_lines = (
+            PurchaseOrderLine.objects.filter(product=product, purchase_order__tenant=tenant)
+            .select_related('purchase_order')
+            .order_by('-purchase_order__date')[:20]
+        )
+        so_lines = (
+            SalesOrderLine.objects.filter(product=product, sales_order__tenant=tenant)
+            .select_related('sales_order')
+            .order_by('-sales_order__date')[:20]
+        )
+
+        return Response({
+            'movements': StockMovementSerializer(movements, many=True).data,
+            'purchase_orders': [
+                {
+                    'id': line.purchase_order.id,
+                    'po_number': line.purchase_order.po_number,
+                    'date': line.purchase_order.date,
+                    'status': line.purchase_order.status,
+                    'quantity': line.quantity,
+                    'received_quantity': line.received_quantity,
+                }
+                for line in po_lines
+            ],
+            'sales_orders': [
+                {
+                    'id': line.sales_order.id,
+                    'order_number': line.sales_order.order_number,
+                    'date': line.sales_order.date,
+                    'status': line.sales_order.status,
+                    'quantity': line.quantity,
+                }
+                for line in so_lines
+            ],
+        })
+
 
 @extend_schema_view(
     list=extend_schema(

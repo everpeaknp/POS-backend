@@ -28,6 +28,7 @@ urlpatterns = [
     path('products/<int:pk>/', ProductViewSet.as_view({'get': 'retrieve', 'put': 'update', 'patch': 'partial_update', 'delete': 'destroy'}), name='product-detail'),
     path('products/low_stock/', ProductViewSet.as_view({'get': 'low_stock'}), name='product-low-stock'),
     path('products/<int:pk>/stock_history/', ProductViewSet.as_view({'get': 'stock_history'}), name='product-stock-history'),
+    path('products/<int:pk>/activity/', ProductViewSet.as_view({'get': 'activity'}), name='product-activity'),
     
     # Stocks
     path('stocks/', StockViewSet.as_view({'get': 'list'}), name='stock-list'),

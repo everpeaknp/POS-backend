@@ -401,6 +401,7 @@ class PurchaseOrderViewSet(viewsets.ModelViewSet):
         """Receive items from a purchase order"""
         purchase_order = self.get_object()
         items = request.data.get('items', [])
+        default_warehouse_id = request.data.get('warehouse_id')
         
         if not items:
             return Response(
@@ -409,66 +410,54 @@ class PurchaseOrderViewSet(viewsets.ModelViewSet):
             )
         
         from .models import PurchaseOrderLine
+        from inventory.services import apply_purchase_receive_stock
+        from django.db import transaction as db_transaction
         
-        # Process each item
-        for item in items:
-            line_id = item.get('line_id')
-            quantity = item.get('quantity')
-            
-            if not line_id or not quantity:
-                continue
-            
-            try:
-                line = PurchaseOrderLine.objects.get(
-                    id=line_id,
-                    purchase_order=purchase_order
-                )
-            except PurchaseOrderLine.DoesNotExist:
-                continue
-            
-            # Update received quantity
-            line.received_quantity += float(quantity)
-            if line.received_quantity > line.quantity:
-                return Response(
-                    {'error': f'Received quantity exceeds ordered quantity for {line.product.name}'},
-                    status=status.HTTP_400_BAD_REQUEST
-                )
-            line.save()
-            
-            # Update stock - use first warehouse if available
-            try:
-                from inventory.models import Warehouse, Stock, StockMovement
-                warehouse = Warehouse.objects.filter(tenant=request.user.tenant).first()
-                
-                if warehouse:
-                    stock, created = Stock.objects.get_or_create(
-                        tenant=request.user.tenant,
-                        product=line.product,
-                        warehouse=warehouse,
-                        defaults={'quantity': 0}
-                    )
-                    stock.quantity += float(quantity)
-                    stock.save()
+        try:
+            with db_transaction.atomic():
+                for item in items:
+                    line_id = item.get('line_id')
+                    quantity = item.get('quantity')
+                    warehouse_id = item.get('warehouse_id') or default_warehouse_id
                     
-                    # Create stock movement
-                    StockMovement.objects.create(
-                        tenant=request.user.tenant,
-                        product=line.product,
-                        warehouse=warehouse,
-                        movement_type='in',
-                        quantity=float(quantity),
-                        unit_cost=line.unit_price,
-                        reference=purchase_order.po_number,
-                        notes=f"Received from PO {purchase_order.po_number}",
-                        created_by=request.user
+                    if not line_id or not quantity:
+                        continue
+                    
+                    try:
+                        line = PurchaseOrderLine.objects.get(
+                            id=line_id,
+                            purchase_order=purchase_order
+                        )
+                    except PurchaseOrderLine.DoesNotExist:
+                        return Response(
+                            {'error': f'Invalid line id: {line_id}'},
+                            status=status.HTTP_400_BAD_REQUEST
+                        )
+                    
+                    receive_qty = float(quantity)
+                    if receive_qty <= 0:
+                        continue
+                    
+                    new_received = float(line.received_quantity) + receive_qty
+                    if new_received > float(line.quantity):
+                        return Response(
+                            {'error': f'Received quantity exceeds ordered quantity for {line.product.name}'},
+                            status=status.HTTP_400_BAD_REQUEST
+                        )
+                    
+                    apply_purchase_receive_stock(
+                        purchase_order,
+                        line,
+                        receive_qty,
+                        performed_by=request.user,
+                        warehouse_id=warehouse_id,
                     )
-            except Exception as e:
-                # Log the error but don't fail the receive operation
-                import traceback
-                print(f"[Receive Items] Stock update error: {str(e)}")
-                print(traceback.format_exc())
+                    
+                    line.received_quantity = new_received
+                    line.save(update_fields=['received_quantity'])
+        except ValueError as e:
+            return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
         
-        # Update PO status based on received quantities
         all_lines = purchase_order.lines.all()
         fully_received = all(
             line.received_quantity >= line.quantity for line in all_lines
@@ -583,6 +572,9 @@ class PurchaseInvoiceViewSet(viewsets.ModelViewSet):
             invoice.status = 'Partially Paid'
         
         invoice.save()
+
+        from purchase.accounting_integration import post_purchase_invoice_payment
+        post_purchase_invoice_payment(invoice, payment_amount)
         
         serializer = self.get_serializer(invoice)
         return Response(serializer.data)

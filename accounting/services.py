@@ -10,7 +10,17 @@ from accounting.models import JournalEntry, JournalLine, Account
 from tenants.middleware import get_current_tenant
 
 
-def create_journal_entry(tenant, description, entries, reference=None, date=None):
+def has_posted_journal(tenant, reference, entry_type=None):
+    """Return True if a posted journal already exists for this reference."""
+    if not reference:
+        return False
+    qs = JournalEntry.objects.filter(tenant=tenant, reference=reference, status='posted')
+    if entry_type:
+        qs = qs.filter(type=entry_type)
+    return qs.exists()
+
+
+def create_journal_entry(tenant, description, entries, reference=None, date=None, entry_type='Manual'):
     """
     Create a double-entry journal entry.
     
@@ -56,9 +66,11 @@ def create_journal_entry(tenant, description, entries, reference=None, date=None
             date=date or timezone.now().date(),
             description=description,
             reference=reference or '',
+            type=entry_type,
             total_debit=total_debit,
             total_credit=total_credit,
-            status='posted'  # Auto-post for system-generated entries
+            status='posted',
+            posted_date=timezone.now(),
         )
         
         # Create journal lines
@@ -71,6 +83,8 @@ def create_journal_entry(tenant, description, entries, reference=None, date=None
                 credit=Decimal(str(entry['credit'])),
                 description=entry.get('description', description)
             )
+
+        apply_entry_balances(journal_entry)
         
         return journal_entry
 
@@ -258,31 +272,36 @@ def record_labor_wage(site, worker, wage_amount, date, reference):
     )
 
 
-def record_credit_sale(customer, total_amount, reference):
+def record_credit_sale(customer, total_amount, reference, tenant=None):
     """
     Record credit sale to customer.
-    Called by Sales module (Hardware).
+    Called by Sales module.
     
     Accounting Entry:
     Dr. Accounts Receivable
     Cr. Sales Revenue
     """
-    tenant = get_current_tenant()
+    if tenant is None:
+        tenant = get_current_tenant()
+    if has_posted_journal(tenant, reference, 'Sales'):
+        return None
+
     total_amount = Decimal(str(total_amount))
     
     return create_journal_entry(
         tenant=tenant,
         description=f"Credit sale to {customer.name}",
         reference=reference,
+        entry_type='Sales',
         entries=[
             {
-                'account': get_accounts_receivable_account(),
+                'account': get_accounts_receivable_account(tenant),
                 'debit': total_amount,
                 'credit': 0,
                 'description': f"Customer: {customer.name}"
             },
             {
-                'account': get_sales_revenue_account(),
+                'account': get_sales_revenue_account(tenant),
                 'debit': 0,
                 'credit': total_amount,
                 'description': f"Sale to {customer.name}"
@@ -291,19 +310,23 @@ def record_credit_sale(customer, total_amount, reference):
     )
 
 
-def record_cash_sale(total_amount, reference, customer_name=None):
+def record_cash_sale(total_amount, reference, customer_name=None, tenant=None):
     """
     Record cash sale.
-    Called by Sales module.
+    Called by Sales / POS module.
     
     Accounting Entry:
     Dr. Cash
     Cr. Sales Revenue
     """
-    tenant = get_current_tenant()
+    if tenant is None:
+        tenant = get_current_tenant()
+    if has_posted_journal(tenant, reference, 'Sales'):
+        return None
+
     total_amount = Decimal(str(total_amount))
     
-    description = f"Cash sale"
+    description = "Cash sale"
     if customer_name:
         description += f" to {customer_name}"
     
@@ -311,15 +334,16 @@ def record_cash_sale(total_amount, reference, customer_name=None):
         tenant=tenant,
         description=description,
         reference=reference,
+        entry_type='Sales',
         entries=[
             {
-                'account': get_cash_account(),
+                'account': get_cash_account(tenant),
                 'debit': total_amount,
                 'credit': 0,
                 'description': description
             },
             {
-                'account': get_sales_revenue_account(),
+                'account': get_sales_revenue_account(tenant),
                 'debit': 0,
                 'credit': total_amount,
                 'description': description
@@ -328,7 +352,7 @@ def record_cash_sale(total_amount, reference, customer_name=None):
     )
 
 
-def record_purchase(supplier, total_amount, reference):
+def record_purchase(supplier, total_amount, reference, tenant=None):
     """
     Record purchase from supplier.
     Called by Purchase module.
@@ -337,22 +361,27 @@ def record_purchase(supplier, total_amount, reference):
     Dr. Inventory Asset
     Cr. Accounts Payable
     """
-    tenant = get_current_tenant()
+    if tenant is None:
+        tenant = get_current_tenant()
+    if has_posted_journal(tenant, reference, 'Purchase'):
+        return None
+
     total_amount = Decimal(str(total_amount))
     
     return create_journal_entry(
         tenant=tenant,
         description=f"Purchase from {supplier.name}",
         reference=reference,
+        entry_type='Purchase',
         entries=[
             {
-                'account': get_inventory_asset_account(),
+                'account': get_inventory_asset_account(tenant),
                 'debit': total_amount,
                 'credit': 0,
                 'description': f"Supplier: {supplier.name}"
             },
             {
-                'account': get_accounts_payable_account(),
+                'account': get_accounts_payable_account(tenant),
                 'debit': 0,
                 'credit': total_amount,
                 'description': f"Payable to {supplier.name}"
@@ -361,7 +390,7 @@ def record_purchase(supplier, total_amount, reference):
     )
 
 
-def record_payment_to_supplier(supplier, amount, reference):
+def record_payment_to_supplier(supplier, amount, reference, tenant=None):
     """
     Record payment to supplier.
     
@@ -369,22 +398,27 @@ def record_payment_to_supplier(supplier, amount, reference):
     Dr. Accounts Payable
     Cr. Cash
     """
-    tenant = get_current_tenant()
+    if tenant is None:
+        tenant = get_current_tenant()
+    if has_posted_journal(tenant, reference, 'Payment'):
+        return None
+
     amount = Decimal(str(amount))
     
     return create_journal_entry(
         tenant=tenant,
         description=f"Payment to {supplier.name}",
         reference=reference,
+        entry_type='Payment',
         entries=[
             {
-                'account': get_accounts_payable_account(),
+                'account': get_accounts_payable_account(tenant),
                 'debit': amount,
                 'credit': 0,
                 'description': f"Payment to {supplier.name}"
             },
             {
-                'account': get_cash_account(),
+                'account': get_cash_account(tenant),
                 'debit': 0,
                 'credit': amount,
                 'description': f"Cash paid to {supplier.name}"
@@ -393,7 +427,7 @@ def record_payment_to_supplier(supplier, amount, reference):
     )
 
 
-def record_payment_from_customer(customer, amount, reference):
+def record_payment_from_customer(customer, amount, reference, tenant=None):
     """
     Record payment received from customer.
     
@@ -401,27 +435,159 @@ def record_payment_from_customer(customer, amount, reference):
     Dr. Cash
     Cr. Accounts Receivable
     """
-    tenant = get_current_tenant()
+    if tenant is None:
+        tenant = get_current_tenant()
+    if has_posted_journal(tenant, reference, 'Receipt'):
+        return None
+
     amount = Decimal(str(amount))
     
     return create_journal_entry(
         tenant=tenant,
         description=f"Payment from {customer.name}",
         reference=reference,
+        entry_type='Receipt',
         entries=[
             {
-                'account': get_cash_account(),
+                'account': get_cash_account(tenant),
                 'debit': amount,
                 'credit': 0,
                 'description': f"Payment from {customer.name}"
             },
             {
-                'account': get_accounts_receivable_account(),
+                'account': get_accounts_receivable_account(tenant),
                 'debit': 0,
                 'credit': amount,
                 'description': f"Receivable from {customer.name}"
             }
         ]
+    )
+
+
+def record_sales_credit_note(customer, amount, reference, tenant=None):
+    """Reverse part of a credit sale: Dr Revenue, Cr AR."""
+    if tenant is None:
+        tenant = get_current_tenant()
+    if has_posted_journal(tenant, reference, 'Sales'):
+        return None
+
+    amount = Decimal(str(amount))
+    return create_journal_entry(
+        tenant=tenant,
+        description=f"Sales credit note for {customer.name}",
+        reference=reference,
+        entry_type='Sales',
+        entries=[
+            {
+                'account': get_sales_revenue_account(tenant),
+                'debit': amount,
+                'credit': 0,
+                'description': f"Credit note: {reference}",
+            },
+            {
+                'account': get_accounts_receivable_account(tenant),
+                'debit': 0,
+                'credit': amount,
+                'description': f"Reduce receivable: {customer.name}",
+            },
+        ],
+    )
+
+
+def record_purchase_debit_note(supplier, amount, reference, tenant=None):
+    """Reduce supplier payable: Dr AP, Cr Inventory."""
+    if tenant is None:
+        tenant = get_current_tenant()
+    if has_posted_journal(tenant, reference, 'Purchase'):
+        return None
+
+    amount = Decimal(str(amount))
+    return create_journal_entry(
+        tenant=tenant,
+        description=f"Purchase debit note for {supplier.name}",
+        reference=reference,
+        entry_type='Purchase',
+        entries=[
+            {
+                'account': get_accounts_payable_account(tenant),
+                'debit': amount,
+                'credit': 0,
+                'description': f"Debit note: {reference}",
+            },
+            {
+                'account': get_inventory_asset_account(tenant),
+                'debit': 0,
+                'credit': amount,
+                'description': f"Reduce inventory purchase: {supplier.name}",
+            },
+        ],
+    )
+
+
+def record_cogs(amount, reference, description, tenant=None):
+    """Record cost of goods sold: Dr COGS, Cr Inventory."""
+    if tenant is None:
+        tenant = get_current_tenant()
+    if has_posted_journal(tenant, reference, 'Sales'):
+        return None
+
+    amount = Decimal(str(amount))
+    if amount <= 0:
+        return None
+
+    return create_journal_entry(
+        tenant=tenant,
+        description=description,
+        reference=reference,
+        entry_type='Sales',
+        entries=[
+            {
+                'account': get_cost_of_goods_sold_account(tenant),
+                'debit': amount,
+                'credit': 0,
+                'description': description,
+            },
+            {
+                'account': get_inventory_asset_account(tenant),
+                'debit': 0,
+                'credit': amount,
+                'description': description,
+            },
+        ],
+    )
+
+
+def reverse_cogs(amount, reference, description, tenant=None):
+    """Reverse COGS on cancellation: Dr Inventory, Cr COGS."""
+    if tenant is None:
+        tenant = get_current_tenant()
+    reversal_ref = f"{reference}-REV"
+    if has_posted_journal(tenant, reversal_ref, 'Sales'):
+        return None
+
+    amount = Decimal(str(amount))
+    if amount <= 0:
+        return None
+
+    return create_journal_entry(
+        tenant=tenant,
+        description=description,
+        reference=reversal_ref,
+        entry_type='Sales',
+        entries=[
+            {
+                'account': get_inventory_asset_account(tenant),
+                'debit': amount,
+                'credit': 0,
+                'description': description,
+            },
+            {
+                'account': get_cost_of_goods_sold_account(tenant),
+                'debit': 0,
+                'credit': amount,
+                'description': description,
+            },
+        ],
     )
 
 

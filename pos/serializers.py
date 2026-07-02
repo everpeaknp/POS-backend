@@ -134,7 +134,7 @@ class POSTransactionCreateSerializer(serializers.ModelSerializer):
                 tenant=self.context['request'].user.tenant
             )
             
-            # Create lines and update stock
+            created_lines = []
             for line_data in lines_data:
                 product = line_data['product']
                 
@@ -143,18 +143,19 @@ class POSTransactionCreateSerializer(serializers.ModelSerializer):
                 line_data['product_sku'] = product.sku
                 
                 # Create line
-                POSTransactionLine.objects.create(
+                line = POSTransactionLine.objects.create(
                     transaction=pos_transaction,
                     tenant=self.context['request'].user.tenant,
                     **line_data
                 )
+                line.product = product
+                created_lines.append(line)
                 
                 # Update stock
                 from inventory.models import Stock, StockMovement
                 warehouse = validated_data.get('warehouse')
                 
                 if warehouse:
-                    # Get or create stock record
                     stock, created = Stock.objects.get_or_create(
                         tenant=self.context['request'].user.tenant,
                         product=product,
@@ -162,22 +163,23 @@ class POSTransactionCreateSerializer(serializers.ModelSerializer):
                         defaults={'quantity': 0}
                     )
                     
-                    # Reduce stock
                     stock.quantity -= line_data['quantity']
                     stock.save()
                     
-                    # Create stock movement
                     StockMovement.objects.create(
                         tenant=self.context['request'].user.tenant,
                         product=product,
                         warehouse=warehouse,
                         movement_type='out',
-                        quantity=-line_data['quantity'],
+                        quantity=line_data['quantity'],
                         reference_type='POSTransaction',
                         reference_id=pos_transaction.id,
                         reason=f'POS Sale - {pos_transaction.transaction_number}',
                         performed_by=self.context['request'].user
                     )
+
+            from sales.accounting_integration import post_pos_sale
+            post_pos_sale(pos_transaction, created_lines)
             
             # Update customer balance if credit sale
             if validated_data.get('payment_method') == 'credit' and validated_data.get('customer'):

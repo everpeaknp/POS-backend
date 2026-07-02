@@ -1,4 +1,5 @@
 from rest_framework import serializers
+from django.db import transaction
 from .models import (
     Customer, SalesOrder, SalesOrderLine, Quotation, QuotationLine, Invoice, CreditNote,
     CustomerLedger, PaymentReceived
@@ -101,17 +102,33 @@ class SalesOrderCreateSerializer(serializers.ModelSerializer):
     
     def create(self, validated_data):
         lines_data = validated_data.pop('lines')
-        sales_order = SalesOrder.objects.create(**validated_data)
-        
-        # Create line items with explicit tenant
-        for line_data in lines_data:
-            SalesOrderLine.objects.create(
-                sales_order=sales_order,
-                tenant=sales_order.tenant,
-                **line_data
-            )
-        
-        sales_order.calculate_totals()
+        status_value = validated_data.get('status', 'Draft')
+        warehouse_id = self.context.get('warehouse_id')
+
+        with transaction.atomic():
+            sales_order = SalesOrder.objects.create(**validated_data)
+
+            for line_data in lines_data:
+                SalesOrderLine.objects.create(
+                    sales_order=sales_order,
+                    tenant=sales_order.tenant,
+                    **line_data
+                )
+
+            sales_order.calculate_totals()
+
+            if status_value in ('Confirmed', 'Delivered'):
+                from sales.stock_integration import handle_sales_order_status_change
+                request = self.context.get('request')
+                performed_by = request.user if request else None
+                handle_sales_order_status_change(
+                    sales_order,
+                    old_status='Draft',
+                    new_status=status_value,
+                    performed_by=performed_by,
+                    warehouse_id=warehouse_id,
+                )
+
         return sales_order
     
     def update(self, instance, validated_data):

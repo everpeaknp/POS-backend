@@ -305,6 +305,12 @@ class SalesOrderViewSet(viewsets.ModelViewSet):
         if self.action in ['create', 'update', 'partial_update']:
             return SalesOrderCreateSerializer
         return SalesOrderSerializer
+
+    def get_serializer_context(self):
+        context = super().get_serializer_context()
+        if hasattr(self, 'request') and self.request is not None:
+            context['warehouse_id'] = self.request.data.get('warehouse_id')
+        return context
     
     def perform_create(self, serializer):
         from django.db import transaction
@@ -348,6 +354,7 @@ class SalesOrderViewSet(viewsets.ModelViewSet):
         """Update the status of a sales order"""
         sales_order = self.get_object()
         new_status = request.data.get('status')
+        warehouse_id = request.data.get('warehouse_id')
         
         if new_status not in dict(SalesOrder.STATUS_CHOICES):
             return Response(
@@ -355,8 +362,24 @@ class SalesOrderViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST
             )
         
-        sales_order.status = new_status
-        sales_order.save()
+        old_status = sales_order.status
+        
+        try:
+            from django.db import transaction as db_transaction
+            from sales.stock_integration import handle_sales_order_status_change
+
+            with db_transaction.atomic():
+                handle_sales_order_status_change(
+                    sales_order,
+                    old_status=old_status,
+                    new_status=new_status,
+                    performed_by=request.user,
+                    warehouse_id=warehouse_id,
+                )
+                sales_order.status = new_status
+                sales_order.save(update_fields=['status'])
+        except ValueError as e:
+            return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
         
         serializer = self.get_serializer(sales_order)
         return Response(serializer.data)
@@ -883,6 +906,9 @@ class InvoiceViewSet(viewsets.ModelViewSet):
             invoice.status = 'Partially Paid'
         
         invoice.save()
+
+        from sales.accounting_integration import post_invoice_payment
+        post_invoice_payment(invoice, payment_amount)
         
         serializer = self.get_serializer(invoice)
         return Response(serializer.data)

@@ -359,6 +359,16 @@ class PurchaseInvoice(TenantModel):
         """Remaining balance to be paid"""
         return self.amount - self.paid_amount
 
+    def save(self, *args, **kwargs):
+        from django.db import transaction
+
+        is_new = self.pk is None
+        with transaction.atomic():
+            super().save(*args, **kwargs)
+            if is_new and self.amount and self.amount > 0:
+                from purchase.accounting_integration import post_purchase_invoice
+                post_purchase_invoice(self)
+
 
 class DebitNote(TenantModel):
     """Debit Note model"""
@@ -409,3 +419,15 @@ class DebitNote(TenantModel):
     
     def __str__(self):
         return f"{self.debit_note_number} - {self.supplier.name}"
+
+    def save(self, *args, **kwargs):
+        is_new = self.pk is None
+        old_status = None
+        if not is_new:
+            old_status = DebitNote.objects.filter(pk=self.pk).values_list('status', flat=True).first()
+
+        super().save(*args, **kwargs)
+
+        if self.status == 'Issued' and (is_new or old_status == 'Draft'):
+            from purchase.accounting_integration import post_purchase_debit_note
+            post_purchase_debit_note(self)

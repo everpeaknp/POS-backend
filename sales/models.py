@@ -335,6 +335,11 @@ class Invoice(TenantModel):
                 if is_new or (old_status == 'Draft' and self.status != 'Draft'):
                     self._create_ledger_entry()
                     self._update_customer_balance()
+
+            if self.status != 'Draft':
+                if is_new or (old_status == 'Draft' and self.status != 'Draft'):
+                    from sales.accounting_integration import post_sales_invoice
+                    post_sales_invoice(self)
     
     def _create_ledger_entry(self):
         """Create customer ledger entry for credit sale"""
@@ -388,6 +393,17 @@ class CreditNote(TenantModel):
     def __str__(self):
         return f"{self.credit_note_number} - {self.customer.name}"
 
+    def save(self, *args, **kwargs):
+        is_new = self.pk is None
+        old_status = None
+        if not is_new:
+            old_status = CreditNote.objects.filter(pk=self.pk).values_list('status', flat=True).first()
+
+        super().save(*args, **kwargs)
+
+        if self.status == 'Issued' and (is_new or old_status == 'Draft'):
+            from sales.accounting_integration import post_sales_credit_note
+            post_sales_credit_note(self)
 
 
 class CustomerLedger(TenantModel):
@@ -547,6 +563,9 @@ class PaymentReceived(TenantModel):
             if is_new:
                 self._create_ledger_entry()
                 self._update_customer_balance()
+
+                from sales.accounting_integration import post_payment_received
+                post_payment_received(self)
                 
                 # Update invoice if linked
                 if self.invoice:
