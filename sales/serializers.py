@@ -1,4 +1,5 @@
 from rest_framework import serializers
+from rest_framework.fields import empty
 from django.db import transaction
 from .models import (
     Customer, SalesOrder, SalesOrderLine, Quotation, QuotationLine, Invoice, CreditNote,
@@ -82,16 +83,21 @@ class SalesOrderCreateSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = ['id', 'order_number']
 
+    def _status_from_initial(self):
+        initial = getattr(self, 'initial_data', empty)
+        if initial is empty or not isinstance(initial, dict):
+            return 'Draft'
+        return initial.get('status', 'Draft')
+
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        status_value = (self.initial_data or {}).get('status', 'Draft')
-        require_stock = status_value in ('Confirmed', 'Delivered')
-        self.fields['lines'].child.context['require_stock'] = require_stock
+        require_stock = self._status_from_initial() in ('Confirmed', 'Delivered')
+        if 'lines' in self.fields:
+            self.fields['lines'].child.context['require_stock'] = require_stock
     
     def validate_lines(self, lines_data):
         """Validate line stock only when confirming or delivering."""
-        status_value = (self.initial_data or {}).get('status', 'Draft')
-        if status_value not in ('Confirmed', 'Delivered'):
+        if self._status_from_initial() not in ('Confirmed', 'Delivered'):
             return lines_data
 
         from inventory.models import Product
