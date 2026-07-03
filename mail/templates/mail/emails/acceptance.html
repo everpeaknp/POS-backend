@@ -1,0 +1,8 @@
+{% extends "mail/emails/base.html" %}
+{% block content %}
+<h1>Invitation accepted</h1>
+<p>Hi {{ first_name }},</p>
+<p>You've successfully joined <strong>{{ company_name }}</strong> as <strong>{{ role }}</strong>.</p>
+<p><a href="{{ dashboard_url }}" class="btn">Open workspace</a></p>
+<p class="muted">You can switch organizations anytime from the workspace menu.</p>
+{% endblock %}

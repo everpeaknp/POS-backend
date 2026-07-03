@@ -324,6 +324,12 @@ class RegisterSerializer(serializers.ModelSerializer):
                 tenant=None,  # No automatic tenant assignment
                 role='viewer'  # Default role until they create/join an organization
             )
+
+            try:
+                from mail.services import dispatch_welcome_email
+                dispatch_welcome_email(user)
+            except Exception:
+                pass
             
             return user
         except serializers.ValidationError:

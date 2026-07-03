@@ -6,6 +6,7 @@ from django.db import models
 from django.conf import settings
 from django.utils import timezone
 from datetime import timedelta
+import uuid
 
 
 class OrganizationInvitation(models.Model):
@@ -21,6 +22,7 @@ class OrganizationInvitation(models.Model):
     ]
     
     # Invitation details
+    token = models.UUIDField(default=uuid.uuid4, unique=True, editable=False, db_index=True)
     tenant = models.ForeignKey(
         'tenants.Tenant',
         on_delete=models.CASCADE,
@@ -143,6 +145,12 @@ class OrganizationInvitation(models.Model):
         self.status = 'accepted'
         self.responded_at = timezone.now()
         self.save()
+
+        try:
+            from mail.services import dispatch_acceptance_email
+            dispatch_acceptance_email(self)
+        except Exception:
+            pass
         
         return True
     
@@ -158,11 +166,24 @@ class OrganizationInvitation(models.Model):
         return True
     
     def cancel(self):
-        """Cancel the invitation (by inviter)"""
+        """Cancel the invitation (by inviter)."""
         if self.status != 'pending':
             raise ValueError("Only pending invitations can be cancelled")
-        
+
         self.status = 'cancelled'
         self.save()
-        
+
         return True
+
+    def revoke(self):
+        """Revoke a pending invitation (admin alias for cancel)."""
+        return self.cancel()
+
+    def resend(self):
+        """Re-send invitation email for pending invitations."""
+        if self.status != 'pending':
+            raise ValueError("Only pending invitations can be resent")
+        if self.is_expired:
+            raise ValueError("Cannot resend an expired invitation")
+        from mail.services import dispatch_invitation_email
+        return dispatch_invitation_email(self)

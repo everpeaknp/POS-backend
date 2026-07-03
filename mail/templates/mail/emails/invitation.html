@@ -1,0 +1,12 @@
+{% extends "mail/emails/base.html" %}
+{% block content %}
+<h1>You're invited to join {{ company_name }}</h1>
+<p>Hi {{ first_name }},</p>
+<p><strong>{{ inviter_name }}</strong> has invited you to join <strong>{{ company_name }}</strong> on KHATA as <strong>{{ role }}</strong>.</p>
+{% if custom_message %}<p style="background:#f0fdf4;border-left:4px solid {{ branding.primary_color }};padding:12px 16px;border-radius:0 8px 8px 0;">{{ custom_message }}</p>{% endif %}
+<p><a href="{{ invitation_link }}" class="btn">Accept invitation</a></p>
+<p class="muted">This invitation expires on {{ expires_at }}. If you didn't expect this email, you can safely ignore it.</p>
+<div class="security">
+  <strong>Security note:</strong> KHATA will never ask for your password by email. Only accept invitations from people you trust.
+</div>
+{% endblock %}

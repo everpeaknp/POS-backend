@@ -75,3 +75,126 @@ body {
 .app-header .form-control-navbar {
     min-width: 10rem;
 }
+
+/* ============================================================================
+   KHATA sidebar dropdowns — match dashboard sidebar (#1E2A3B + green active)
+   ============================================================================ */
+
+.app-sidebar,
+.app-sidebar .sidebar-wrapper {
+    background: #1e2a3b !important;
+}
+
+.app-sidebar .sidebar-brand,
+.app-sidebar .sidebar-brand .brand-link {
+    background: #1e2a3b !important;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.1) !important;
+}
+
+.app-sidebar .brand-text {
+    color: #fff !important;
+    font-weight: 600 !important;
+}
+
+.app-sidebar .user-panel {
+    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+    margin-bottom: 0.5rem;
+    padding-bottom: 0.75rem;
+}
+
+.app-sidebar .user-panel a,
+.app-sidebar .user-panel span {
+    color: rgba(255, 255, 255, 0.9) !important;
+}
+
+#jazzy-navigation > .nav-item > .nav-link {
+    border-radius: 0.5rem;
+    margin: 0.125rem 0.5rem;
+    padding: 0.625rem 0.75rem !important;
+    color: rgba(255, 255, 255, 0.65) !important;
+    font-weight: 500;
+    transition: background-color 0.2s ease, color 0.2s ease;
+}
+
+#jazzy-navigation > .nav-item > .nav-link:hover {
+    background: rgba(255, 255, 255, 0.08) !important;
+    color: #fff !important;
+}
+
+#jazzy-navigation > .nav-item > .nav-link.active {
+    background: #22c55e !important;
+    color: #fff !important;
+}
+
+#jazzy-navigation > .nav-item.has-treeview > .nav-link {
+    cursor: pointer;
+}
+
+#jazzy-navigation > .nav-item.has-treeview.menu-open > .nav-link {
+    background: rgba(255, 255, 255, 0.1) !important;
+    color: #fff !important;
+}
+
+#jazzy-navigation .nav-link p {
+    display: flex !important;
+    align-items: center;
+    justify-content: space-between;
+    width: 100%;
+    gap: 0.5rem;
+}
+
+#jazzy-navigation .nav-arrow {
+    font-size: 0.75rem;
+    opacity: 0.7;
+    transition: transform 0.2s ease;
+    margin-left: auto;
+}
+
+#jazzy-navigation > .nav-item.has-treeview.menu-open > .nav-link .nav-arrow {
+    transform: rotate(90deg);
+    opacity: 1;
+}
+
+#jazzy-navigation .nav-treeview {
+    overflow: hidden;
+    padding: 0.125rem 0 0.375rem;
+}
+
+#jazzy-navigation .nav-treeview > .nav-item > .nav-link {
+    border-radius: 0.375rem;
+    margin: 0.0625rem 0.5rem 0.0625rem 1.25rem;
+    padding: 0.5rem 0.75rem 0.5rem 0.875rem !important;
+    color: rgba(255, 255, 255, 0.55) !important;
+    font-size: 0.8125rem;
+    border-left: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+#jazzy-navigation .nav-treeview > .nav-item > .nav-link:hover {
+    background: rgba(255, 255, 255, 0.06) !important;
+    color: #fff !important;
+}
+
+#jazzy-navigation .nav-treeview > .nav-item > .nav-link.active {
+    background: rgba(34, 197, 94, 0.18) !important;
+    color: #86efac !important;
+    border-left-color: #22c55e;
+}
+
+#jazzy-navigation .nav-treeview .nav-icon {
+    font-size: 0.5rem !important;
+    width: 0.75rem !important;
+    opacity: 0.6;
+}
+
+.app-sidebar .sidebar-wrapper {
+    overflow-y: auto;
+}
+
+.app-sidebar .sidebar-wrapper::-webkit-scrollbar {
+    width: 6px;
+}
+
+.app-sidebar .sidebar-wrapper::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.15);
+    border-radius: 3px;
+}

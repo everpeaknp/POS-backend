@@ -1,0 +1,273 @@
+{% extends "admin/base_site.html" %}
+{% load static %}
+
+{% block content_title %}{{ title }}{% endblock %}
+
+{% block extrastyle %}
+<style>
+  .khata-analytics { --green: #22c55e; --green-dim: #16a34a; --slate: #1e2a3b; --muted: #64748b; }
+  .khata-analytics .page-header { margin-bottom: 1.5rem; }
+  .khata-analytics .page-header h1 { font-size: 1.75rem; font-weight: 700; color: #0f172a; margin: 0 0 0.25rem; }
+  .khata-analytics .page-header p { color: var(--muted); margin: 0; font-size: 0.9rem; }
+  .kpi-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 1rem; margin-bottom: 1.5rem; }
+  .kpi-card {
+    background: #fff; border: 1px solid #e2e8f0; border-radius: 12px; padding: 1.25rem;
+    box-shadow: 0 1px 3px rgba(0,0,0,.04); position: relative; overflow: hidden;
+  }
+  .kpi-card::before { content: ''; position: absolute; top: 0; left: 0; right: 0; height: 3px; background: var(--green); }
+  .kpi-card.warn::before { background: #f59e0b; }
+  .kpi-card.danger::before { background: #ef4444; }
+  .kpi-card.info::before { background: #3b82f6; }
+  .kpi-label { font-size: 0.75rem; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
+  .kpi-value { font-size: 1.75rem; font-weight: 800; color: #0f172a; margin-top: 0.35rem; line-height: 1.1; }
+  .kpi-sub { font-size: 0.8rem; color: var(--muted); margin-top: 0.25rem; }
+  .chart-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 1rem; margin-bottom: 1.5rem; }
+  @media (max-width: 1100px) { .chart-grid { grid-template-columns: 1fr; } }
+  .chart-card {
+    background: #fff; border: 1px solid #e2e8f0; border-radius: 12px; padding: 1.25rem;
+    box-shadow: 0 1px 3px rgba(0,0,0,.04);
+  }
+  .chart-card h3 { font-size: 0.95rem; font-weight: 700; color: #0f172a; margin: 0 0 1rem; }
+  .chart-wrap { position: relative; height: 260px; }
+  .tables-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
+  @media (max-width: 900px) { .tables-grid { grid-template-columns: 1fr; } }
+  .data-table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+  .data-table th { text-align: left; padding: 0.6rem 0.75rem; background: #f8fafc; color: var(--muted); font-weight: 600; font-size: 0.7rem; text-transform: uppercase; }
+  .data-table td { padding: 0.6rem 0.75rem; border-top: 1px solid #f1f5f9; color: #334155; }
+  .badge { display: inline-block; padding: 0.15rem 0.5rem; border-radius: 9999px; font-size: 0.7rem; font-weight: 600; }
+  .badge-ok { background: #dcfce7; color: #166534; }
+  .badge-warn { background: #fef3c7; color: #92400e; }
+  .badge-bad { background: #fee2e2; color: #991b1b; }
+  .badge-muted { background: #f1f5f9; color: #475569; }
+  .quick-actions { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-bottom: 1.5rem; }
+  .quick-actions a, .quick-actions button {
+    display: inline-flex; align-items: center; gap: 0.35rem; padding: 0.5rem 1rem;
+    border-radius: 8px; font-size: 0.85rem; font-weight: 500; text-decoration: none; border: 1px solid #e2e8f0;
+    background: #fff; color: #334155; cursor: pointer;
+  }
+  .quick-actions a:hover, .quick-actions button:hover { border-color: var(--green); color: var(--green-dim); }
+  .quick-actions .primary { background: var(--green); color: #fff; border-color: var(--green); }
+  .quick-actions .primary:hover { background: var(--green-dim); color: #fff; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="khata-analytics col-12">
+  <div class="page-header">
+    <p>{{ subtitle }}</p>
+  </div>
+
+  <div class="quick-actions">
+    <a href="{% url 'admin:tenants_tenant_changelist' %}" class="primary">Organizations</a>
+    <a href="{% url 'admin:billing_billingpayment_changelist' %}">Payments</a>
+    <a href="{% url 'admin_mail_dashboard' %}">Mail Center</a>
+    <a href="http://localhost:3000" target="_blank" rel="noopener">Customer App ↗</a>
+    <form method="post" style="display:inline;">{% csrf_token %}
+      <button type="submit" name="action" value="process_mail_queue">Process mail queue</button>
+    </form>
+  </div>
+
+  <div class="kpi-grid">
+    <div class="kpi-card">
+      <div class="kpi-label">Organizations</div>
+      <div class="kpi-value">{{ stats.kpis.total_tenants }}</div>
+      <div class="kpi-sub">{{ stats.kpis.active_tenants }} active · {{ stats.kpis.new_tenants_month }} new this month</div>
+    </div>
+    <div class="kpi-card info">
+      <div class="kpi-label">Users</div>
+      <div class="kpi-value">{{ stats.kpis.total_users }}</div>
+      <div class="kpi-sub">{{ stats.kpis.new_users_month }} joined this month</div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-label">Revenue (month)</div>
+      <div class="kpi-value">Rs. {{ stats.kpis.revenue_month|floatformat:0 }}</div>
+      <div class="kpi-sub">Rs. {{ stats.kpis.revenue_all|floatformat:0 }} all time</div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-label">Subscriptions</div>
+      <div class="kpi-value">{{ stats.kpis.active_subscriptions }}</div>
+      <div class="kpi-sub">active or trialing</div>
+    </div>
+    <div class="kpi-card {% if stats.kpis.pending_payments %}warn{% endif %}">
+      <div class="kpi-label">Pending payments</div>
+      <div class="kpi-value">{{ stats.kpis.pending_payments }}</div>
+      <div class="kpi-sub">{{ stats.kpis.failed_payments }} failed</div>
+    </div>
+    <div class="kpi-card {% if stats.kpis.mail_failed %}danger{% endif %}">
+      <div class="kpi-label">Email queue</div>
+      <div class="kpi-value">{{ stats.kpis.mail_queued }}</div>
+      <div class="kpi-sub">{{ stats.kpis.mail_failed }} failed · {{ stats.kpis.emails_sent_month }} sent this month</div>
+    </div>
+    <div class="kpi-card info">
+      <div class="kpi-label">Invitations</div>
+      <div class="kpi-value">{{ stats.kpis.pending_invitations }}</div>
+      <div class="kpi-sub">pending acceptance</div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-label">Self-serve signups</div>
+      <div class="kpi-value">{{ stats.kpis.registration_tenants }}</div>
+      <div class="kpi-sub">from registration flow</div>
+    </div>
+  </div>
+
+  <div class="chart-grid">
+    <div class="chart-card">
+      <h3>New organizations (30 days)</h3>
+      <div class="chart-wrap"><canvas id="chartSignups"></canvas></div>
+    </div>
+    <div class="chart-card">
+      <h3>Revenue (30 days)</h3>
+      <div class="chart-wrap"><canvas id="chartRevenue"></canvas></div>
+    </div>
+    <div class="chart-card">
+      <h3>Subscription status</h3>
+      <div class="chart-wrap"><canvas id="chartSubStatus"></canvas></div>
+    </div>
+    <div class="chart-card">
+      <h3>Plan distribution</h3>
+      <div class="chart-wrap"><canvas id="chartSubPlan"></canvas></div>
+    </div>
+    <div class="chart-card">
+      <h3>Module adoption</h3>
+      <div class="chart-wrap"><canvas id="chartModules"></canvas></div>
+    </div>
+    <div class="chart-card">
+      <h3>Business types</h3>
+      <div class="chart-wrap"><canvas id="chartBiz"></canvas></div>
+    </div>
+  </div>
+
+  <div class="tables-grid">
+    <div class="chart-card">
+      <h3>Recent organizations</h3>
+      <table class="data-table">
+        <thead><tr><th>Name</th><th>Plan</th><th>Status</th><th>Created</th></tr></thead>
+        <tbody>
+        {% for t in stats.recent_tenants %}
+          <tr>
+            <td><a href="{% url 'admin:tenants_tenant_change' t.id %}">{{ t.name }}</a></td>
+            <td>{{ t.plan_type|title }}</td>
+            <td>{% if t.is_active %}<span class="badge badge-ok">Active</span>{% else %}<span class="badge badge-muted">Inactive</span>{% endif %}</td>
+            <td>{{ t.created_at|date:"M j, Y" }}</td>
+          </tr>
+        {% empty %}
+          <tr><td colspan="4" style="color:#94a3b8;">No organizations yet</td></tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    <div class="chart-card">
+      <h3>Recent payments</h3>
+      <table class="data-table">
+        <thead><tr><th>Tenant</th><th>Plan</th><th>Amount</th><th>Status</th></tr></thead>
+        <tbody>
+        {% for p in stats.recent_payments %}
+          <tr>
+            <td>{{ p.tenant__name }}</td>
+            <td>{{ p.plan_code|title }}</td>
+            <td>Rs. {{ p.amount }}</td>
+            <td>
+              {% if p.status == 'completed' %}<span class="badge badge-ok">Completed</span>
+              {% elif p.status == 'pending' %}<span class="badge badge-warn">Pending</span>
+              {% elif p.status == 'failed' %}<span class="badge badge-bad">Failed</span>
+              {% else %}<span class="badge badge-muted">{{ p.status }}</span>{% endif %}
+            </td>
+          </tr>
+        {% empty %}
+          <tr><td colspan="4" style="color:#94a3b8;">No payments yet</td></tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+{{ charts_json|json_script:"platform-charts" }}
+{% endblock %}
+
+{% block extrajs %}
+{{ block.super }}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<script>
+(function () {
+  const charts = JSON.parse(document.getElementById('platform-charts').textContent);
+  const green = '#22c55e';
+  const greenLight = 'rgba(34, 197, 94, 0.15)';
+  const palette = ['#22c55e', '#3b82f6', '#8b5cf6', '#f59e0b', '#ef4444', '#06b6d4', '#ec4899', '#64748b'];
+
+  Chart.defaults.font.family = "'Inter', system-ui, sans-serif";
+  Chart.defaults.color = '#64748b';
+
+  function lineChart(id, labels, values, label) {
+    new Chart(document.getElementById(id), {
+      type: 'line',
+      data: {
+        labels,
+        datasets: [{
+          label,
+          data: values,
+          borderColor: green,
+          backgroundColor: greenLight,
+          fill: true,
+          tension: 0.35,
+          pointRadius: 2,
+          pointHoverRadius: 5,
+        }],
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: { legend: { display: false } },
+        scales: {
+          x: { grid: { display: false }, ticks: { maxTicksLimit: 8, font: { size: 10 } } },
+          y: { beginAtZero: true, grid: { color: '#f1f5f9' } },
+        },
+      },
+    });
+  }
+
+  function doughnut(id, labels, values) {
+    new Chart(document.getElementById(id), {
+      type: 'doughnut',
+      data: {
+        labels,
+        datasets: [{ data: values, backgroundColor: palette.slice(0, labels.length), borderWidth: 0 }],
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        cutout: '62%',
+        plugins: { legend: { position: 'bottom', labels: { boxWidth: 10, padding: 12, font: { size: 11 } } } },
+      },
+    });
+  }
+
+  function barH(id, labels, values) {
+    new Chart(document.getElementById(id), {
+      type: 'bar',
+      data: {
+        labels,
+        datasets: [{ data: values, backgroundColor: green, borderRadius: 6, barThickness: 18 }],
+      },
+      options: {
+        indexAxis: 'y',
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: { legend: { display: false } },
+        scales: {
+          x: { beginAtZero: true, grid: { color: '#f1f5f9' } },
+          y: { grid: { display: false } },
+        },
+      },
+    });
+  }
+
+  lineChart('chartSignups', charts.signups.labels, charts.signups.values, 'Signups');
+  lineChart('chartRevenue', charts.revenue.labels, charts.revenue.values, 'Revenue (NPR)');
+  doughnut('chartSubStatus', charts.subscriptions_status.labels, charts.subscriptions_status.values);
+  doughnut('chartSubPlan', charts.subscriptions_plan.labels, charts.subscriptions_plan.values);
+  if (charts.modules.labels.length) barH('chartModules', charts.modules.labels, charts.modules.values);
+  if (charts.business_types.labels.length) doughnut('chartBiz', charts.business_types.labels, charts.business_types.values);
+})();
+</script>
+{% endblock %}

@@ -1,0 +1,9 @@
+{% extends "mail/emails/base.html" %}
+{% block content %}
+<h1>Verify your email</h1>
+<p>Hi {{ first_name }},</p>
+<p>Please confirm your email address to secure your KHATA account.</p>
+<p><a href="{{ verification_link }}" class="btn">Verify email address</a></p>
+<p class="muted">This link expires in 24 hours. If you didn't create an account, ignore this email.</p>
+<div class="security"><strong>Security note:</strong> Never share this verification link with anyone.</div>
+{% endblock %}

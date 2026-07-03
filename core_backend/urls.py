@@ -10,9 +10,13 @@ from drf_spectacular.views import (
     SpectacularRedocView,
     SpectacularSwaggerView,
 )
+from mail.admin_views import mail_dashboard
+from core_backend.admin_views import platform_dashboard
 
 urlpatterns = [
-    # Admin
+    # Admin — custom dashboards must use admin_view for full Jazzmin shell (sidebar)
+    path('admin/platform/', admin.site.admin_view(platform_dashboard), name='admin_platform_dashboard'),
+    path('admin/mail/dashboard/', admin.site.admin_view(mail_dashboard), name='admin_mail_dashboard'),
     path('admin/', admin.site.urls),
     
     # API Documentation
@@ -23,6 +27,8 @@ urlpatterns = [
     # API Endpoints
     path('api/auth/', include('users.urls')),
     path('api/tenants/', include('tenants.urls')),
+    path('api/billing/', include('billing.urls')),
+    path('api/mail/', include('mail.urls')),
     path('api/inventory/', include('inventory.urls')),
     path('api/sales/', include('sales.urls')),
     path('api/purchase/', include('purchase.urls')),

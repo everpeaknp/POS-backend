@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="color-scheme" content="light dark">
+  <meta name="supported-color-schemes" content="light dark">
+  <title>{{ subject }}</title>
+  <style>
+    :root { color-scheme: light dark; }
+    body { margin:0; padding:0; background:#f3f4f6; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif; }
+    .wrapper { width:100%; background:#f3f4f6; padding:32px 16px; }
+    .card { max-width:600px; margin:0 auto; background:#ffffff; border-radius:16px; overflow:hidden; box-shadow:0 4px 24px rgba(0,0,0,.06); }
+    .header { background:{{ branding.primary_color }}; padding:28px 32px; text-align:center; }
+    .header img { max-height:48px; max-width:180px; }
+    .brand { color:#fff; font-size:22px; font-weight:700; letter-spacing:.5px; margin:0; }
+    .body { padding:32px; color:#374151; font-size:15px; line-height:1.65; }
+    .body h1 { color:#111827; font-size:22px; margin:0 0 16px; }
+    .btn { display:inline-block; background:{{ branding.primary_color }}; color:#ffffff !important; text-decoration:none; padding:14px 28px; border-radius:10px; font-weight:600; font-size:15px; margin:20px 0; }
+    .muted { color:#6b7280; font-size:13px; }
+    .security { background:#f9fafb; border:1px solid #e5e7eb; border-radius:10px; padding:16px; margin-top:24px; font-size:13px; color:#4b5563; }
+    .footer { padding:24px 32px; background:#f9fafb; border-top:1px solid #e5e7eb; text-align:center; font-size:12px; color:#9ca3af; }
+    .footer a { color:#6b7280; }
+    @media (prefers-color-scheme: dark) {
+      body, .wrapper { background:#111827 !important; }
+      .card { background:#1f2937 !important; box-shadow:0 4px 24px rgba(0,0,0,.3) !important; }
+      .body { color:#d1d5db !important; }
+      .body h1 { color:#f9fafb !important; }
+      .security { background:#374151 !important; border-color:#4b5563 !important; color:#d1d5db !important; }
+      .footer { background:#111827 !important; border-color:#374151 !important; }
+    }
+    @media only screen and (max-width:620px) {
+      .body, .header, .footer { padding-left:20px !important; padding-right:20px !important; }
+    }
+  </style>
+</head>
+<body>
+  <div class="wrapper">
+    <div class="card">
+      <div class="header">
+        {% if branding.logo_url %}
+          <img src="{{ branding.logo_url }}" alt="{{ branding.company_name }}">
+        {% else %}
+          <p class="brand">{{ branding.company_name }}</p>
+        {% endif %}
+      </div>
+      <div class="body">
+        {% block content %}{% endblock %}
+      </div>
+      <div class="footer">
+        <p>{{ branding.footer_text }}</p>
+        {% if branding.support_email %}<p><a href="mailto:{{ branding.support_email }}">{{ branding.support_email }}</a></p>{% endif %}
+        {% if branding.unsubscribe_url %}<p><a href="{{ unsubscribe_link|default:branding.unsubscribe_url }}">Unsubscribe</a></p>{% endif %}
+      </div>
+    </div>
+  </div>
+  {% if tracking_pixel_url %}<img src="{{ tracking_pixel_url }}" width="1" height="1" alt="" style="display:none">{% endif %}
+</body>
+</html>

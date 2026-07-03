@@ -1,0 +1,8 @@
+{% extends "mail/emails/base.html" %}
+{% block content %}
+<h1>Welcome to KHATA</h1>
+<p>Hi {{ first_name }},</p>
+<p>Your account has been created successfully. KHATA helps you manage sales, inventory, accounting, and more — all in one place.</p>
+<p><a href="{{ dashboard_url }}" class="btn">Go to dashboard</a></p>
+<p class="muted">Need help getting started? Reply to this email or contact our support team.</p>
+{% endblock %}

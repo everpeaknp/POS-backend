@@ -1,0 +1,9 @@
+{% extends "admin/base_site.html" %}
+{% block content %}
+<h1>{{ title }}</h1>
+<form method="post">{% csrf_token %}
+  <p><label>To email: <input type="email" name="to_email" value="{{ default_email }}" size="40" required></label></p>
+  <button type="submit" class="button default">Send test email</button>
+  <a href="{% url 'admin:mail_smtpsettings_change' 1 %}" class="button cancel-link">Cancel</a>
+</form>
+{% endblock %}

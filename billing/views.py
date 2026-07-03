@@ -1,0 +1,86 @@
+from rest_framework import status
+from rest_framework.permissions import IsAuthenticated
+from rest_framework.response import Response
+from rest_framework.views import APIView
+from drf_spectacular.utils import extend_schema
+
+from billing.serializers import CheckoutSerializer, VerifyPaymentSerializer
+from billing import services
+from tenants.utils import get_request_tenant
+
+
+class BillingOverviewView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(tags=['Billing'], summary='Get billing overview')
+    def get(self, request):
+        tenant = get_request_tenant(request.user)
+        if not tenant:
+            return Response({'detail': 'No organization in context'}, status=status.HTTP_400_BAD_REQUEST)
+        return Response(services.billing_overview(tenant, request.user))
+
+
+class BillingCheckoutView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(tags=['Billing'], summary='Start eSewa checkout for a plan')
+    def post(self, request):
+        tenant = get_request_tenant(request.user)
+        if not tenant:
+            return Response({'detail': 'No organization in context'}, status=status.HTTP_400_BAD_REQUEST)
+
+        serializer = CheckoutSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        try:
+            form = services.initiate_checkout(
+                tenant,
+                request.user,
+                serializer.validated_data['plan_code'],
+            )
+            return Response(form, status=status.HTTP_201_CREATED)
+        except PermissionError as exc:
+            return Response({'detail': str(exc)}, status=status.HTTP_403_FORBIDDEN)
+        except ValueError as exc:
+            return Response({'detail': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+
+class BillingVerifyView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(tags=['Billing'], summary='Verify eSewa payment and activate subscription')
+    def post(self, request):
+        tenant = get_request_tenant(request.user)
+        if not tenant:
+            return Response({'detail': 'No organization in context'}, status=status.HTTP_400_BAD_REQUEST)
+
+        serializer = VerifyPaymentSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        transaction_uuid = serializer.validated_data['transaction_uuid']
+        encoded_data = serializer.validated_data.get('data') or None
+
+        if not transaction_uuid and encoded_data:
+            from billing.esewa import decode_callback_data
+            transaction_uuid = decode_callback_data(encoded_data).get('transaction_uuid')
+
+        if not transaction_uuid:
+            return Response({'detail': 'transaction_uuid is required'}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            result = services.verify_and_activate(
+                tenant,
+                request.user,
+                transaction_uuid,
+                encoded_data,
+            )
+            return Response(result)
+        except PermissionError as exc:
+            return Response({'detail': str(exc)}, status=status.HTTP_403_FORBIDDEN)
+        except ValueError as exc:
+            return Response({'detail': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        except Exception as exc:
+            return Response(
+                {'detail': f'Payment verification failed: {exc}'},
+                status=status.HTTP_502_BAD_GATEWAY,
+            )

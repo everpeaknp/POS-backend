@@ -1,0 +1,65 @@
+{% extends "admin/base_site.html" %}
+
+{% block content_title %}{{ title }}{% endblock %}
+
+{% block extrastyle %}
+<style>
+  .mail-dash { --green: #22c55e; --muted: #64748b; }
+  .mail-dash .subtitle { color: var(--muted); margin: 0 0 1.25rem; font-size: 0.9rem; }
+  .mail-kpi-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 1rem; margin-bottom: 1.25rem; }
+  .mail-kpi { background: #fff; border: 1px solid #e2e8f0; border-radius: 12px; padding: 1.25rem; box-shadow: 0 1px 3px rgba(0,0,0,.04); }
+  .mail-kpi strong { display: block; font-size: 0.75rem; text-transform: uppercase; color: var(--muted); letter-spacing: .04em; }
+  .mail-kpi .val { font-size: 1.75rem; font-weight: 800; color: #0f172a; margin-top: 0.35rem; }
+  .mail-actions { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-bottom: 1.25rem; }
+  .mail-actions button, .mail-actions a.btn-link {
+    padding: 0.5rem 1rem; border-radius: 8px; font-size: 0.85rem; font-weight: 500; border: 1px solid #e2e8f0;
+    background: #fff; cursor: pointer; text-decoration: none; color: #334155;
+  }
+  .mail-actions .primary { background: var(--green); color: #fff; border-color: var(--green); }
+  .mail-table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+  .mail-table th { text-align: left; padding: 0.6rem 0.75rem; background: #f8fafc; color: var(--muted); font-size: 0.7rem; text-transform: uppercase; }
+  .mail-table td { padding: 0.6rem 0.75rem; border-top: 1px solid #f1f5f9; }
+  .mail-status { display: inline-block; padding: 0.15rem 0.5rem; border-radius: 9999px; font-size: 0.7rem; font-weight: 600; background: #f1f5f9; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="mail-dash col-12">
+  <p class="subtitle">
+    SMTP {% if smtp_enabled %}enabled{% else %}disabled{% endif %}
+    · Queue {% if queue_paused %}paused{% else %}active{% endif %}
+  </p>
+
+  <div class="mail-kpi-grid">
+    <div class="mail-kpi"><strong>Sent</strong><div class="val">{{ stats.total_sent }}</div></div>
+    <div class="mail-kpi"><strong>Failed</strong><div class="val">{{ stats.failed }}</div></div>
+    <div class="mail-kpi"><strong>Opened</strong><div class="val">{{ stats.opened }}</div></div>
+    <div class="mail-kpi"><strong>Queued</strong><div class="val">{{ stats.queued }}</div></div>
+  </div>
+
+  <form method="post" class="mail-actions">{% csrf_token %}
+    <button type="submit" name="action" value="process_queue" class="primary">Process queue</button>
+    <button type="submit" name="action" value="pause_queue">Pause queue</button>
+    <button type="submit" name="action" value="resume_queue">Resume queue</button>
+    <a href="{% url 'admin:mail_smtpsettings_change' 1 %}" class="btn-link">SMTP settings</a>
+    <a href="{% url 'admin:mail_emaillog_changelist' %}" class="btn-link">All delivery logs</a>
+  </form>
+
+  <h2 style="font-size:1rem;font-weight:700;margin:0 0 0.75rem;">Recent emails</h2>
+  <table class="mail-table">
+    <thead><tr><th>To</th><th>Subject</th><th>Status</th><th>Date</th></tr></thead>
+    <tbody>
+    {% for row in stats.recent %}
+      <tr>
+        <td>{{ row.to_email }}</td>
+        <td>{{ row.subject }}</td>
+        <td><span class="mail-status">{{ row.status }}</span></td>
+        <td>{{ row.created_at }}</td>
+      </tr>
+    {% empty %}
+      <tr><td colspan="4" style="color:#94a3b8;">No emails yet</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}

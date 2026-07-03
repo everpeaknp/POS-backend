@@ -56,6 +56,8 @@ INSTALLED_APPS = [
     'tenants',
     'users',
     'utils',
+    'billing',
+    'mail',
     
     # Local apps - Business Modules
     'inventory',
@@ -887,90 +889,105 @@ View audit logs of all system activities.
 # ============================================================================
 
 JAZZMIN_SETTINGS = {
-    # Site branding
-    "site_title": "KHATA Admin",
-    "site_header": "KHATA",
-    "site_brand": "KHATA Business OS",
+    # Site branding — platform control plane, not the customer product
+    "site_title": "KHATA Platform",
+    "site_header": "KHATA Platform",
+    "site_brand": "KHATA Platform Admin",
     "site_logo": None,
     "site_icon": None,
-    "welcome_sign": "Welcome to KHATA Business OS",
+    "welcome_sign": "KHATA platform operations — manage organizations and users",
     "copyright": "KHATA © 2026",
     
     # Search
-    "search_model": ["users.User", "tenants.Tenant", "inventory.Product", "sales.Customer"],
+    "search_model": ["users.User", "tenants.Tenant"],
     
     # Top menu
     "topmenu_links": [
-        {"name": "Home", "url": "admin:index", "permissions": ["auth.view_user"]},
+        {"name": "Analytics", "url": "/admin/platform/", "permissions": ["auth.view_user"]},
+        {"name": "Dashboard", "url": "admin:index", "permissions": ["auth.view_user"]},
+        {"name": "Mail Center", "url": "/admin/mail/dashboard/", "permissions": ["auth.view_user"]},
+        {"name": "Customer App", "url": "http://localhost:3000", "new_window": True},
         {"name": "API Docs", "url": "/api/docs/", "new_window": True},
     ],
     
     # User menu
     "usermenu_links": [
-        {"model": "users.user"}
+        {"model": "users.user"},
+        {"name": "API Schema", "url": "/api/schema/", "new_window": True},
     ],
     
-    # Side menu
+    # Side menu — platform apps only (business apps unregistered in platform_admin.py)
     "show_sidebar": True,
-    "navigation_expanded": True,
-    "hide_apps": [],
+    "navigation_expanded": False,
+    "hide_apps": [
+        "inventory", "sales", "purchase", "accounting",
+        "construction", "hr", "pos", "reports", "suppliers",
+        "token_blacklist",
+    ],
     "hide_models": [],
-    
+
+    "custom_links": {
+        "mail": [
+            {
+                "name": "Mail Center",
+                "url": "/admin/mail/dashboard/",
+                "icon": "fas fa-chart-line",
+                "permissions": ["auth.view_user"],
+            },
+        ],
+    },
+
     # App ordering
     "order_with_respect_to": [
         "tenants",
+        "billing",
+        "mail",
         "users",
-        "inventory",
-        "sales",
-        "purchase",
-        "accounting",
-        "construction",
-        "hr",
-        "reports",
+        "auth",
+        "billing.esewasettings",
+        "billing.subscription",
+        "billing.billingpayment",
+        "mail center",
+        "mail.smtpsettings",
+        "mail.emailbranding",
+        "mail.emailtemplate",
+        "mail.marketingcampaign",
+        "mail.emailqueue",
+        "mail.emaillog",
     ],
     
     # Icons for models
     "icons": {
-        "auth.User": "fas fa-user",
-        "auth.Group": "fas fa-users",
+        "tenants": "fas fa-building",
+        "billing": "fas fa-cog",
+        "mail": "fas fa-envelope",
+        "users": "fas fa-users",
+        "auth": "fas fa-shield-alt",
+        "auth.Group": "fas fa-users-cog",
         "users.User": "fas fa-user-tie",
+        "users.AuditLog": "fas fa-clipboard-list",
+        "users.RolePermission": "fas fa-key",
         "tenants.Tenant": "fas fa-building",
-        
-        "inventory.Product": "fas fa-box",
-        "inventory.Category": "fas fa-tags",
-        "inventory.Warehouse": "fas fa-warehouse",
-        "inventory.UnitOfMeasure": "fas fa-ruler",
-        
-        "sales.Customer": "fas fa-user-friends",
-        "sales.SalesOrder": "fas fa-shopping-cart",
-        "sales.Quotation": "fas fa-file-invoice",
-        "sales.Invoice": "fas fa-file-invoice-dollar",
-        
-        "purchase.Supplier": "fas fa-truck",
-        "purchase.PurchaseOrder": "fas fa-shopping-bag",
-        "purchase.PurchaseRequest": "fas fa-clipboard-list",
-        
-        "accounting.Account": "fas fa-chart-pie",
-        "accounting.JournalEntry": "fas fa-book-open",
-        "accounting.BankAccount": "fas fa-university",
-        
-        "construction.Site": "fas fa-hard-hat",
-        "construction.Worker": "fas fa-user-hard-hat",
-        "construction.Equipment": "fas fa-tractor",
-        
-        "hr.Employee": "fas fa-id-card",
-        "hr.Department": "fas fa-sitemap",
-        "hr.Attendance": "fas fa-calendar-check",
-        "hr.Payroll": "fas fa-money-bill-wave",
+        "tenants.OrganizationInvitation": "fas fa-envelope-open-text",
+        "tenants.UserTenantMembership": "fas fa-user-plus",
+        "billing.Subscription": "fas fa-file-invoice-dollar",
+        "billing.BillingPayment": "fas fa-wallet",
+        "billing.EsewaSettings": "fas fa-cog",
+        "mail.SmtpSettings": "fas fa-server",
+        "mail.EmailBranding": "fas fa-palette",
+        "mail.EmailTemplate": "fas fa-file-code",
+        "mail.MarketingCampaign": "fas fa-bullhorn",
+        "mail.EmailQueue": "fas fa-inbox",
+        "mail.EmailLog": "fas fa-envelope",
     },
     
-    "default_icon_parents": "fas fa-chevron-circle-right",
+    "default_icon_parents": "fas fa-folder",
     "default_icon_children": "fas fa-circle",
     
     # UI Tweaks
     "related_modal_active": False,
     "custom_css": "admin/css/adminlte4_fixes.css",
-    "custom_js": None,
+    "custom_js": "admin/js/admin_sidebar.js",
     "use_google_fonts_cdn": True,
     "show_ui_builder": False,
     
@@ -979,6 +996,7 @@ JAZZMIN_SETTINGS = {
     "changeform_format_overrides": {
         "auth.user": "horizontal_tabs",
         "users.user": "horizontal_tabs",
+        "billing.esewasettings": "horizontal_tabs",
     },
     
     "language_chooser": False,
@@ -1014,3 +1032,20 @@ JAZZMIN_UI_TWEAKS = {
     },
     "actions_sticky_top": False
 }
+
+# ============================================================================
+# eSewa subscription billing (test credentials by default)
+# ============================================================================
+FRONTEND_URL = config('FRONTEND_URL', default='http://localhost:3000')
+BACKEND_PUBLIC_URL = config('BACKEND_PUBLIC_URL', default='http://127.0.0.1:8000')
+
+ESEWA_PRODUCT_CODE = config('ESEWA_PRODUCT_CODE', default='EPAYTEST')
+ESEWA_SECRET_KEY = config('ESEWA_SECRET_KEY', default='8gBm/:&EnhH.1/q')
+ESEWA_PAYMENT_URL = config(
+    'ESEWA_PAYMENT_URL',
+    default='https://rc-epay.esewa.com.np/api/epay/main/v2/form',
+)
+ESEWA_STATUS_URL = config(
+    'ESEWA_STATUS_URL',
+    default='https://rc.esewa.com.np/api/epay/transaction/status/',
+)
