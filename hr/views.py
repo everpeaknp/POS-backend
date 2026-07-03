@@ -2,6 +2,7 @@ from rest_framework import viewsets, status
 from rest_framework.decorators import action, api_view, permission_classes
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
+from users.dynamic_permissions import DynamicModulePermission
 from drf_spectacular.utils import extend_schema, extend_schema_view
 from django.db.models import Count, Sum, Avg, Q
 from decimal import Decimal
@@ -25,7 +26,8 @@ from .serializers import (
 class DepartmentViewSet(viewsets.ModelViewSet):
     """ViewSet for Department CRUD operations"""
     serializer_class = DepartmentSerializer
-    permission_classes = [IsAuthenticated]
+    permission_classes = [DynamicModulePermission]
+    permission_module = 'hr'
     search_fields = ['name', 'description']
     ordering_fields = ['name', 'created_at']
     ordering = ['name']
@@ -57,7 +59,8 @@ class DepartmentViewSet(viewsets.ModelViewSet):
 )
 class EmployeeViewSet(viewsets.ModelViewSet):
     """ViewSet for Employee CRUD operations"""
-    permission_classes = [IsAuthenticated]
+    permission_classes = [DynamicModulePermission]
+    permission_module = 'hr'
     filterset_fields = ['status', 'department', 'employment_type', 'gender']
     search_fields = ['name', 'phone', 'email', 'designation']
     ordering_fields = ['name', 'join_date', 'created_at', 'basic_salary']
@@ -181,7 +184,8 @@ class EmployeeViewSet(viewsets.ModelViewSet):
 class AttendanceViewSet(viewsets.ModelViewSet):
     """ViewSet for Attendance CRUD operations"""
     serializer_class = AttendanceSerializer
-    permission_classes = [IsAuthenticated]
+    permission_classes = [DynamicModulePermission]
+    permission_module = 'hr'
     filterset_fields = ['employee', 'date', 'status']
     search_fields = ['employee__name', 'remarks']
     ordering_fields = ['date', 'created_at']
@@ -329,7 +333,8 @@ class AttendanceViewSet(viewsets.ModelViewSet):
 class LeaveTypeViewSet(viewsets.ModelViewSet):
     """ViewSet for LeaveType CRUD operations"""
     serializer_class = LeaveTypeSerializer
-    permission_classes = [IsAuthenticated]
+    permission_classes = [DynamicModulePermission]
+    permission_module = 'hr'
     search_fields = ['name', 'description']
     ordering_fields = ['name', 'days_allowed', 'created_at']
     ordering = ['name']
@@ -354,7 +359,8 @@ class LeaveTypeViewSet(viewsets.ModelViewSet):
 class LeaveRequestViewSet(viewsets.ModelViewSet):
     """ViewSet for LeaveRequest CRUD operations"""
     serializer_class = LeaveRequestSerializer
-    permission_classes = [IsAuthenticated]
+    permission_classes = [DynamicModulePermission]
+    permission_module = 'hr'
     filterset_fields = ['employee', 'leave_type', 'status', 'start_date', 'end_date']
     search_fields = ['employee__name', 'reason']
     ordering_fields = ['start_date', 'created_at', 'status']
@@ -464,7 +470,8 @@ class LeaveRequestViewSet(viewsets.ModelViewSet):
 class PayrollViewSet(viewsets.ModelViewSet):
     """ViewSet for Payroll CRUD operations"""
     serializer_class = PayrollSerializer
-    permission_classes = [IsAuthenticated]
+    permission_classes = [DynamicModulePermission]
+    permission_module = 'hr'
     filterset_fields = ['employee', 'month', 'year', 'status']
     search_fields = ['employee__name', 'month']
     ordering_fields = ['year', 'created_at']
@@ -574,6 +581,22 @@ class PayrollViewSet(viewsets.ModelViewSet):
                     'processed_date': timezone.now()
                 }
             )
+            if created:
+                try:
+                    from accounting.services import record_payroll_expense
+                    from django.utils import timezone as tz
+                    record_payroll_expense(
+                        employee,
+                        payroll.net_salary,
+                        f'PAY-{payroll.id}',
+                        tz.now().date(),
+                        tenant=tenant,
+                    )
+                except Exception as e:
+                    import logging
+                    logging.getLogger(__name__).error(
+                        f"Failed to post payroll GL for {payroll.id}: {e}"
+                    )
             created_records.append(payroll)
         
         serializer = PayrollSerializer(created_records, many=True)

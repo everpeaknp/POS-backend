@@ -2,6 +2,7 @@ from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
+from users.dynamic_permissions import DynamicModulePermission
 from rest_framework.filters import SearchFilter, OrderingFilter
 from django_filters.rest_framework import DjangoFilterBackend
 from django.db import transaction, models
@@ -57,7 +58,8 @@ class CategoryViewSet(viewsets.ModelViewSet):
     Supports hierarchical categories.
     """
     serializer_class = CategorySerializer
-    permission_classes = [IsAuthenticated]
+    permission_classes = [DynamicModulePermission]
+    permission_module = 'inventory'
     filterset_fields = ['parent']
     search_fields = ['name', 'description']
     ordering_fields = ['name', 'created_at']
@@ -115,7 +117,8 @@ class UnitOfMeasureViewSet(viewsets.ModelViewSet):
     ViewSet for managing units of measure.
     """
     serializer_class = UnitOfMeasureSerializer
-    permission_classes = [IsAuthenticated]
+    permission_classes = [DynamicModulePermission]
+    permission_module = 'inventory'
     filterset_fields = ['type']
     search_fields = ['name', 'abbreviation']
     ordering_fields = ['name', 'type']
@@ -161,7 +164,8 @@ class WarehouseViewSet(viewsets.ModelViewSet):
     ViewSet for managing warehouses/storage locations.
     """
     serializer_class = WarehouseSerializer
-    permission_classes = [IsAuthenticated]
+    permission_classes = [DynamicModulePermission]
+    permission_module = 'inventory'
     filterset_fields = ['is_active', 'manager']
     search_fields = ['name', 'location']
     ordering_fields = ['name', 'created_at']
@@ -401,7 +405,8 @@ class StockViewSet(viewsets.ModelViewSet):
     Stock is updated through stock operations, not direct editing.
     """
     serializer_class = StockSerializer
-    permission_classes = [IsAuthenticated]
+    permission_classes = [DynamicModulePermission]
+    permission_module = 'inventory'
     filterset_fields = ['product', 'warehouse']
     search_fields = ['product__name', 'product__sku', 'warehouse__name']
     ordering_fields = ['quantity', 'created_at']
@@ -436,7 +441,8 @@ class StockMovementViewSet(viewsets.ReadOnlyModelViewSet):
     Movements are immutable - created through stock operations only.
     """
     serializer_class = StockMovementSerializer
-    permission_classes = [IsAuthenticated]
+    permission_classes = [DynamicModulePermission]
+    permission_module = 'inventory'
     filterset_fields = ['product', 'warehouse', 'movement_type']
     search_fields = ['product__name', 'product__sku', 'reason']
     ordering_fields = ['created_at']
@@ -737,7 +743,8 @@ class InventoryReportsViewSet(viewsets.ViewSet):
     ViewSet for inventory reporting and analytics.
     Provides stock summary, low stock alerts, valuation, and movement reports.
     """
-    permission_classes = [IsAuthenticated]
+    permission_classes = [DynamicModulePermission]
+    permission_module = 'inventory'
     
     def get_tenant(self):
         """Get current user's tenant"""
@@ -1008,7 +1015,8 @@ class BulkPricingViewSet(viewsets.ModelViewSet):
     ViewSet for managing bulk pricing tiers
     Allows creating tiered pricing based on quantity ranges
     """
-    permission_classes = [IsAuthenticated]
+    permission_classes = [DynamicModulePermission]
+    permission_module = 'inventory'
     filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
     filterset_fields = ['product', 'is_active']
     search_fields = ['product__name', 'product__sku']

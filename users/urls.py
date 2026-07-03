@@ -6,7 +6,7 @@ from .views import (
     AuditLogViewSet, get_permissions, get_my_permissions, update_permissions,
     update_user_profile, change_password, get_notification_preferences,
     update_notification_preferences, get_active_sessions, revoke_session,
-    get_appearance_preferences, update_appearance_preferences
+    get_appearance_preferences, update_appearance_preferences, NotificationViewSet
 )
 
 # Add schema documentation to JWT refresh view
@@ -45,4 +45,10 @@ urlpatterns = [
     # Audit Logs
     path('audit-logs/', AuditLogViewSet.as_view({'get': 'list'}), name='audit-log-list'),
     path('audit-logs/<int:pk>/', AuditLogViewSet.as_view({'get': 'retrieve'}), name='audit-log-detail'),
+
+    # Notifications
+    path('notifications/', NotificationViewSet.as_view({'get': 'list'}), name='notification-list'),
+    path('notifications/<int:pk>/', NotificationViewSet.as_view({'get': 'retrieve'}), name='notification-detail'),
+    path('notifications/<int:pk>/mark-read/', NotificationViewSet.as_view({'post': 'mark_read'}), name='notification-mark-read'),
+    path('notifications/mark-all-read/', NotificationViewSet.as_view({'post': 'mark_all_read'}), name='notification-mark-all-read'),
 ]

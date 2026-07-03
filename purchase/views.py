@@ -2,6 +2,8 @@ from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
+from users.dynamic_permissions import DynamicModulePermission
+from users.permissions import CanApprovePurchases
 from drf_spectacular.utils import extend_schema, extend_schema_view
 from django.utils import timezone
 from .models import (
@@ -48,7 +50,8 @@ class SupplierViewSet(viewsets.ModelViewSet):
         return Supplier.objects.filter(tenant=self.request.user.tenant)
     
     serializer_class = SupplierSerializer
-    permission_classes = [IsAuthenticated]
+    permission_classes = [DynamicModulePermission]
+    permission_module = 'purchase'
     filterset_fields = ['status', 'type', 'payment_terms']
     search_fields = ['name', 'phone', 'email', 'pan']
     ordering_fields = ['name', 'created_at', 'total_purchased']
@@ -95,7 +98,8 @@ class PurchaseRequestViewSet(viewsets.ModelViewSet):
         return PurchaseRequest.objects.filter(tenant=self.request.user.tenant).select_related(
         'requested_by', 'approved_by'
     ).prefetch_related('lines__product')
-    permission_classes = [IsAuthenticated]
+    permission_classes = [DynamicModulePermission]
+    permission_module = 'purchase'
     filterset_fields = ['status', 'priority', 'department']
     search_fields = ['request_number', 'requested_by__username', 'department']
     ordering_fields = ['date', 'created_at', 'required_by', 'estimated_amount']
@@ -119,6 +123,8 @@ class PurchaseRequestViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=['post'])
     def approve(self, request, pk=None):
         """Approve a purchase request"""
+        if not CanApprovePurchases().has_permission(request, self):
+            return Response({'error': 'Not authorized to approve purchases'}, status=status.HTTP_403_FORBIDDEN)
         purchase_request = self.get_object()
         
         if purchase_request.status != 'Pending Approval':
@@ -147,6 +153,8 @@ class PurchaseRequestViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=['post'])
     def reject(self, request, pk=None):
         """Reject a purchase request"""
+        if not CanApprovePurchases().has_permission(request, self):
+            return Response({'error': 'Not authorized to reject purchases'}, status=status.HTTP_403_FORBIDDEN)
         purchase_request = self.get_object()
         
         if purchase_request.status not in ['Pending Approval', 'Draft']:
@@ -292,7 +300,8 @@ class PurchaseOrderViewSet(viewsets.ModelViewSet):
         return PurchaseOrder.objects.filter(tenant=self.request.user.tenant).select_related(
         'supplier', 'purchase_request', 'created_by'
     ).prefetch_related('lines__product')
-    permission_classes = [IsAuthenticated]
+    permission_classes = [DynamicModulePermission]
+    permission_module = 'purchase'
     filterset_fields = ['status', 'supplier']
     search_fields = ['po_number', 'reference', 'supplier__name']
     ordering_fields = ['date', 'created_at', 'expected_delivery_date', 'total']
@@ -512,7 +521,8 @@ class PurchaseInvoiceViewSet(viewsets.ModelViewSet):
         'supplier', 'purchase_order', 'created_by'
     )
     serializer_class = PurchaseInvoiceSerializer
-    permission_classes = [IsAuthenticated]
+    permission_classes = [DynamicModulePermission]
+    permission_module = 'purchase'
     filterset_fields = ['status', 'supplier']
     search_fields = ['invoice_number', 'supplier__name']
     ordering_fields = ['date', 'due_date', 'created_at', 'amount']
@@ -614,7 +624,8 @@ class DebitNoteViewSet(viewsets.ModelViewSet):
         'supplier', 'invoice', 'created_by'
     )
     serializer_class = DebitNoteSerializer
-    permission_classes = [IsAuthenticated]
+    permission_classes = [DynamicModulePermission]
+    permission_module = 'purchase'
     filterset_fields = ['status', 'supplier', 'invoice', 'reason']
     search_fields = ['debit_note_number', 'supplier__name']
     ordering_fields = ['date', 'created_at', 'amount']

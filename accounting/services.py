@@ -208,6 +208,8 @@ def record_material_consumption(site, product, quantity, unit_cost, reference, t
     
     if not tenant:
         raise ValueError("Tenant is required for accounting entry")
+    if has_posted_journal(tenant, reference, 'Construction'):
+        return None
     
     total_cost = Decimal(str(quantity)) * Decimal(str(unit_cost))
     
@@ -218,6 +220,7 @@ def record_material_consumption(site, product, quantity, unit_cost, reference, t
         tenant=tenant,
         description=f"Material consumption: {product.name} at {site.name}",
         reference=reference,
+        entry_type='Construction',
         entries=[
             {
                 'account': cost_center,
@@ -235,7 +238,7 @@ def record_material_consumption(site, product, quantity, unit_cost, reference, t
     )
 
 
-def record_labor_wage(site, worker, wage_amount, date, reference):
+def record_labor_wage(site, worker, wage_amount, date, reference, tenant=None):
     """
     Record labor wage expense for construction site.
     Called by Construction module.
@@ -244,17 +247,25 @@ def record_labor_wage(site, worker, wage_amount, date, reference):
     Dr. Labor Expense (Site Cost Center)
     Cr. Wages Payable
     """
-    tenant = get_current_tenant()
+    if tenant is None:
+        tenant = get_current_tenant()
+    if not tenant:
+        raise ValueError("Tenant is required for accounting entry")
+    if has_posted_journal(tenant, reference, 'Construction'):
+        return None
+
     wage_amount = Decimal(str(wage_amount))
+    if wage_amount <= 0:
+        return None
     
-    # Get site's cost center account or use default labor expense
-    cost_center = getattr(site, 'cost_center_account', None) or get_labor_expense_account()
+    cost_center = getattr(site, 'cost_center_account', None) or get_labor_expense_account(tenant)
     
     return create_journal_entry(
         tenant=tenant,
         description=f"Labor wage: {worker.name} at {site.name}",
         reference=reference,
         date=date,
+        entry_type='Construction',
         entries=[
             {
                 'account': cost_center,
@@ -263,12 +274,122 @@ def record_labor_wage(site, worker, wage_amount, date, reference):
                 'description': f"Worker: {worker.name} ({worker.category})"
             },
             {
-                'account': get_wages_payable_account(),
+                'account': get_wages_payable_account(tenant),
                 'debit': 0,
                 'credit': wage_amount,
                 'description': f"Wage payable to {worker.name}"
             }
         ]
+    )
+
+
+def record_equipment_usage(site, equipment, amount, date, reference, tenant=None):
+    """Record rented equipment usage expense."""
+    if tenant is None:
+        tenant = get_current_tenant()
+    if not tenant:
+        raise ValueError("Tenant is required for accounting entry")
+    if has_posted_journal(tenant, reference, 'Construction'):
+        return None
+
+    amount = Decimal(str(amount))
+    if amount <= 0:
+        return None
+
+    return create_journal_entry(
+        tenant=tenant,
+        description=f"Equipment usage: {equipment.name} at {site.name}",
+        reference=reference,
+        date=date,
+        entry_type='Construction',
+        entries=[
+            {
+                'account': get_equipment_expense_account(tenant),
+                'debit': amount,
+                'credit': 0,
+                'description': f"Equipment: {equipment.name}",
+            },
+            {
+                'account': get_accounts_payable_account(tenant),
+                'debit': 0,
+                'credit': amount,
+                'description': f"Equipment rental payable",
+            },
+        ],
+    )
+
+
+def record_site_other_expense(site, amount, date, reference, description, tenant=None):
+    """Record miscellaneous site expenses from daily logs."""
+    if tenant is None:
+        tenant = get_current_tenant()
+    if not tenant:
+        raise ValueError("Tenant is required for accounting entry")
+    if has_posted_journal(tenant, reference, 'Construction'):
+        return None
+
+    amount = Decimal(str(amount))
+    if amount <= 0:
+        return None
+
+    return create_journal_entry(
+        tenant=tenant,
+        description=description or f"Site expense at {site.name}",
+        reference=reference,
+        date=date,
+        entry_type='Construction',
+        entries=[
+            {
+                'account': get_construction_expense_account(tenant),
+                'debit': amount,
+                'credit': 0,
+                'description': description or "Other site expense",
+            },
+            {
+                'account': get_cash_account(tenant),
+                'debit': 0,
+                'credit': amount,
+                'description': "Cash payment for site expense",
+            },
+        ],
+    )
+
+
+def record_payroll_expense(employee, net_salary, reference, date, tenant=None):
+    """Record HR payroll expense."""
+    if tenant is None:
+        tenant = get_current_tenant()
+    if not tenant:
+        raise ValueError("Tenant is required for accounting entry")
+    if has_posted_journal(tenant, reference, 'Payroll'):
+        return None
+
+    net_salary = Decimal(str(net_salary))
+    if net_salary <= 0:
+        return None
+
+    salary_account = get_or_create_account('5400', 'Salary Expense', 'expense', tenant)
+
+    return create_journal_entry(
+        tenant=tenant,
+        description=f"Payroll: {employee.name}",
+        reference=reference,
+        date=date,
+        entry_type='Payroll',
+        entries=[
+            {
+                'account': salary_account,
+                'debit': net_salary,
+                'credit': 0,
+                'description': f"Salary for {employee.name}",
+            },
+            {
+                'account': get_wages_payable_account(tenant),
+                'debit': 0,
+                'credit': net_salary,
+                'description': f"Wages payable to {employee.name}",
+            },
+        ],
     )
 
 

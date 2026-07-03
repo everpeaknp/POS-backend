@@ -674,3 +674,83 @@ def update_appearance_preferences(request):
     })
     
     return Response(response_serializer.data)
+
+
+from rest_framework.decorators import action
+from .notification_models import Notification
+from .serializers import NotificationSerializer
+
+
+@extend_schema_view(
+    list=extend_schema(tags=['Notifications'], summary='List user notifications'),
+    retrieve=extend_schema(tags=['Notifications'], summary='Get notification'),
+)
+class NotificationViewSet(viewsets.ReadOnlyModelViewSet):
+    serializer_class = NotificationSerializer
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_queryset(self):
+        user = self.request.user
+        qs = Notification.objects.filter(tenant=user.tenant, user=user)
+        is_read = self.request.query_params.get('is_read')
+        if is_read is not None:
+            qs = qs.filter(is_read=is_read.lower() in ('true', '1'))
+        return qs
+
+    @extend_schema(tags=['Notifications'], summary='Mark notification as read')
+    @action(detail=True, methods=['post'], url_path='mark-read')
+    def mark_read(self, request, pk=None):
+        notification = self.get_object()
+        notification.mark_as_read()
+        return Response(NotificationSerializer(notification).data)
+
+    @extend_schema(tags=['Notifications'], summary='Mark all notifications as read')
+    @action(detail=False, methods=['post'], url_path='mark-all-read')
+    def mark_all_read(self, request):
+        from django.utils import timezone
+        updated = Notification.objects.filter(
+            tenant=request.user.tenant,
+            user=request.user,
+            is_read=False,
+        ).update(is_read=True, read_at=timezone.now())
+        return Response({'updated': updated})
+
+
+from rest_framework.decorators import action
+from .notification_models import Notification
+from .serializers import NotificationSerializer
+
+
+@extend_schema_view(
+    list=extend_schema(tags=['Notifications'], summary='List user notifications'),
+    retrieve=extend_schema(tags=['Notifications'], summary='Get notification'),
+)
+class NotificationViewSet(viewsets.ReadOnlyModelViewSet):
+    serializer_class = NotificationSerializer
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_queryset(self):
+        user = self.request.user
+        qs = Notification.objects.filter(tenant=user.tenant, user=user)
+        is_read = self.request.query_params.get('is_read')
+        if is_read is not None:
+            qs = qs.filter(is_read=is_read.lower() in ('true', '1'))
+        return qs
+
+    @extend_schema(tags=['Notifications'], summary='Mark notification as read')
+    @action(detail=True, methods=['post'], url_path='mark-read')
+    def mark_read(self, request, pk=None):
+        notification = self.get_object()
+        notification.mark_as_read()
+        return Response(NotificationSerializer(notification).data)
+
+    @extend_schema(tags=['Notifications'], summary='Mark all notifications as read')
+    @action(detail=False, methods=['post'], url_path='mark-all-read')
+    def mark_all_read(self, request):
+        from django.utils import timezone
+        updated = Notification.objects.filter(
+            tenant=request.user.tenant,
+            user=request.user,
+            is_read=False,
+        ).update(is_read=True, read_at=timezone.now())
+        return Response({'updated': updated})

@@ -7,6 +7,8 @@ Permissions are checked against the database for each request.
 
 from rest_framework import permissions
 from .permission_models import RolePermission
+from tenants.utils import get_request_tenant
+from tenants.membership_models import UserTenantMembership
 
 
 class DynamicModulePermission(permissions.BasePermission):
@@ -30,7 +32,8 @@ class DynamicModulePermission(permissions.BasePermission):
             return False
         
         # User must have a tenant
-        if not request.user.tenant:
+        tenant = get_request_tenant(request.user)
+        if not tenant:
             return False
         
         # Get the module name from the view
@@ -40,7 +43,7 @@ class DynamicModulePermission(permissions.BasePermission):
             return True
         
         # Check if tenant has this module activated
-        if module not in request.user.tenant.active_modules:
+        if module not in tenant.active_modules:
             return False
         
         # Determine required action based on HTTP method
@@ -63,10 +66,17 @@ class DynamicModulePermission(permissions.BasePermission):
         """
         Check if user has permission for the given module and action.
         """
+        tenant = get_request_tenant(user)
+        if not tenant:
+            return False
+        role = user.role
+        membership = UserTenantMembership.objects.filter(user=user, tenant=tenant).first()
+        if membership:
+            role = membership.role
         try:
             permission = RolePermission.objects.get(
-                tenant=user.tenant,
-                role=user.role,
+                tenant=tenant,
+                role=role,
                 module=module,
                 action=action
             )
@@ -98,7 +108,8 @@ class DynamicActionPermission(permissions.BasePermission):
             return False
         
         # User must have a tenant
-        if not request.user.tenant:
+        tenant = get_request_tenant(request.user)
+        if not tenant:
             return False
         
         # Get module and action from view
@@ -110,7 +121,7 @@ class DynamicActionPermission(permissions.BasePermission):
             return True
         
         # Check if tenant has this module activated
-        if module not in request.user.tenant.active_modules:
+        if module not in tenant.active_modules:
             return False
         
         # Check permission in database

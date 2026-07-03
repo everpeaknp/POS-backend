@@ -250,8 +250,26 @@ class Attendance(TenantModel):
             self.wage_amount = self.worker.daily_wage * Decimal('1.5')
         else:  # absent
             self.wage_amount = Decimal('0.00')
-        
+
+        is_new = self.pk is None
         super().save(*args, **kwargs)
+
+        if is_new and self.wage_amount > 0:
+            try:
+                from accounting.services import record_labor_wage
+                record_labor_wage(
+                    site=self.site,
+                    worker=self.worker,
+                    wage_amount=self.wage_amount,
+                    date=self.date,
+                    reference=f'ATT-{self.id}',
+                    tenant=self.tenant,
+                )
+            except Exception as e:
+                import logging
+                logging.getLogger(__name__).error(
+                    f"Failed to create journal entry for attendance {self.id}: {e}"
+                )
 
 
 class DailyLog(TenantModel):
@@ -335,6 +353,26 @@ class DailyLog(TenantModel):
         hours_remaining = 24 - hours_passed
         
         return max(0, hours_remaining)
+
+    def save(self, *args, **kwargs):
+        is_new = self.pk is None
+        super().save(*args, **kwargs)
+        if is_new and self.other_expenses and self.other_expenses > 0:
+            try:
+                from accounting.services import record_site_other_expense
+                record_site_other_expense(
+                    site=self.site,
+                    amount=self.other_expenses,
+                    date=self.date,
+                    reference=f'DL-{self.id}',
+                    description=self.other_expenses_description or f"Other expenses for {self.site.name}",
+                    tenant=self.tenant,
+                )
+            except Exception as e:
+                import logging
+                logging.getLogger(__name__).error(
+                    f"Failed to create journal entry for daily log {self.id}: {e}"
+                )
 
 
 class MaterialConsumption(TenantModel):
@@ -669,5 +707,23 @@ class EquipmentUsageLog(TenantModel):
         else:
             # For owned equipment, cost is 0 (depreciation handled separately)
             self.cost = Decimal('0.00')
-        
+
+        is_new = self.pk is None
         super().save(*args, **kwargs)
+
+        if is_new and self.cost > 0:
+            try:
+                from accounting.services import record_equipment_usage
+                record_equipment_usage(
+                    site=self.site,
+                    equipment=self.equipment,
+                    amount=self.cost,
+                    date=self.date,
+                    reference=f'EQ-{self.id}',
+                    tenant=self.tenant,
+                )
+            except Exception as e:
+                import logging
+                logging.getLogger(__name__).error(
+                    f"Failed to create journal entry for equipment usage {self.id}: {e}"
+                )

@@ -2,6 +2,7 @@ from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
+from users.dynamic_permissions import DynamicModulePermission
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework.filters import SearchFilter, OrderingFilter
 from drf_spectacular.utils import extend_schema, extend_schema_view, OpenApiParameter
@@ -31,7 +32,8 @@ class SiteViewSet(viewsets.ModelViewSet):
     Includes budget tracking and cost calculations
     """
     serializer_class = SiteSerializer
-    permission_classes = [IsAuthenticated]
+    permission_classes = [DynamicModulePermission]
+    permission_module = 'construction'
     filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
     filterset_fields = ['status', 'manager']
     search_fields = ['name', 'location', 'client_name']
@@ -45,7 +47,12 @@ class SiteViewSet(viewsets.ModelViewSet):
         
         # Managers only see their assigned sites
         if hasattr(user, 'role') and user.role == 'manager':
-            queryset = queryset.filter(manager=user)
+            from hr.models import Employee
+            employee = Employee.objects.filter(tenant=user.tenant, user=user).first()
+            if employee:
+                queryset = queryset.filter(manager=employee)
+            else:
+                queryset = queryset.none()
         
         return queryset
     
@@ -196,7 +203,8 @@ class SiteViewSet(viewsets.ModelViewSet):
 class WorkerViewSet(viewsets.ModelViewSet):
     """ViewSet for Construction Workers"""
     serializer_class = WorkerSerializer
-    permission_classes = [IsAuthenticated]
+    permission_classes = [DynamicModulePermission]
+    permission_module = 'construction'
     filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
     filterset_fields = ['category', 'status', 'assigned_site']
     search_fields = ['name', 'phone', 'id_number']
@@ -221,7 +229,8 @@ class WorkerViewSet(viewsets.ModelViewSet):
 class AttendanceViewSet(viewsets.ModelViewSet):
     """ViewSet for Worker Attendance"""
     serializer_class = AttendanceSerializer
-    permission_classes = [IsAuthenticated]
+    permission_classes = [DynamicModulePermission]
+    permission_module = 'construction'
     filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
     filterset_fields = ['worker', 'site', 'date', 'status']
     search_fields = ['worker__name', 'site__name']
@@ -547,7 +556,8 @@ class AttendanceViewSet(viewsets.ModelViewSet):
 )
 class DailyLogViewSet(viewsets.ModelViewSet):
     """ViewSet for Daily Site Logs with 24-hour immutability (SRS 4.6)"""
-    permission_classes = [IsAuthenticated]
+    permission_classes = [DynamicModulePermission]
+    permission_module = 'construction'
     filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
     filterset_fields = ['site', 'date']
     search_fields = ['work_description', 'progress_notes']
@@ -642,7 +652,8 @@ class DailyLogViewSet(viewsets.ModelViewSet):
 class MaterialConsumptionViewSet(viewsets.ModelViewSet):
     """ViewSet for Material Consumption"""
     serializer_class = MaterialConsumptionSerializer
-    permission_classes = [IsAuthenticated]
+    permission_classes = [DynamicModulePermission]
+    permission_module = 'construction'
     filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
     filterset_fields = ['site', 'daily_log', 'product']
     search_fields = ['product__name', 'notes']
@@ -669,7 +680,8 @@ class MaterialConsumptionViewSet(viewsets.ModelViewSet):
 class EquipmentViewSet(viewsets.ModelViewSet):
     """ViewSet for Construction Equipment"""
     serializer_class = EquipmentSerializer
-    permission_classes = [IsAuthenticated]
+    permission_classes = [DynamicModulePermission]
+    permission_module = 'construction'
     filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
     filterset_fields = ['ownership_type', 'status', 'assigned_site']
     search_fields = ['name', 'equipment_type', 'registration_number']
@@ -694,7 +706,8 @@ class EquipmentViewSet(viewsets.ModelViewSet):
 class EquipmentUsageLogViewSet(viewsets.ModelViewSet):
     """ViewSet for Equipment Usage Logs"""
     serializer_class = EquipmentUsageLogSerializer
-    permission_classes = [IsAuthenticated]
+    permission_classes = [DynamicModulePermission]
+    permission_module = 'construction'
     filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
     filterset_fields = ['equipment', 'site', 'date']
     search_fields = ['equipment__name', 'site__name']

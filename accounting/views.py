@@ -2,6 +2,7 @@ from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
+from users.dynamic_permissions import DynamicModulePermission
 from rest_framework.exceptions import PermissionDenied
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework.filters import SearchFilter, OrderingFilter
@@ -32,7 +33,8 @@ class AccountViewSet(viewsets.ModelViewSet):
     Supports hierarchical account structure
     """
     serializer_class = AccountSerializer
-    permission_classes = [IsAuthenticated]
+    permission_classes = [DynamicModulePermission]
+    permission_module = 'accounting'
     filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
     filterset_fields = ['type', 'sub_type', 'status', 'parent']
     search_fields = ['code', 'name', 'description']
@@ -467,7 +469,8 @@ class JournalEntryViewSet(viewsets.ModelViewSet):
     Supports double-entry bookkeeping with immutable posted entries
     """
     serializer_class = JournalEntrySerializer
-    permission_classes = [IsAuthenticated]
+    permission_classes = [DynamicModulePermission]
+    permission_module = 'accounting'
     filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
     filterset_fields = ['status', 'type', 'date']
     search_fields = ['entry_number', 'reference', 'description']
@@ -626,7 +629,8 @@ class JournalEntryViewSet(viewsets.ModelViewSet):
 class BankAccountViewSet(viewsets.ModelViewSet):
     """ViewSet for Bank Accounts"""
     serializer_class = BankAccountSerializer
-    permission_classes = [IsAuthenticated]
+    permission_classes = [DynamicModulePermission]
+    permission_module = 'accounting'
     filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
     filterset_fields = ['type', 'status']
     search_fields = ['bank_name', 'account_name', 'account_number']
@@ -688,7 +692,8 @@ class BankAccountViewSet(viewsets.ModelViewSet):
 class BankTransactionViewSet(viewsets.ModelViewSet):
     """ViewSet for Bank Transactions"""
     serializer_class = BankTransactionSerializer
-    permission_classes = [IsAuthenticated]
+    permission_classes = [DynamicModulePermission]
+    permission_module = 'accounting'
     filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
     filterset_fields = ['bank_account', 'type', 'reconciled']
     search_fields = ['reference', 'description']
@@ -735,7 +740,8 @@ class BankTransactionViewSet(viewsets.ModelViewSet):
 class TaxRuleViewSet(viewsets.ModelViewSet):
     """ViewSet for Tax Rules"""
     serializer_class = TaxRuleSerializer
-    permission_classes = [IsAuthenticated]
+    permission_classes = [DynamicModulePermission]
+    permission_module = 'accounting'
     filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
     filterset_fields = ['type', 'applicable_on', 'status']
     search_fields = ['name']
@@ -766,7 +772,8 @@ class TaxRuleViewSet(viewsets.ModelViewSet):
 class VATReturnViewSet(viewsets.ModelViewSet):
     """ViewSet for VAT Returns"""
     serializer_class = VATReturnSerializer
-    permission_classes = [IsAuthenticated]
+    permission_classes = [DynamicModulePermission]
+    permission_module = 'accounting'
     filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
     filterset_fields = ['status']
     search_fields = ['return_number', 'period']

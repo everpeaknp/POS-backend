@@ -165,6 +165,20 @@ class SalesOrder(TenantModel):
             self.customer.current_balance = new_balance
             self.customer.save()
 
+            from accounting.services import record_credit_sale
+            try:
+                record_credit_sale(
+                    self.customer,
+                    self.total,
+                    self.order_number,
+                    tenant=self.tenant,
+                )
+            except Exception as e:
+                import logging
+                logging.getLogger(__name__).error(
+                    f"Failed to post GL for credit order {self.order_number}: {e}"
+                )
+
 
 
 class SalesOrderLine(TenantModel):
