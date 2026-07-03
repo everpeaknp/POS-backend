@@ -8,7 +8,7 @@ from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework.filters import SearchFilter, OrderingFilter
 from drf_spectacular.utils import extend_schema, extend_schema_view, OpenApiParameter
 from django.utils import timezone
-from django.db.models import Sum, Q
+from django.db.models import Sum, Q, Count
 from decimal import Decimal
 
 from .models import Account, JournalEntry, JournalLine, BankAccount, BankTransaction, TaxRule, VATReturn
@@ -616,6 +616,49 @@ class JournalEntryViewSet(viewsets.ModelViewSet):
         
         serializer = self.get_serializer(reversal_entry)
         return Response(serializer.data)
+
+    @extend_schema(
+        tags=['Accounting - Journal Entries'],
+        summary='GL integration summary',
+        description='Posted journal entry counts for construction and payroll auto-posting flows',
+    )
+    @action(detail=False, methods=['get'], url_path='gl-integration-summary')
+    def gl_integration_summary(self, request):
+        tenant = get_request_tenant(request.user)
+        if not tenant:
+            return Response({'detail': 'No tenant'}, status=status.HTTP_400_BAD_REQUEST)
+
+        posted = JournalEntry.objects.filter(tenant=tenant, status='posted')
+        prefixes = {
+            'material_consumption': 'MC-',
+            'labor_wage': 'ATT-',
+            'equipment_usage': 'EQ-',
+            'daily_log_expense': 'DL-',
+            'payroll': 'PAY-',
+        }
+        by_prefix = {
+            key: posted.filter(reference__startswith=prefix).count()
+            for key, prefix in prefixes.items()
+        }
+        by_type = {}
+        for row in posted.values('type').annotate(count=Count('id')):
+            by_type[row['type'] or 'Manual'] = row['count']
+
+        checklist = [
+            {'step': 1, 'action': 'Log material consumption at a construction site', 'expect': 'Journal ref MC-* posted'},
+            {'step': 2, 'action': 'Mark worker attendance (present/half-day/overtime)', 'expect': 'Journal ref ATT-* posted'},
+            {'step': 3, 'action': 'Log rented equipment usage', 'expect': 'Journal ref EQ-* posted (if cost > 0)'},
+            {'step': 4, 'action': 'Add other expenses on a daily log', 'expect': 'Journal ref DL-* posted'},
+            {'step': 5, 'action': 'Run HR payroll for a month', 'expect': 'Journal ref PAY-* per employee'},
+            {'step': 6, 'action': 'Review Profit & Loss and Trial Balance', 'expect': 'Construction/labor expenses reflected'},
+        ]
+
+        return Response({
+            'by_prefix': by_prefix,
+            'by_type': by_type,
+            'total_posted': posted.count(),
+            'checklist': checklist,
+        })
 
 
 @extend_schema_view(

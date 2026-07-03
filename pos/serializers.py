@@ -23,7 +23,7 @@ class POSSessionSerializer(serializers.ModelSerializer):
             'card_sales', 'upi_sales', 'credit_sales', 'status', 'notes', 'created_at'
         ]
         read_only_fields = [
-            'session_number', 'opened_at', 'closed_at', 'expected_cash', 'cash_variance',
+            'session_number', 'cashier', 'opened_at', 'closed_at', 'expected_cash', 'cash_variance',
             'total_transactions', 'total_sales', 'cash_sales', 'card_sales',
             'upi_sales', 'credit_sales', 'status', 'created_at'
         ]

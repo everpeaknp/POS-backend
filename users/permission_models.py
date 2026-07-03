@@ -135,6 +135,28 @@ def get_default_permissions():
     }
 
 
+def sync_tenant_permissions(tenant):
+    """
+    Ensure all default permissions exist for a tenant (backfill missing rows).
+    Does not remove or downgrade custom permissions.
+    """
+    default_perms = get_default_permissions()
+    created = 0
+    for role, modules in default_perms.items():
+        for module, actions in modules.items():
+            for action in actions:
+                _, was_created = RolePermission.objects.get_or_create(
+                    tenant=tenant,
+                    role=role,
+                    module=module,
+                    action=action,
+                    defaults={'allowed': True},
+                )
+                if was_created:
+                    created += 1
+    return created
+
+
 def initialize_tenant_permissions(tenant):
     """
     Initialize default permissions for a new tenant.

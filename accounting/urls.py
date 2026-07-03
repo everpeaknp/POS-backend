@@ -19,6 +19,7 @@ urlpatterns = [
     path('journal-entries/<int:pk>/', JournalEntryViewSet.as_view({'get': 'retrieve', 'put': 'update', 'patch': 'partial_update', 'delete': 'destroy'}), name='journal-entry-detail'),
     path('journal-entries/<int:pk>/post_entry/', JournalEntryViewSet.as_view({'post': 'post_entry'}), name='journal-entry-post'),
     path('journal-entries/<int:pk>/reverse/', JournalEntryViewSet.as_view({'post': 'reverse'}), name='journal-entry-reverse'),
+    path('journal-entries/gl-integration-summary/', JournalEntryViewSet.as_view({'get': 'gl_integration_summary'}), name='journal-entry-gl-summary'),
     
     # Bank Accounts
     path('bank-accounts/', BankAccountViewSet.as_view({'get': 'list', 'post': 'create'}), name='bank-account-list'),

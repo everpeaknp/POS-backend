@@ -220,6 +220,7 @@ class PurchaseOrderCreateSerializer(serializers.ModelSerializer):
 
 class PurchaseInvoiceSerializer(serializers.ModelSerializer):
     supplier_name = serializers.CharField(source='supplier.name', read_only=True)
+    purchase_order_number = serializers.CharField(source='purchase_order.po_number', read_only=True, allow_null=True)
     balance = serializers.ReadOnlyField()
     created_by_name = serializers.CharField(source='created_by.username', read_only=True)
     
@@ -227,7 +228,7 @@ class PurchaseInvoiceSerializer(serializers.ModelSerializer):
         model = PurchaseInvoice
         fields = [
             'id', 'invoice_number', 'date', 'due_date', 'supplier', 'supplier_name',
-            'purchase_order', 'amount', 'paid_amount', 'balance', 'status', 'notes',
+            'purchase_order', 'purchase_order_number', 'amount', 'paid_amount', 'balance', 'status', 'notes',
             'created_by', 'created_by_name', 'tenant', 'created_at', 'updated_at'
         ]
         read_only_fields = ['id', 'invoice_number', 'tenant', 'created_at', 'updated_at']

@@ -162,7 +162,7 @@ class AuditLogViewSet(viewsets.ReadOnlyModelViewSet):
 
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework import permissions as drf_permissions
-from .permission_models import RolePermission, get_default_permissions, initialize_tenant_permissions
+from .permission_models import RolePermission, get_default_permissions, initialize_tenant_permissions, sync_tenant_permissions
 from .serializers import PermissionsMatrixSerializer, UpdatePermissionsSerializer
 from .permissions import IsAdminOrManager
 from tenants.utils import get_request_tenant
@@ -443,7 +443,9 @@ def get_permissions(request):
     # If no permissions exist, initialize with defaults
     if not permissions.exists():
         initialize_tenant_permissions(tenant)
-        permissions = RolePermission.objects.filter(tenant=tenant)
+    else:
+        sync_tenant_permissions(tenant)
+    permissions = RolePermission.objects.filter(tenant=tenant)
     
     matrix = build_permissions_matrix(permissions)
     return Response(matrix, status=status.HTTP_200_OK)
@@ -466,7 +468,9 @@ def get_my_permissions(request):
     permissions = RolePermission.objects.filter(tenant=tenant, role=role)
     if not permissions.exists():
         initialize_tenant_permissions(tenant)
-        permissions = RolePermission.objects.filter(tenant=tenant, role=role)
+    else:
+        sync_tenant_permissions(tenant)
+    permissions = RolePermission.objects.filter(tenant=tenant, role=role)
 
     role_display = ROLE_DISPLAY_MAP.get(role, role.capitalize())
     role_perms = {}

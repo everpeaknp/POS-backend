@@ -8,12 +8,15 @@ from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 from drf_spectacular.utils import extend_schema, extend_schema_view, OpenApiParameter
 from drf_spectacular.types import OpenApiTypes
+from django.http import Http404
 from django.db.models import Sum, Count, Q, F
+from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from datetime import datetime, timedelta
 from decimal import Decimal
 
 from users.dynamic_permissions import DynamicModulePermission
+from tenants.utils import get_request_tenant
 from .models import POSSession, POSDiscount, POSTransaction, POSTransactionLine, POSDailySalesReport
 from .serializers import (
     POSSessionSerializer, POSDiscountSerializer, POSTransactionSerializer, POSTransactionCreateSerializer,
@@ -42,14 +45,48 @@ class POSSessionViewSet(viewsets.ModelViewSet):
     
     def get_queryset(self):
         """Filter by current tenant"""
-        return POSSession.objects.filter(
-            tenant=self.request.user.tenant
+        tenant = get_request_tenant(self.request.user)
+        if not tenant:
+            return POSSession.objects.none()
+        # Use _base_manager to avoid TenantManager double-filtering
+        return POSSession._base_manager.filter(
+            tenant=tenant
         ).select_related('cashier', 'warehouse')
+
+    def get_object(self):
+        """Retrieve by numeric pk or session_number (e.g. SES-0001)."""
+        lookup = self.kwargs.get(self.lookup_url_kwarg or self.lookup_field)
+        queryset = self.filter_queryset(self.get_queryset())
+        if not lookup:
+            raise Http404
+
+        lookup_str = str(lookup)
+        if lookup_str.upper().startswith('SES-'):
+            return get_object_or_404(queryset, session_number=lookup_str)
+
+        if lookup_str.isdigit():
+            return get_object_or_404(queryset, pk=int(lookup_str))
+
+        raise Http404
+
+    def create(self, request, *args, **kwargs):
+        tenant = get_request_tenant(request.user)
+        if not tenant:
+            return Response({'detail': 'No active organization.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        if POSSession.objects.filter(tenant=tenant, cashier=request.user, status='open').exists():
+            return Response(
+                {'detail': 'You already have an open POS session. Close it before opening a new one.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        return super().create(request, *args, **kwargs)
     
     def perform_create(self, serializer):
         """Set tenant and cashier when creating session"""
+        tenant = get_request_tenant(self.request.user)
         serializer.save(
-            tenant=self.request.user.tenant,
+            tenant=tenant,
             cashier=self.request.user
         )
     
