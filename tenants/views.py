@@ -12,6 +12,27 @@ class TenantViewSet(viewsets.ModelViewSet):
     """
     ViewSet for managing tenants
     """
+    CORE_MODULES = {'accounting', 'settings', 'dashboard'}
+
+    def _user_is_tenant_admin(self, user, tenant):
+        from .membership_models import UserTenantMembership
+
+        membership = UserTenantMembership.objects.filter(user=user, tenant=tenant).first()
+        return (
+            tenant.created_by_id == user.id
+            or (membership and membership.role == 'admin')
+            or user.role == 'admin'
+        )
+
+    def _validate_module_name(self, module_name):
+        from core_backend.platform_constants import AVAILABLE_MODULES
+
+        allowed = {module for module, _ in AVAILABLE_MODULES}
+        normalized = (module_name or '').strip().lower()
+        if normalized not in allowed:
+            return None
+        return normalized
+
     def get_queryset(self):
         """
         Filter tenants - authenticated users see all tenants they are members of
@@ -215,15 +236,19 @@ class TenantViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=['post'])
     def activate_module(self, request, slug=None):
         """Activate a module for this tenant"""
+        from rest_framework.exceptions import PermissionDenied
+
         tenant = self.get_object()
-        module_name = request.data.get('module_name')
-        
+        if not self._user_is_tenant_admin(request.user, tenant):
+            raise PermissionDenied('Only organization admins can manage modules')
+
+        module_name = self._validate_module_name(request.data.get('module_name'))
         if not module_name:
             return Response(
-                {'error': 'module_name is required'},
+                {'error': 'A valid module_name is required'},
                 status=status.HTTP_400_BAD_REQUEST
             )
-        
+
         tenant.activate_module(module_name)
         serializer = self.get_serializer(tenant)
         return Response(serializer.data)
@@ -235,15 +260,25 @@ class TenantViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=['post'])
     def deactivate_module(self, request, slug=None):
         """Deactivate a module for this tenant"""
+        from rest_framework.exceptions import PermissionDenied
+
         tenant = self.get_object()
-        module_name = request.data.get('module_name')
-        
+        if not self._user_is_tenant_admin(request.user, tenant):
+            raise PermissionDenied('Only organization admins can manage modules')
+
+        module_name = self._validate_module_name(request.data.get('module_name'))
         if not module_name:
             return Response(
-                {'error': 'module_name is required'},
+                {'error': 'A valid module_name is required'},
                 status=status.HTTP_400_BAD_REQUEST
             )
-        
+
+        if module_name in self.CORE_MODULES:
+            return Response(
+                {'error': f'{module_name.title()} is a core module and cannot be disabled'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
         tenant.deactivate_module(module_name)
         serializer = self.get_serializer(tenant)
         return Response(serializer.data)

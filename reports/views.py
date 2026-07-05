@@ -29,10 +29,17 @@ class ReportViewSet(viewsets.ViewSet):
     - Financial Reports: Admin, Manager, Accountant only
     """
     permission_classes = [IsAuthenticated, ReportsPermission]
+
+    def get_permissions(self):
+        """Main org dashboard is available to any authenticated tenant member."""
+        if getattr(self, 'action', None) in ('main_dashboard', 'dashboard_summary'):
+            return [IsAuthenticated()]
+        return [IsAuthenticated(), ReportsPermission()]
     
     def get_tenant(self):
         """Get current user's tenant"""
-        return self.request.user.tenant
+        from tenants.utils import get_request_tenant
+        return get_request_tenant(self.request.user)
     
     def parse_date_params(self, request):
         """Parse start_date and end_date from query params"""
@@ -252,238 +259,11 @@ class ReportViewSet(viewsets.ViewSet):
     def main_dashboard(self, request):
         """Main dashboard data for /dashboard page"""
         try:
-            from django.utils import timezone
-            from datetime import timedelta
-            from inventory.models import Product
-            
+            from reports.dashboard_modules import build_main_dashboard_response
+
             tenant = self.get_tenant()
             period = request.query_params.get('period', 'month')
-            
-            # Calculate date ranges
-            now = timezone.now()
-            today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
-            
-            if period == 'today':
-                start_date = today_start
-                previous_start = start_date - timedelta(days=1)
-                previous_end = start_date
-            elif period == 'week':
-                start_date = today_start - timedelta(days=now.weekday())
-                previous_start = start_date - timedelta(days=7)
-                previous_end = start_date
-            elif period == 'year':
-                start_date = now.replace(month=1, day=1, hour=0, minute=0, second=0, microsecond=0)
-                previous_start = start_date.replace(year=start_date.year - 1)
-                previous_end = start_date
-            else:  # month (default)
-                start_date = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-                if start_date.month == 1:
-                    previous_start = start_date.replace(year=start_date.year - 1, month=12)
-                else:
-                    previous_start = start_date.replace(month=start_date.month - 1)
-                previous_end = start_date
-            
-            # Current period stats
-            current_orders = SalesOrder.objects.filter(tenant=tenant, date__gte=start_date)
-            current_revenue = current_orders.aggregate(total=Sum('total'))['total'] or Decimal('0')
-            current_order_count = current_orders.count()
-            
-            # Previous period stats
-            previous_orders = SalesOrder.objects.filter(
-                tenant=tenant,
-                date__gte=previous_start,
-                date__lt=previous_end
-            )
-            previous_revenue = previous_orders.aggregate(total=Sum('total'))['total'] or Decimal('0')
-            previous_order_count = previous_orders.count()
-            
-            # Calculate percentage changes
-            revenue_change = 0
-            if previous_revenue > 0:
-                revenue_change = float(((current_revenue - previous_revenue) / previous_revenue) * 100)
-            
-            orders_change = 0
-            if previous_order_count > 0:
-                orders_change = ((current_order_count - previous_order_count) / previous_order_count) * 100
-            
-            # Customer stats
-            total_customers = Customer.objects.filter(tenant=tenant).count()
-            new_customers = Customer.objects.filter(tenant=tenant, created_at__gte=start_date).count()
-            previous_new_customers = Customer.objects.filter(
-                tenant=tenant,
-                created_at__gte=previous_start,
-                created_at__lt=previous_end
-            ).count()
-            customers_change = 0
-            if previous_new_customers > 0:
-                customers_change = ((new_customers - previous_new_customers) / previous_new_customers) * 100
-            
-            # Product stats
-            total_products = Product.objects.filter(tenant=tenant).count()
-            new_products = Product.objects.filter(tenant=tenant, created_at__gte=start_date).count()
-            previous_new_products = Product.objects.filter(
-                tenant=tenant,
-                created_at__gte=previous_start,
-                created_at__lt=previous_end
-            ).count()
-            products_change = 0
-            if previous_new_products > 0:
-                products_change = ((new_products - previous_new_products) / previous_new_products) * 100
-            
-            # Revenue chart data
-            revenue_data = []
-            if period == 'today':
-                # Hourly data for today
-                for hour in range(0, 24, 3):
-                    hour_start = today_start + timedelta(hours=hour)
-                    hour_end = hour_start + timedelta(hours=3)
-                    revenue = SalesOrder.objects.filter(
-                        tenant=tenant,
-                        date__gte=hour_start,
-                        date__lt=hour_end
-                    ).aggregate(total=Sum('total'))['total'] or Decimal('0')
-                    time_label = f"{hour % 12 if hour % 12 != 0 else 12} {'AM' if hour < 12 else 'PM'}"
-                    revenue_data.append({
-                        'time': time_label,
-                        'value': float(revenue)
-                    })
-            elif period == 'week':
-                # Daily data for the week
-                for day in range(7):
-                    day_start = start_date + timedelta(days=day)
-                    day_end = day_start + timedelta(days=1)
-                    revenue = SalesOrder.objects.filter(
-                        tenant=tenant,
-                        date__gte=day_start,
-                        date__lt=day_end
-                    ).aggregate(total=Sum('total'))['total'] or Decimal('0')
-                    revenue_data.append({
-                        'time': day_start.strftime('%a'),
-                        'value': float(revenue)
-                    })
-            elif period == 'year':
-                # Monthly data for the year
-                for month in range(1, 13):
-                    month_start = start_date.replace(month=month)
-                    if month == 12:
-                        month_end = month_start.replace(year=month_start.year + 1, month=1)
-                    else:
-                        month_end = month_start.replace(month=month + 1)
-                    revenue = SalesOrder.objects.filter(
-                        tenant=tenant,
-                        date__gte=month_start,
-                        date__lt=month_end
-                    ).aggregate(total=Sum('total'))['total'] or Decimal('0')
-                    revenue_data.append({
-                        'time': month_start.strftime('%b'),
-                        'value': float(revenue)
-                    })
-            else:  # month
-                # Weekly data for the month
-                week_num = 1
-                current = start_date
-                while current < now:
-                    week_end = min(current + timedelta(days=7), now)
-                    revenue = SalesOrder.objects.filter(
-                        tenant=tenant,
-                        date__gte=current,
-                        date__lt=week_end
-                    ).aggregate(total=Sum('total'))['total'] or Decimal('0')
-                    revenue_data.append({
-                        'time': f"Week {week_num}",
-                        'value': float(revenue)
-                    })
-                    current = week_end
-                    week_num += 1
-            
-            # Recent orders (last 5)
-            recent_orders = SalesOrder.objects.filter(tenant=tenant).select_related('customer').order_by('-date')[:5]
-            recent_orders_data = [{
-                'id': order.order_number,
-                'customer': order.customer.name if order.customer else 'Walk-in Customer',
-                'amount': f"Rs. {order.total:,.0f}",
-                'status': order.status
-            } for order in recent_orders]
-            
-            # Top products (by quantity sold)
-            from sales.models import SalesOrderLine
-            top_products_data = []
-            top_products = SalesOrderLine.objects.filter(
-                order__tenant=tenant,
-                order__date__gte=start_date
-            ).values('product__name').annotate(
-                total_qty=Sum('quantity')
-            ).order_by('-total_qty')[:5]
-            
-            max_qty = top_products[0]['total_qty'] if top_products else 1
-            for item in top_products:
-                top_products_data.append({
-                    'name': item['product__name'],
-                    'sales': int(item['total_qty']),
-                    'max': int(max_qty)
-                })
-            
-            # Recent customers (last 5)
-            recent_customers = Customer.objects.filter(tenant=tenant).order_by('-created_at')[:5]
-            recent_customers_data = []
-            for customer in recent_customers:
-                # Calculate time ago
-                time_diff = now - customer.created_at
-                if time_diff.days == 0:
-                    joined = "Today"
-                elif time_diff.days == 1:
-                    joined = "Yesterday"
-                elif time_diff.days < 7:
-                    joined = f"{time_diff.days} days ago"
-                elif time_diff.days < 30:
-                    joined = f"{time_diff.days // 7} week{'s' if time_diff.days // 7 > 1 else ''} ago"
-                else:
-                    joined = f"{time_diff.days // 30} month{'s' if time_diff.days // 30 > 1 else ''} ago"
-                
-                # Get initials
-                name_parts = customer.name.split()
-                initials = ''.join([part[0].upper() for part in name_parts[:2]])
-                
-                recent_customers_data.append({
-                    'name': customer.name,
-                    'email': customer.email or 'No email',
-                    'initials': initials,
-                    'joined': joined
-                })
-            
-            # Inventory summary
-            in_stock = Product.objects.filter(tenant=tenant, current_stock__gt=F('reorder_level')).count()
-            low_stock = Product.objects.filter(
-                tenant=tenant,
-                current_stock__lte=F('reorder_level'),
-                current_stock__gt=0
-            ).count()
-            out_of_stock = Product.objects.filter(tenant=tenant, current_stock=0).count()
-            
-            return Response({
-                'stats': {
-                    'revenue': f"Rs. {current_revenue:,.0f}",
-                    'revenueChange': round(revenue_change, 1),
-                    'orders': current_order_count,
-                    'ordersChange': round(orders_change, 1),
-                    'customers': total_customers,
-                    'customersChange': round(customers_change, 1),
-                    'products': total_products,
-                    'productsChange': round(products_change, 1),
-                },
-                'revenueData': {
-                    period: revenue_data
-                },
-                'recentOrders': recent_orders_data,
-                'topProducts': top_products_data,
-                'recentCustomers': recent_customers_data,
-                'inventorySummary': {
-                    'inStock': in_stock,
-                    'lowStock': low_stock,
-                    'outOfStock': out_of_stock,
-                    'totalSKUs': total_products
-                }
-            })
+            return Response(build_main_dashboard_response(tenant, period))
         except Exception as e:
             import traceback
             print(f"[Main Dashboard Error] {str(e)}")
