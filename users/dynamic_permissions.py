@@ -11,6 +11,15 @@ from tenants.utils import get_request_tenant
 from tenants.membership_models import UserTenantMembership
 
 
+def tenant_has_active_module(tenant, module):
+    """Case-insensitive check whether a module is enabled for the tenant."""
+    if not tenant or not module:
+        return False
+    normalized = str(module).lower()
+    active_modules = tenant.active_modules or []
+    return any(str(m).lower() == normalized for m in active_modules)
+
+
 def _effective_role(user, tenant):
     role = user.role
     membership = UserTenantMembership.objects.filter(user=user, tenant=tenant).first()
@@ -36,7 +45,7 @@ class DynamicModulePermission(permissions.BasePermission):
         if not module:
             return True
 
-        if module not in tenant.active_modules:
+        if not tenant_has_active_module(tenant, module):
             return False
 
         action_map = {
@@ -98,7 +107,7 @@ class DynamicActionPermission(permissions.BasePermission):
         if not module or not action:
             return True
 
-        if module not in tenant.active_modules:
+        if not tenant_has_active_module(tenant, module):
             return False
 
         role = _effective_role(request.user, tenant)
@@ -136,7 +145,7 @@ def has_permission(user, module, action):
     if not tenant:
         return False
 
-    if module not in tenant.active_modules:
+    if not tenant_has_active_module(tenant, module):
         return False
 
     role = _effective_role(user, tenant)

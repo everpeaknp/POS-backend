@@ -2,7 +2,8 @@ from rest_framework import viewsets, status
 from rest_framework.decorators import action, api_view, permission_classes
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
-from users.dynamic_permissions import DynamicModulePermission
+from users.dynamic_permissions import DynamicModulePermission, has_permission, tenant_has_active_module
+from tenants.utils import get_request_tenant
 from drf_spectacular.utils import extend_schema, extend_schema_view
 from django.db.models import Count, Sum, Avg, Q
 from decimal import Decimal
@@ -87,7 +88,9 @@ class EmployeeViewSet(viewsets.ModelViewSet):
     @action(detail=False, methods=['get'], url_path='dashboard')
     def hr_dashboard(self, request):
         """HR Dashboard API endpoint"""
-        tenant = request.user.tenant
+        tenant = get_request_tenant(request.user)
+        if not tenant:
+            return Response({'detail': 'No active organization found.'}, status=status.HTTP_400_BAD_REQUEST)
         
         # Get all employees for this tenant
         employees = Employee.objects.filter(tenant=tenant)
@@ -618,8 +621,22 @@ def hr_reports(request):
     """HR Reports API endpoint"""
     from django.db.models import Count, Avg, Sum
     from datetime import datetime, timedelta
-    
-    tenant = request.user.tenant
+
+    tenant = get_request_tenant(request.user)
+    if not tenant:
+        return Response({'detail': 'No active organization found.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    if not tenant_has_active_module(tenant, 'hr'):
+        return Response(
+            {'detail': 'HR module is not active for this organization.'},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+
+    if not has_permission(request.user, 'hr', 'view'):
+        return Response(
+            {'detail': 'You do not have permission to view HR reports.'},
+            status=status.HTTP_403_FORBIDDEN,
+        )
     
     # Get all employees
     employees = Employee.objects.filter(tenant=tenant)

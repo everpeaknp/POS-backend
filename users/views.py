@@ -147,6 +147,51 @@ class UserViewSet(viewsets.ModelViewSet):
         return super().get_permissions()
 
 
+@extend_schema(
+    tags=['Users'],
+    summary='Employee options for user invitations',
+    description='Returns active HR employees for auto-filling invite forms. Requires Settings edit permission.',
+)
+@api_view(['GET'])
+@permission_classes([permissions.IsAuthenticated])
+def get_employee_invite_options(request):
+    """Minimal employee list for the settings > users invite flow."""
+    from users.dynamic_permissions import has_permission, tenant_has_active_module
+
+    tenant = request.user.tenant
+    if not tenant:
+        return Response({'results': []})
+
+    active_modules = tenant.active_modules or []
+    if not tenant_has_active_module(tenant, 'hr'):
+        return Response({'results': []})
+
+    if not has_permission(request.user, 'settings', 'edit'):
+        return Response(
+            {'detail': 'You do not have permission to manage users.'},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+
+    from hr.models import Employee
+
+    employees = (
+        Employee.objects.filter(tenant=tenant, status='active')
+        .order_by('name')
+        .values('id', 'name', 'email', 'designation')
+    )
+    return Response({
+        'results': [
+            {
+                'id': str(emp['id']),
+                'name': emp['name'],
+                'email': emp['email'] or '',
+                'designation': emp['designation'] or '',
+            }
+            for emp in employees
+        ],
+    })
+
+
 
 @extend_schema_view(
     list=extend_schema(tags=['Audit'], summary='List audit logs'),

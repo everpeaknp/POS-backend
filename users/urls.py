@@ -8,7 +8,7 @@ from .views import (
     update_notification_preferences, get_active_sessions, revoke_session, revoke_other_sessions,
     get_appearance_preferences, update_appearance_preferences, NotificationViewSet,
     get_privacy_preferences, update_privacy_preferences, export_user_data, delete_account,
-    ensure_current_session,
+    ensure_current_session, get_employee_invite_options,
 )
 
 TokenRefreshView = extend_schema(
@@ -46,6 +46,7 @@ urlpatterns = [
     path('permissions/update/', update_permissions, name='update_permissions'),
     
     # Users
+    path('users/employee-invite-options/', get_employee_invite_options, name='employee-invite-options'),
     path('users/', UserViewSet.as_view({'get': 'list', 'post': 'create'}), name='user-list'),
     path('users/<int:pk>/', UserViewSet.as_view({'get': 'retrieve', 'put': 'update', 'patch': 'partial_update', 'delete': 'destroy'}), name='user-detail'),
     
