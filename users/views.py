@@ -242,6 +242,7 @@ MODULE_DISPLAY_MAP = {
     'inventory': 'Inventory',
     'accounting': 'Accounting',
     'construction': 'Construction',
+    'hardware': 'Hardware',
     'reports': 'Reports',
     'settings': 'Settings',
     'hr': 'HR',
