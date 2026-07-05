@@ -79,12 +79,15 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
                 'can_view_financials': user.can_view_financials(),
                 'can_edit_data': user.can_edit_data(),
                 'modules': {
+                    'dashboard': user.has_module_access('dashboard'),
                     'sales': user.has_module_access('sales'),
                     'purchase': user.has_module_access('purchase'),
                     'inventory': user.has_module_access('inventory'),
                     'construction': user.has_module_access('construction'),
                     'accounting': user.has_module_access('accounting'),
+                    'hardware': user.has_module_access('hardware'),
                     'reports': user.has_module_access('reports'),
+                    'settings': user.has_module_access('settings'),
                     'pos': user.has_module_access('pos'),
                     'hr': user.has_module_access('hr'),
                 }
@@ -180,12 +183,15 @@ class UserSerializer(serializers.ModelSerializer):
             'can_view_financials': obj.can_view_financials(),
             'can_edit_data': obj.can_edit_data(),
             'modules': {
+                'dashboard': obj.has_module_access('dashboard'),
                 'sales': obj.has_module_access('sales'),
                 'purchase': obj.has_module_access('purchase'),
                 'inventory': obj.has_module_access('inventory'),
                 'construction': obj.has_module_access('construction'),
                 'accounting': obj.has_module_access('accounting'),
+                'hardware': obj.has_module_access('hardware'),
                 'reports': obj.has_module_access('reports'),
+                'settings': obj.has_module_access('settings'),
                 'pos': obj.has_module_access('pos'),
                 'hr': obj.has_module_access('hr'),
             }

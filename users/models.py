@@ -103,17 +103,16 @@ class User(AbstractUser):
         
         Args:
             module: One of 'sales', 'purchase', 'inventory', 'construction', 
-                   'accounting', 'reports', 'pos', 'hr'
+                   'accounting', 'reports', 'pos', 'hr', 'hardware', 'settings', 'dashboard'
         """
-        # Get tenant (either direct or via membership)
+        from users.dynamic_permissions import tenant_has_active_module
+
         tenant = self.get_tenant()
-        
-        # If user has no tenant, they have no module access
         if not tenant:
             return False
-            
-        # First check if tenant has this module activated
-        if module not in tenant.active_modules:
+
+        normalized = (module or '').lower()
+        if not tenant_has_active_module(tenant, normalized):
             return False
         
         # Admin has access to everything (if tenant has the module)
@@ -122,17 +121,20 @@ class User(AbstractUser):
         
         # Module-specific access rules based on role
         access_matrix = {
+            'dashboard': ['admin', 'manager', 'supervisor', 'accountant', 'cashier', 'viewer'],
             'sales': ['admin', 'manager', 'accountant', 'cashier'],
             'purchase': ['admin', 'manager', 'accountant'],
             'inventory': ['admin', 'manager', 'supervisor', 'cashier'],
             'construction': ['admin', 'manager', 'supervisor'],
             'accounting': ['admin', 'accountant'],
+            'hardware': ['admin', 'manager', 'supervisor'],
             'reports': ['admin', 'manager', 'accountant', 'cashier'],
+            'settings': ['admin', 'manager'],
             'pos': ['admin', 'manager', 'supervisor', 'cashier'],
             'hr': ['admin', 'manager'],
         }
-        
-        return self.role in access_matrix.get(module, [])
+
+        return self.role in access_matrix.get(normalized, [])
     
     def can_approve_purchases(self):
         """Check if user can approve purchase requests"""

@@ -5,7 +5,7 @@ Comprehensive sales reporting endpoints for analytics and insights
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
-from rest_framework.permissions import IsAuthenticated
+from users.dynamic_permissions import DynamicModulePermission
 from drf_spectacular.utils import extend_schema, OpenApiParameter
 from drf_spectacular.types import OpenApiTypes
 from django.db.models import Sum, Count, F, Q, Avg, DecimalField
@@ -23,7 +23,8 @@ class SalesReportsViewSet(viewsets.ViewSet):
     Comprehensive Sales Reports API
     Provides various sales analytics and insights
     """
-    permission_classes = [IsAuthenticated]
+    permission_classes = [DynamicModulePermission]
+    permission_module = 'sales'
     
     def get_tenant(self):
         """Get current user's tenant"""

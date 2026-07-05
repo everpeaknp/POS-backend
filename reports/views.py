@@ -45,12 +45,18 @@ class ReportViewSet(viewsets.ViewSet):
         """Parse start_date and end_date from query params"""
         start_date = request.query_params.get('start_date')
         end_date = request.query_params.get('end_date')
-        
+
         if start_date:
-            start_date = datetime.strptime(start_date, '%Y-%m-%d').date()
+            try:
+                start_date = datetime.strptime(start_date, '%Y-%m-%d').date()
+            except ValueError:
+                start_date = None
         if end_date:
-            end_date = datetime.strptime(end_date, '%Y-%m-%d').date()
-        
+            try:
+                end_date = datetime.strptime(end_date, '%Y-%m-%d').date()
+            except ValueError:
+                end_date = None
+
         return start_date, end_date
     
     def list(self, request):

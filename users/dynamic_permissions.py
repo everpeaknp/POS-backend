@@ -11,11 +11,16 @@ from tenants.utils import get_request_tenant
 from tenants.membership_models import UserTenantMembership
 
 
+CORE_MODULES = frozenset({'accounting', 'settings', 'dashboard'})
+
+
 def tenant_has_active_module(tenant, module):
     """Case-insensitive check whether a module is enabled for the tenant."""
     if not tenant or not module:
         return False
     normalized = str(module).lower()
+    if normalized in CORE_MODULES:
+        return True
     active_modules = tenant.active_modules or []
     return any(str(m).lower() == normalized for m in active_modules)
 

@@ -16,8 +16,8 @@ class TenantManager(models.Manager):
         
         if tenant:
             return queryset.filter(tenant=tenant)
-        
-        return queryset
+
+        return queryset.none()
 
 
 class TenantModel(models.Model):

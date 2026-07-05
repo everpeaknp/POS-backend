@@ -77,6 +77,33 @@ class TenantViewSet(viewsets.ModelViewSet):
         if self.action == 'create':
             return TenantCreateSerializer
         return super().get_serializer_class()
+
+    ALLOWED_TENANT_UPDATE_FIELDS = [
+        'name', 'business_type', 'owner_name', 'email', 'phone', 'address',
+        'pan_vat_number', 'website', 'workspace_name',
+        'accounting_start_date', 'vat_registered', 'logo',
+    ]
+
+    def update(self, request, *args, **kwargs):
+        return self._restricted_tenant_update(request, partial=False)
+
+    def partial_update(self, request, *args, **kwargs):
+        return self._restricted_tenant_update(request, partial=True)
+
+    def _restricted_tenant_update(self, request, partial):
+        from rest_framework.exceptions import PermissionDenied
+
+        tenant = self.get_object()
+        if not self._user_is_tenant_admin(request.user, tenant):
+            raise PermissionDenied('Only organization admins can update organization settings')
+
+        update_data = {
+            k: v for k, v in request.data.items() if k in self.ALLOWED_TENANT_UPDATE_FIELDS
+        }
+        serializer = self.get_serializer(tenant, data=update_data, partial=partial)
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        return Response(serializer.data)
     
     def perform_create(self, serializer):
         """Associate the created tenant with the current user if authenticated"""
@@ -370,15 +397,17 @@ class OrganizationInvitationViewSet(viewsets.ModelViewSet):
     
     def perform_create(self, serializer):
         """Create invitation - admins and managers can invite users"""
+        from rest_framework.exceptions import PermissionDenied
+
         user = self.request.user
-        
+
         # Check if user is part of an organization
         if not user.tenant:
-            raise PermissionError("You must be part of an organization to invite users")
-        
+            raise PermissionDenied("You must be part of an organization to invite users")
+
         # Check if user is admin or manager
         if not (user.is_admin or user.is_manager):
-            raise PermissionError("Only admins and managers can invite users to the organization")
+            raise PermissionDenied("Only admins and managers can invite users to the organization")
         
         # Set tenant to user's primary organization
         serializer.save(tenant=user.tenant, invited_by=user)

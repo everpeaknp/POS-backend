@@ -17,7 +17,7 @@ from .serializers import (
     StockMovementSerializer, StockAdjustmentSerializer, StockTransferSerializer,
     BulkPricingSerializer, BulkPricingCreateSerializer
 )
-from .permissions import IsAdminOrReadOnly, IsSupervisorOrAdmin
+from .permissions import IsSupervisorOrAdmin
 
 
 @extend_schema_view(
@@ -226,7 +226,8 @@ class ProductViewSet(viewsets.ModelViewSet):
     ViewSet for managing products.
     RBAC: Only ADMIN users can delete products.
     """
-    permission_classes = [IsAdminOrReadOnly]
+    permission_classes = [DynamicModulePermission]
+    permission_module = 'inventory'
     filterset_fields = ['category', 'status']
     search_fields = ['name', 'sku', 'description']
     ordering_fields = ['name', 'sku', 'created_at']
