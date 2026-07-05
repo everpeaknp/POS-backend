@@ -301,7 +301,7 @@ class TenantViewSet(viewsets.ModelViewSet):
         allowed_fields = [
             'name', 'business_type', 'owner_name', 'email', 'phone', 'address',
             'pan_vat_number', 'website', 'workspace_name',
-            'accounting_start_date', 'vat_registered',
+            'accounting_start_date', 'vat_registered', 'logo',
         ]
         update_data = {k: v for k, v in request.data.items() if k in allowed_fields}
 

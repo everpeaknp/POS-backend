@@ -106,6 +106,14 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
             }
         else:
             data['tenant'] = None
+
+        refresh_token = data.get('refresh')
+        if refresh_token:
+            request = self.context.get('request')
+            if request:
+                from .session_utils import record_user_session
+                session = record_user_session(user, request, refresh_token)
+                data['session_id'] = str(session.id)
         
         return data
 
@@ -288,6 +296,8 @@ class NotificationPreferencesSerializer(serializers.Serializer):
     push_desktop = serializers.BooleanField(default=False)
     push_mobile = serializers.BooleanField(default=False)
     push_sound = serializers.BooleanField(default=False)
+    login_alerts = serializers.BooleanField(default=True)
+    security_log_exports = serializers.BooleanField(default=False)
 
 
 class SessionSerializer(serializers.Serializer):
@@ -421,6 +431,29 @@ class UpdatePermissionsSerializer(serializers.Serializer):
     Viewer = serializers.DictField(child=serializers.BooleanField(), required=False)
 
 
+class PrivacyPreferencesSerializer(serializers.Serializer):
+    profile_visibility = serializers.ChoiceField(
+        choices=['everyone', 'organization', 'private'],
+        default='organization',
+    )
+    activity_status = serializers.BooleanField(default=True)
+    search_indexing = serializers.BooleanField(default=False)
+    data_retention_years = serializers.ChoiceField(
+        choices=[1, 5, 0],
+        default=1,
+    )
+
+
+class AccountDeleteSerializer(serializers.Serializer):
+    password = serializers.CharField(write_only=True)
+
+    def validate_password(self, value):
+        user = self.context['request'].user
+        if not user.check_password(value):
+            raise serializers.ValidationError('Password is incorrect.')
+        return value
+
+
 class AppearancePreferencesSerializer(serializers.Serializer):
     """Serializer for user appearance preferences"""
     theme = serializers.ChoiceField(
@@ -431,14 +464,7 @@ class AppearancePreferencesSerializer(serializers.Serializer):
         choices=['en-US', 'en-GB', 'es', 'fr', 'de', 'hi'],
         default='en-US'
     )
-    timezone = serializers.ChoiceField(
-        choices=[
-            'UTC', 'Asia/Kathmandu', 'America/New_York', 'America/Chicago', 'America/Denver',
-            'America/Los_Angeles', 'Europe/London', 'Europe/Paris', 'Asia/Dubai',
-            'Asia/Kolkata', 'Asia/Singapore', 'Asia/Tokyo', 'Australia/Sydney'
-        ],
-        default='UTC'
-    )
+    timezone = serializers.CharField(default='UTC')
     date_calendar_system = serializers.ChoiceField(
         choices=['AD', 'BS'],
         default='AD'

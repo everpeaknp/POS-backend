@@ -32,6 +32,13 @@ CORS_ALLOWED_ORIGINS = config(
     default='http://localhost:3000,http://127.0.0.1:3000'
 ).split(',')
 
+from corsheaders.defaults import default_headers
+
+CORS_ALLOW_HEADERS = (
+    *default_headers,
+    'x-session-id',
+)
+
 # Application definition
 INSTALLED_APPS = [
     # Jazzmin must be before django.contrib.admin

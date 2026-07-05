@@ -27,14 +27,15 @@ def _add_one_month(start: date) -> date:
 
 
 def ensure_subscription(tenant) -> Subscription:
-    plan_code = PLAN_TYPE_TO_CODE.get(tenant.plan_type, 'starter')
+    plan_code = PLAN_TYPE_TO_CODE.get(tenant.plan_type, 'free')
+    today = timezone.now().date()
     subscription, created = Subscription.objects.get_or_create(
         tenant=tenant,
         defaults={
             'plan_code': plan_code,
-            'status': 'trialing' if tenant.plan_type == 'free' else 'active',
-            'current_period_start': timezone.now().date(),
-            'current_period_end': _add_one_month(timezone.now().date()),
+            'status': 'trialing' if plan_code == 'free' else 'active',
+            'current_period_start': today,
+            'current_period_end': None if plan_code == 'free' else _add_one_month(today),
         },
     )
     if not created and subscription.plan_code != plan_code:
@@ -109,14 +110,17 @@ def initiate_checkout(tenant, user, plan_code: str) -> dict:
     if not _user_can_manage_billing(user, tenant):
         raise PermissionError('Only organization admins can manage billing')
 
-    if not get_esewa_config().enabled:
-        raise ValueError('eSewa payments are disabled. Enable them in Platform Admin → Settings → eSewa integration.')
-
     plan = get_plan(plan_code)
     subscription = ensure_subscription(tenant)
 
     if subscription.plan_code == plan_code and subscription.is_active:
         raise ValueError('You are already on this plan')
+
+    if plan['price'] == 0:
+        return activate_plan_without_payment(tenant, user, plan_code)
+
+    if not get_esewa_config().enabled:
+        raise ValueError('eSewa payments are disabled. Enable them in Platform Admin → Settings → eSewa integration.')
 
     transaction_uuid = new_transaction_uuid(tenant.id)
     amount = Decimal(str(plan['price']))
@@ -132,6 +136,35 @@ def initiate_checkout(tenant, user, plan_code: str) -> dict:
 
     form = build_payment_form(amount, transaction_uuid, plan['name'])
     return form
+
+
+@transaction.atomic
+def activate_plan_without_payment(tenant, user, plan_code: str) -> dict:
+    if not _user_can_manage_billing(user, tenant):
+        raise PermissionError('Only organization admins can manage billing')
+
+    plan = get_plan(plan_code)
+    if plan['price'] > 0:
+        raise ValueError('This plan requires payment')
+
+    today = timezone.now().date()
+    subscription = ensure_subscription(tenant)
+    subscription.plan_code = plan_code
+    subscription.status = 'trialing' if plan_code == 'free' else 'active'
+    subscription.current_period_start = today
+    subscription.current_period_end = None if plan_code == 'free' else _add_one_month(today)
+    subscription.save()
+
+    tenant.plan_type = plan['plan_type']
+    tenant.active_modules = plan['modules']
+    tenant.is_active = True
+    tenant.save(update_fields=['plan_type', 'active_modules', 'is_active', 'updated_at'])
+
+    return {
+        'activated': True,
+        'message': f'Successfully switched to {plan["name"]}',
+        'subscription': _serialize_subscription(subscription),
+    }
 
 
 @transaction.atomic

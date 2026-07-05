@@ -82,7 +82,7 @@ class TenantAdmin(admin.ModelAdmin):
             return '—'
         sub = ensure_subscription(obj)
         warn = ''
-        expected = PLAN_TYPE_TO_CODE.get(obj.plan_type, 'starter')
+        expected = PLAN_TYPE_TO_CODE.get(obj.plan_type, 'free')
         if sub.plan_code != expected:
             warn = format_html(' <span style="color:#dc2626;">(plan mismatch)</span>')
         return format_html(
@@ -103,7 +103,7 @@ class TenantAdmin(admin.ModelAdmin):
     def apply_plan_modules_from_catalog(self, request, queryset):
         updated = 0
         for tenant in queryset:
-            code = PLAN_TYPE_TO_CODE.get(tenant.plan_type, 'starter')
+            code = PLAN_TYPE_TO_CODE.get(tenant.plan_type, 'free')
             try:
                 plan = get_plan(code)
                 tenant.active_modules = plan['modules']

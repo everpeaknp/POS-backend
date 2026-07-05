@@ -122,6 +122,10 @@ class NotificationPreferences(models.Model):
     push_desktop = models.BooleanField(default=False)
     push_mobile = models.BooleanField(default=False)
     push_sound = models.BooleanField(default=False)
+
+    # Security notification preferences
+    login_alerts = models.BooleanField(default=True)
+    security_log_exports = models.BooleanField(default=False)
     
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)

@@ -3,6 +3,20 @@
 from decimal import Decimal
 
 SUBSCRIPTION_PLANS = {
+    'free': {
+        'code': 'free',
+        'name': 'Free',
+        'plan_type': 'free',
+        'price': Decimal('0.00'),
+        'max_users': 1,
+        'features': [
+            '1 user',
+            'Sales & Purchase',
+            'Inventory',
+            'Basic Reports',
+        ],
+        'modules': ['sales', 'purchase', 'inventory', 'reports'],
+    },
     'starter': {
         'code': 'starter',
         'name': 'Starter',
@@ -57,7 +71,7 @@ SUBSCRIPTION_PLANS = {
 }
 
 PLAN_TYPE_TO_CODE = {
-    'free': 'starter',
+    'free': 'free',
     'basic': 'starter',
     'premium': 'business',
     'enterprise': 'enterprise',

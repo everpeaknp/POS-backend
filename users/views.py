@@ -1,6 +1,6 @@
 from rest_framework import generics, permissions, viewsets, status
 from rest_framework.response import Response
-from rest_framework_simplejwt.views import TokenObtainPairView
+from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
 from drf_spectacular.utils import extend_schema, extend_schema_view
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework.filters import SearchFilter, OrderingFilter
@@ -12,7 +12,8 @@ from .notification_models import NotificationPreferences
 from .serializers import (
     UserSerializer, RegisterSerializer, CustomTokenObtainPairSerializer, 
     AuditLogSerializer, UserProfileUpdateSerializer, PasswordChangeSerializer,
-    NotificationPreferencesSerializer, SessionSerializer
+    NotificationPreferencesSerializer, SessionSerializer, PrivacyPreferencesSerializer,
+    AccountDeleteSerializer,
 )
 from .permissions import IsAdminOrManager
 
@@ -38,6 +39,19 @@ from .permissions import IsAdminOrManager
 )
 class CustomTokenObtainPairView(TokenObtainPairView):
     serializer_class = CustomTokenObtainPairSerializer
+
+
+class CustomTokenRefreshView(TokenRefreshView):
+    def post(self, request, *args, **kwargs):
+        refresh_token = request.data.get('refresh')
+        response = super().post(request, *args, **kwargs)
+        if response.status_code == 200 and refresh_token:
+            try:
+                from .session_utils import get_refresh_jti, touch_user_session
+                touch_user_session(get_refresh_jti(refresh_token))
+            except Exception:
+                pass
+        return response
 
 
 @extend_schema(
@@ -290,9 +304,18 @@ def change_password(request):
 @permission_classes([drf_permissions.IsAuthenticated])
 def get_notification_preferences(request):
     """Get user notification preferences"""
-    prefs, created = NotificationPreferences.objects.get_or_create(user=request.user)
-    
-    serializer = NotificationPreferencesSerializer(prefs)
+    prefs, _ = NotificationPreferences.objects.get_or_create(user=request.user)
+    serializer = NotificationPreferencesSerializer({
+        'email_order_updates': prefs.email_order_updates,
+        'email_payment_reminders': prefs.email_payment_reminders,
+        'email_inventory_alerts': prefs.email_inventory_alerts,
+        'email_team_activity': prefs.email_team_activity,
+        'push_desktop': prefs.push_desktop,
+        'push_mobile': prefs.push_mobile,
+        'push_sound': prefs.push_sound,
+        'login_alerts': prefs.login_alerts,
+        'security_log_exports': prefs.security_log_exports,
+    })
     return Response(serializer.data, status=status.HTTP_200_OK)
 
 
@@ -312,12 +335,22 @@ def update_notification_preferences(request):
     serializer = NotificationPreferencesSerializer(prefs, data=request.data, partial=True)
     
     if serializer.is_valid():
-        # Update preferences
         for key, value in serializer.validated_data.items():
             setattr(prefs, key, value)
         prefs.save()
-        
-        return Response(serializer.data, status=status.HTTP_200_OK)
+
+        response = NotificationPreferencesSerializer({
+            'email_order_updates': prefs.email_order_updates,
+            'email_payment_reminders': prefs.email_payment_reminders,
+            'email_inventory_alerts': prefs.email_inventory_alerts,
+            'email_team_activity': prefs.email_team_activity,
+            'push_desktop': prefs.push_desktop,
+            'push_mobile': prefs.push_mobile,
+            'push_sound': prefs.push_sound,
+            'login_alerts': prefs.login_alerts,
+            'security_log_exports': prefs.security_log_exports,
+        })
+        return Response(response.data, status=status.HTTP_200_OK)
     
     return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
@@ -331,71 +364,28 @@ def update_notification_preferences(request):
 @api_view(['GET'])
 @permission_classes([drf_permissions.IsAuthenticated])
 def get_active_sessions(request):
-    """Get active sessions with real device and location information"""
-    from django.utils import timezone
-    import re
-    
-    # Get real device information from User-Agent
-    user_agent = request.META.get('HTTP_USER_AGENT', '')
-    
-    # Parse browser
-    browser = 'Unknown Browser'
-    if 'Chrome' in user_agent and 'Edg' not in user_agent:
-        browser = 'Chrome'
-    elif 'Firefox' in user_agent:
-        browser = 'Firefox'
-    elif 'Safari' in user_agent and 'Chrome' not in user_agent:
-        browser = 'Safari'
-    elif 'Edg' in user_agent:
-        browser = 'Edge'
-    elif 'Opera' in user_agent or 'OPR' in user_agent:
-        browser = 'Opera'
-    
-    # Parse operating system
-    os_name = 'Unknown OS'
-    if 'Windows NT 10' in user_agent:
-        os_name = 'Windows 10'
-    elif 'Windows NT 11' in user_agent:
-        os_name = 'Windows 11'
-    elif 'Windows' in user_agent:
-        os_name = 'Windows'
-    elif 'Mac OS X' in user_agent:
-        os_name = 'macOS'
-    elif 'Linux' in user_agent:
-        os_name = 'Linux'
-    elif 'Android' in user_agent:
-        os_name = 'Android'
-    elif 'iPhone' in user_agent or 'iPad' in user_agent:
-        os_name = 'iOS'
-    
-    device_string = f"{browser} on {os_name}"
-    
-    # Get IP address
-    ip_address = request.META.get('HTTP_X_FORWARDED_FOR', '').split(',')[0].strip()
-    if not ip_address:
-        ip_address = request.META.get('REMOTE_ADDR', '127.0.0.1')
-    
-    # Simple location detection (in production, use a GeoIP service)
-    location = 'Unknown Location'
-    if ip_address == '127.0.0.1' or ip_address.startswith('192.168.') or ip_address.startswith('10.'):
-        location = 'Local Network'
-    else:
-        # In production, use a GeoIP service like MaxMind or ipapi.co
-        location = 'Remote Location'
-    
-    # Current session data
-    sessions = [
+    """Get active sessions for the authenticated user."""
+    from .session_models import UserSession
+
+    current_session_id = request.headers.get('X-Session-Id')
+    sessions = UserSession.objects.filter(user=request.user, is_revoked=False)
+
+    payload = [
         {
-            'id': '1',
-            'device': device_string,
-            'location': location,
-            'ip_address': ip_address,
-            'last_active': timezone.now(),
-            'is_current': True,
+            'id': str(session.id),
+            'device': session.device,
+            'location': session.location,
+            'ip_address': session.ip_address or 'Unknown',
+            'last_active': session.last_active,
+            'is_current': str(session.id) == current_session_id if current_session_id else False,
         }
+        for session in sessions
     ]
-    
-    serializer = SessionSerializer(sessions, many=True)
+
+    if payload and not any(item['is_current'] for item in payload):
+        payload[0]['is_current'] = True
+
+    serializer = SessionSerializer(payload, many=True)
     return Response(serializer.data, status=status.HTTP_200_OK)
 
 
@@ -408,12 +398,173 @@ def get_active_sessions(request):
 @api_view(['DELETE'])
 @permission_classes([drf_permissions.IsAuthenticated])
 def revoke_session(request, session_id):
-    """Revoke a specific session (implement with JWT blacklist or session store)"""
-    # In production, implement JWT token blacklisting or session revocation
-    return Response(
-        {'message': 'Session revoked successfully'},
-        status=status.HTTP_200_OK
+    """Revoke a specific session."""
+    from .session_models import UserSession
+    from .session_utils import revoke_user_session
+
+    session = UserSession.objects.filter(id=session_id, user=request.user, is_revoked=False).first()
+    if not session:
+        return Response({'detail': 'Session not found'}, status=status.HTTP_404_NOT_FOUND)
+
+    current_session_id = request.headers.get('X-Session-Id')
+    if current_session_id and str(session.id) == current_session_id:
+        return Response({'detail': 'Cannot revoke the current session'}, status=status.HTTP_400_BAD_REQUEST)
+
+    revoke_user_session(session)
+    return Response({'message': 'Session revoked successfully'}, status=status.HTTP_200_OK)
+
+
+@api_view(['POST'])
+@permission_classes([drf_permissions.IsAuthenticated])
+def revoke_other_sessions(request):
+    """Revoke all sessions except the current one."""
+    from .session_models import UserSession
+    from .session_utils import revoke_user_session
+
+    current_session_id = request.headers.get('X-Session-Id')
+    sessions = UserSession.objects.filter(user=request.user, is_revoked=False)
+    if current_session_id:
+        sessions = sessions.exclude(id=current_session_id)
+
+    revoked = 0
+    for session in sessions:
+        revoke_user_session(session)
+        revoked += 1
+
+    return Response({'message': f'Revoked {revoked} session(s)', 'revoked': revoked}, status=status.HTTP_200_OK)
+
+
+@api_view(['GET'])
+@permission_classes([drf_permissions.IsAuthenticated])
+def get_privacy_preferences(request):
+    from .privacy_models import PrivacyPreferences
+
+    prefs, _ = PrivacyPreferences.objects.get_or_create(user=request.user)
+    serializer = PrivacyPreferencesSerializer({
+        'profile_visibility': prefs.profile_visibility,
+        'activity_status': prefs.activity_status,
+        'search_indexing': prefs.search_indexing,
+        'data_retention_years': prefs.data_retention_years,
+    })
+    return Response(serializer.data)
+
+
+@api_view(['PATCH'])
+@permission_classes([drf_permissions.IsAuthenticated])
+def update_privacy_preferences(request):
+    from .privacy_models import PrivacyPreferences
+
+    prefs, _ = PrivacyPreferences.objects.get_or_create(user=request.user)
+    serializer = PrivacyPreferencesSerializer(data=request.data, partial=True)
+    if not serializer.is_valid():
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+    for field, value in serializer.validated_data.items():
+        setattr(prefs, field, value)
+    prefs.save()
+
+    response = PrivacyPreferencesSerializer({
+        'profile_visibility': prefs.profile_visibility,
+        'activity_status': prefs.activity_status,
+        'search_indexing': prefs.search_indexing,
+        'data_retention_years': prefs.data_retention_years,
+    })
+    return Response(response.data)
+
+
+@api_view(['GET'])
+@permission_classes([drf_permissions.IsAuthenticated])
+def export_user_data(request):
+    from .appearance_models import AppearancePreferences
+    from .privacy_models import PrivacyPreferences
+
+    user = request.user
+    notification_prefs, _ = NotificationPreferences.objects.get_or_create(user=user)
+    appearance_prefs, _ = AppearancePreferences.objects.get_or_create(user=user)
+    privacy_prefs, _ = PrivacyPreferences.objects.get_or_create(user=user)
+
+    payload = {
+        'profile': UserSerializer(user, context={'request': request}).data,
+        'notification_preferences': NotificationPreferencesSerializer({
+            'email_order_updates': notification_prefs.email_order_updates,
+            'email_payment_reminders': notification_prefs.email_payment_reminders,
+            'email_inventory_alerts': notification_prefs.email_inventory_alerts,
+            'email_team_activity': notification_prefs.email_team_activity,
+            'push_desktop': notification_prefs.push_desktop,
+            'push_mobile': notification_prefs.push_mobile,
+            'push_sound': notification_prefs.push_sound,
+            'login_alerts': notification_prefs.login_alerts,
+            'security_log_exports': notification_prefs.security_log_exports,
+        }).data,
+        'appearance_preferences': {
+            'theme': appearance_prefs.theme,
+            'language': appearance_prefs.language,
+            'timezone': appearance_prefs.timezone,
+            'date_calendar_system': appearance_prefs.date_calendar_system,
+            'compact_mode': appearance_prefs.compact_mode,
+            'smooth_animations': appearance_prefs.smooth_animations,
+        },
+        'privacy_preferences': PrivacyPreferencesSerializer({
+            'profile_visibility': privacy_prefs.profile_visibility,
+            'activity_status': privacy_prefs.activity_status,
+            'search_indexing': privacy_prefs.search_indexing,
+            'data_retention_years': privacy_prefs.data_retention_years,
+        }).data,
+    }
+
+    response = Response(payload)
+    response['Content-Disposition'] = 'attachment; filename="khata-user-export.json"'
+    return response
+
+
+@api_view(['POST'])
+@permission_classes([drf_permissions.IsAuthenticated])
+def ensure_current_session(request):
+    """Ensure the client has a trackable session id."""
+    from .session_models import UserSession
+    from .session_utils import parse_device, get_client_ip, resolve_location
+
+    current_session_id = request.headers.get('X-Session-Id')
+    if current_session_id:
+        session = UserSession.objects.filter(
+            id=current_session_id,
+            user=request.user,
+            is_revoked=False,
+        ).first()
+        if session:
+            return Response({'session_id': str(session.id)})
+
+    user_agent = request.META.get('HTTP_USER_AGENT', '')
+    ip_address = get_client_ip(request)
+    import uuid
+    session = UserSession.objects.create(
+        user=request.user,
+        refresh_jti=f'local-{uuid.uuid4()}',
+        device=parse_device(user_agent),
+        ip_address=ip_address,
+        location=resolve_location(ip_address),
+        user_agent=user_agent,
     )
+    return Response({'session_id': str(session.id)}, status=status.HTTP_201_CREATED)
+
+
+@api_view(['POST'])
+@permission_classes([drf_permissions.IsAuthenticated])
+def delete_account(request):
+    serializer = AccountDeleteSerializer(data=request.data, context={'request': request})
+    if not serializer.is_valid():
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+    user = request.user
+    user.is_active = False
+    user.save(update_fields=['is_active'])
+
+    from .session_models import UserSession
+    from .session_utils import revoke_user_session
+    for session in UserSession.objects.filter(user=user, is_revoked=False):
+        revoke_user_session(session)
+
+    return Response({'message': 'Account deactivated successfully'}, status=status.HTTP_200_OK)
 
 
 @extend_schema(

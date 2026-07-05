@@ -99,11 +99,11 @@ class EsewaSettings(models.Model):
     )
     success_url = models.URLField(
         blank=True,
-        help_text='Where eSewa redirects after successful payment. Leave blank to auto-use {frontend}/dashboard/settings/billing/success',
+        help_text='Where eSewa redirects after successful payment. Leave blank to auto-use {frontend}/settings/billing/success',
     )
     failure_url = models.URLField(
         blank=True,
-        help_text='Where eSewa redirects after failed/cancelled payment. Leave blank to auto-use {frontend}/dashboard/settings/billing/failure',
+        help_text='Where eSewa redirects after failed/cancelled payment. Leave blank to auto-use {frontend}/settings/billing/failure',
     )
     payment_url = models.URLField(
         blank=True,
@@ -134,13 +134,13 @@ class EsewaSettings(models.Model):
 
     def resolved_success_url(self) -> str:
         return self.success_url or (
-            f'{self._base_frontend_url()}/dashboard/settings/billing/success'
+            f'{self._base_frontend_url()}/settings/billing/success'
             if self._base_frontend_url() else ''
         )
 
     def resolved_failure_url(self) -> str:
         return self.failure_url or (
-            f'{self._base_frontend_url()}/dashboard/settings/billing/failure'
+            f'{self._base_frontend_url()}/settings/billing/failure'
             if self._base_frontend_url() else ''
         )
 
@@ -162,9 +162,9 @@ class EsewaSettings(models.Model):
         self.pk = 1
         base = self._base_frontend_url()
         if base and not self.success_url:
-            self.success_url = f'{base}/dashboard/settings/billing/success'
+            self.success_url = f'{base}/settings/billing/success'
         if base and not self.failure_url:
-            self.failure_url = f'{base}/dashboard/settings/billing/failure'
+            self.failure_url = f'{base}/settings/billing/failure'
         super().save(*args, **kwargs)
 
     @classmethod
@@ -180,8 +180,8 @@ class EsewaSettings(models.Model):
                 'product_code': getattr(django_settings, 'ESEWA_PRODUCT_CODE', 'EPAYTEST'),
                 'secret_key': getattr(django_settings, 'ESEWA_SECRET_KEY', ''),
                 'frontend_url': frontend,
-                'success_url': f'{frontend}/dashboard/settings/billing/success',
-                'failure_url': f'{frontend}/dashboard/settings/billing/failure',
+                'success_url': f'{frontend}/settings/billing/success',
+                'failure_url': f'{frontend}/settings/billing/failure',
             },
         )
         return obj

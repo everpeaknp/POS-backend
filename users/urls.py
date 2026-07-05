@@ -2,19 +2,20 @@ from django.urls import path
 from rest_framework_simplejwt.views import TokenRefreshView
 from drf_spectacular.utils import extend_schema
 from .views import (
-    RegisterView, UserProfileView, UserViewSet, CustomTokenObtainPairView, 
+    RegisterView, UserProfileView, UserViewSet, CustomTokenObtainPairView, CustomTokenRefreshView,
     AuditLogViewSet, get_permissions, get_my_permissions, update_permissions,
     update_user_profile, change_password, get_notification_preferences,
-    update_notification_preferences, get_active_sessions, revoke_session,
-    get_appearance_preferences, update_appearance_preferences, NotificationViewSet
+    update_notification_preferences, get_active_sessions, revoke_session, revoke_other_sessions,
+    get_appearance_preferences, update_appearance_preferences, NotificationViewSet,
+    get_privacy_preferences, update_privacy_preferences, export_user_data, delete_account,
+    ensure_current_session,
 )
 
-# Add schema documentation to JWT refresh view
 TokenRefreshView = extend_schema(
     tags=['Authentication'],
     summary='Refresh access token',
     description='Get a new access token using a valid refresh token.',
-)(TokenRefreshView)
+)(CustomTokenRefreshView)
 
 urlpatterns = [
     # Authentication
@@ -30,8 +31,14 @@ urlpatterns = [
     path('preferences/update/', update_notification_preferences, name='update_notification_preferences'),
     path('appearance/', get_appearance_preferences, name='get_appearance_preferences'),
     path('appearance/update/', update_appearance_preferences, name='update_appearance_preferences'),
+    path('privacy/', get_privacy_preferences, name='get_privacy_preferences'),
+    path('privacy/update/', update_privacy_preferences, name='update_privacy_preferences'),
     path('sessions/', get_active_sessions, name='get_active_sessions'),
+    path('sessions/ensure/', ensure_current_session, name='ensure_current_session'),
+    path('sessions/revoke-others/', revoke_other_sessions, name='revoke_other_sessions'),
     path('sessions/<str:session_id>/', revoke_session, name='revoke_session'),
+    path('export/', export_user_data, name='export_user_data'),
+    path('account/delete/', delete_account, name='delete_account'),
     
     # Permissions
     path('permissions/', get_permissions, name='get_permissions'),
