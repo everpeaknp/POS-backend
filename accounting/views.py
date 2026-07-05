@@ -52,6 +52,25 @@ class AccountViewSet(viewsets.ModelViewSet):
         if not tenant:
             raise PermissionDenied("No active organization. Please select an organization first.")
         serializer.save(tenant=tenant)
+
+    def perform_destroy(self, instance):
+        from django.db.models.deletion import ProtectedError
+        from rest_framework.exceptions import ValidationError
+
+        if instance.children.exists():
+            raise ValidationError({
+                'detail': 'Cannot delete an account that has sub-accounts. Delete or reassign child accounts first.'
+            })
+
+        try:
+            instance.delete()
+        except ProtectedError:
+            raise ValidationError({
+                'detail': (
+                    'Cannot delete this account because it is used in journal entries, '
+                    'bank accounts, tax rules, or other records. Remove those links first.'
+                )
+            })
     
     @extend_schema(
         tags=['Accounting - Chart of Accounts'],

@@ -93,14 +93,11 @@ class TenantViewSet(viewsets.ModelViewSet):
         """
         Delete tenant and handle cleanup
         - Only admins of the organization can delete it
-        - Unassign all users from this tenant
-        - Delete all related data (handled by CASCADE)
+        - Delete related tenant data in dependency order
         """
-        from django.contrib.auth import get_user_model
-        from rest_framework.exceptions import PermissionDenied
+        from rest_framework.exceptions import PermissionDenied, ValidationError
         from .membership_models import UserTenantMembership
-        
-        User = get_user_model()
+        from .deletion import delete_tenant
         
         # Verify user is authenticated
         if not self.request.user or not self.request.user.is_authenticated:
@@ -122,17 +119,14 @@ class TenantViewSet(viewsets.ModelViewSet):
         # If user has membership but not admin role
         if membership and membership.role != 'admin' and not is_creator:
             raise PermissionDenied("Only organization admins can delete the organization")
-        
-        # Unassign all users who have this as their primary tenant
-        users_count = User.objects.filter(tenant=instance).count()
-        if users_count > 0:
-            User.objects.filter(tenant=instance).update(tenant=None)
-        
-        # Delete all memberships for this tenant
-        UserTenantMembership.objects.filter(tenant=instance).delete()
-        
-        # Delete the tenant (CASCADE will handle related objects)
-        instance.delete()
+
+        try:
+            delete_tenant(instance)
+        except Exception as exc:
+            raise ValidationError(
+                {"detail": "Could not delete organization because related records still exist. "
+                           "Remove transactions and try again, or contact support."}
+            ) from exc
     
     @extend_schema(
         summary='Get tenant profile by slug',
