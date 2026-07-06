@@ -125,7 +125,7 @@ def get_or_create_account(code, name, account_type, tenant=None):
         '5300': 'Operating',  # Equipment Expenses
     }
     
-    account, created = Account.objects.get_or_create(
+    account, created = Account._base_manager.get_or_create(
         tenant=tenant,
         code=code,
         defaults={
@@ -725,17 +725,20 @@ def apply_entry_balances(entry):
 
 def get_opening_balance_equity_account(tenant):
     """Equity offset account for opening balance journal entries."""
-    account, _ = Account.objects.get_or_create(
-        tenant=tenant,
-        code='3900',
-        defaults={
-            'name': 'Opening Balance Equity',
-            'type': 'Equity',
-            'sub_type': 'Capital',
-            'status': 'active',
-            'level': 0,
-        }
-    )
+    from django.db import IntegrityError
+
+    lookup = {'tenant': tenant, 'code': '3900'}
+    defaults = {
+        'name': 'Opening Balance Equity',
+        'type': 'Equity',
+        'sub_type': 'Capital',
+        'status': 'active',
+        'level': 0,
+    }
+    try:
+        account, _ = Account._base_manager.get_or_create(defaults=defaults, **lookup)
+    except IntegrityError:
+        account = Account._base_manager.get(**lookup)
     return account
 
 

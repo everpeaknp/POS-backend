@@ -6,6 +6,7 @@ from users.dynamic_permissions import DynamicModulePermission, has_permission, t
 from tenants.utils import get_request_tenant
 from drf_spectacular.utils import extend_schema, extend_schema_view
 from django.db.models import Count, Sum, Avg, Q
+from datetime import date, datetime
 from decimal import Decimal
 
 from .models import Department, Employee, Attendance, LeaveType, LeaveRequest, Payroll
@@ -14,6 +15,12 @@ from .serializers import (
     AttendanceSerializer, BulkAttendanceSerializer,
     LeaveTypeSerializer, LeaveRequestSerializer, PayrollSerializer
 )
+
+
+def _current_bs_year() -> int:
+    """Approximate Bikram Sambat year from today's Gregorian date."""
+    today = date.today()
+    return today.year + (57 if today.month >= 4 else 56)
 
 
 @extend_schema_view(
@@ -497,7 +504,7 @@ class PayrollViewSet(viewsets.ModelViewSet):
     def calculate(self, request):
         """Calculate payroll for a month"""
         month = request.data.get('month')
-        year = request.data.get('year', 2081)  # Default Nepali year
+        year = request.data.get('year') or _current_bs_year()
         
         if not month:
             return Response({'error': 'Month is required'}, status=status.HTTP_400_BAD_REQUEST)
@@ -553,7 +560,7 @@ class PayrollViewSet(viewsets.ModelViewSet):
         
         payroll_data = request.data.get('payroll_data', [])
         month = request.data.get('month')
-        year = request.data.get('year', 2081)
+        year = request.data.get('year') or _current_bs_year()
         
         if not payroll_data:
             return Response({'error': 'Payroll data is required'}, status=status.HTTP_400_BAD_REQUEST)

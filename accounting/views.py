@@ -44,8 +44,8 @@ class AccountViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         tenant = get_request_tenant(self.request.user)
         if not tenant:
-            return Account.objects.none()
-        return Account.objects.filter(tenant=tenant)
+            return Account._base_manager.none()
+        return Account._base_manager.filter(tenant=tenant)
     
     def perform_create(self, serializer):
         tenant = get_request_tenant(self.request.user)
@@ -72,6 +72,35 @@ class AccountViewSet(viewsets.ModelViewSet):
                 )
             })
     
+    @extend_schema(
+        tags=['Accounting - Chart of Accounts'],
+        summary='Seed default chart of accounts',
+        description='Creates the standard chart of accounts for this organization. Safe to run multiple times — existing account codes are skipped.',
+    )
+    @action(detail=False, methods=['post'], url_path='seed_default')
+    def seed_default(self, request):
+        """Create standard chart of accounts for the tenant."""
+        from accounting.chart_seed import seed_default_chart_of_accounts
+        from accounting.serializers import AccountSerializer
+
+        tenant = get_request_tenant(request.user)
+        if not tenant:
+            return Response({'detail': 'No active organization.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        result = seed_default_chart_of_accounts(tenant)
+        serializer = AccountSerializer(result['accounts'], many=True)
+        return Response({
+            'created': result['created'],
+            'skipped': result['skipped'],
+            'total': result['total'],
+            'accounts': serializer.data,
+            'message': (
+                f"Created {result['created']} account(s)."
+                if result['created']
+                else 'Chart of accounts is already set up — no new accounts were needed.'
+            ),
+        })
+
     @extend_schema(
         tags=['Accounting - Chart of Accounts'],
         summary='Get account tree structure',

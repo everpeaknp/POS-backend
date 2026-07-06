@@ -16,6 +16,28 @@ from accounting.models import JournalEntry
 from users.permissions import ReportsPermission, CanViewFinancials
 
 
+def _custom_report_queryset(tenant):
+    """Query custom reports by tenant without TenantManager thread-local filtering."""
+    from .models import CustomReport
+
+    if not tenant:
+        return CustomReport._base_manager.none()
+    return CustomReport._base_manager.filter(tenant=tenant)
+
+
+def _get_custom_report(tenant, report_id):
+    """Fetch a single custom report for the resolved request tenant."""
+    from .models import CustomReport
+
+    if not tenant:
+        raise CustomReport.DoesNotExist
+    try:
+        pk = int(report_id)
+    except (TypeError, ValueError):
+        raise CustomReport.DoesNotExist
+    return CustomReport._base_manager.get(id=pk, tenant=tenant)
+
+
 @extend_schema_view(
     list=extend_schema(tags=['Reports'], summary='List available reports'),
 )
@@ -1402,6 +1424,14 @@ class ReportViewSet(viewsets.ViewSet):
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
+    @action(detail=False, methods=['get'], url_path='custom-reports/fields')
+    def custom_reports_fields(self, request):
+        """Return available fields per module for the report builder"""
+        from .custom_report_runner import get_module_fields_catalog
+
+        module = request.query_params.get('module')
+        return Response(get_module_fields_catalog(module))
+
     @extend_schema(
         tags=['Reports'],
         summary='List custom reports',
@@ -1418,9 +1448,11 @@ class ReportViewSet(viewsets.ViewSet):
         
         try:
             tenant = self.get_tenant()
-            
-            # Get all custom reports for this tenant
-            reports = CustomReport.objects.filter(tenant=tenant)
+            if not tenant:
+                return Response({'count': 0, 'results': []})
+
+            # Bypass TenantManager; tenant is resolved from the authenticated user
+            reports = _custom_report_queryset(tenant)
             
             # Filter by module if provided
             module = request.query_params.get('module')
@@ -1494,7 +1526,7 @@ class ReportViewSet(viewsets.ViewSet):
         
         try:
             tenant = self.get_tenant()
-            report = CustomReport.objects.get(id=report_id, tenant=tenant)
+            report = _get_custom_report(tenant, report_id)
             serializer = CustomReportSerializer(report, context={'request': request})
             return Response(serializer.data)
         except CustomReport.DoesNotExist:
@@ -1524,7 +1556,7 @@ class ReportViewSet(viewsets.ViewSet):
         
         try:
             tenant = self.get_tenant()
-            report = CustomReport.objects.get(id=report_id, tenant=tenant)
+            report = _get_custom_report(tenant, report_id)
             
             # Check if user has permission to update (creator or admin)
             if report.created_by != request.user and not request.user.is_staff:
@@ -1575,7 +1607,7 @@ class ReportViewSet(viewsets.ViewSet):
         
         try:
             tenant = self.get_tenant()
-            report = CustomReport.objects.get(id=report_id, tenant=tenant)
+            report = _get_custom_report(tenant, report_id)
             
             # Check if user has permission to delete (creator or admin)
             if report.created_by != request.user and not request.user.is_staff:
@@ -1617,22 +1649,27 @@ class ReportViewSet(viewsets.ViewSet):
     def custom_reports_run(self, request, report_id=None):
         """Run a custom report and return results"""
         from .models import CustomReport
+        from .custom_report_runner import run_custom_report
         from django.utils import timezone
         
         try:
             tenant = self.get_tenant()
-            report = CustomReport.objects.get(id=report_id, tenant=tenant)
+            if not tenant:
+                return Response(
+                    {'detail': 'No active organization selected'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            report = _get_custom_report(tenant, report_id)
             
-            # Update last_run timestamp
             report.last_run = timezone.now()
             report.save(update_fields=['last_run'])
             
-            # Parse date parameters
             from_date_str = request.data.get('from_date') or request.query_params.get('from_date')
             to_date_str = request.data.get('to_date') or request.query_params.get('to_date')
+
+            result = run_custom_report(report, from_date_str, to_date_str)
             
-            # For now, return mock data structure
-            # In production, this would execute the actual query based on report configuration
             return Response({
                 'report_name': report.name,
                 'module': report.module,
@@ -1642,18 +1679,11 @@ class ReportViewSet(viewsets.ViewSet):
                     'to_date': to_date_str,
                 },
                 'data': {
-                    'columns': report.fields or ['Date', 'Amount', 'Status'],
-                    'rows': [
-                        {'Date': '2082-01-15', 'Amount': 50000, 'Status': 'Completed'},
-                        {'Date': '2082-01-14', 'Amount': 35000, 'Status': 'Pending'},
-                        {'Date': '2082-01-13', 'Amount': 42000, 'Status': 'Completed'},
-                    ],
-                    'summary': {
-                        'total_rows': 3,
-                        'total_amount': 127000,
-                    }
+                    'columns': result['columns'],
+                    'rows': result['rows'],
+                    'summary': result['summary'],
                 },
-                'chart_data': report.chart_config if report.report_type in ['chart', 'both'] else None
+                'chart_data': result.get('chart_data') if report.report_type in ['chart', 'both'] else None
             })
         except CustomReport.DoesNotExist:
             return Response(
@@ -1682,7 +1712,7 @@ class ReportViewSet(viewsets.ViewSet):
         
         try:
             tenant = self.get_tenant()
-            original_report = CustomReport.objects.get(id=report_id, tenant=tenant)
+            original_report = _get_custom_report(tenant, report_id)
             
             # Create a copy
             new_report = CustomReport.objects.create(

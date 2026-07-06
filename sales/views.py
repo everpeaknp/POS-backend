@@ -404,7 +404,10 @@ class SalesOrderViewSet(viewsets.ModelViewSet):
         sales_order = self.get_object()
         
         try:
-            sales_order.finalize_on_credit()
+            sales_order.finalize_on_credit(
+                performed_by=request.user,
+                warehouse_id=request.data.get('warehouse_id'),
+            )
             serializer = self.get_serializer(sales_order)
             return Response({
                 'message': 'Sales order finalized on credit successfully',

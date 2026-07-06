@@ -1,5 +1,17 @@
+from datetime import date
 from rest_framework import serializers
 from .models import Department, Employee, Attendance, LeaveType, LeaveRequest, Payroll
+
+MIN_EMPLOYEE_AGE = 18
+
+
+def validate_minimum_employee_age(dob: date, min_age: int = MIN_EMPLOYEE_AGE) -> None:
+    today = date.today()
+    age = today.year - dob.year - ((today.month, today.day) < (dob.month, dob.day))
+    if age < min_age:
+        raise serializers.ValidationError(
+            f'Employee must be at least {min_age} years old.'
+        )
 
 
 class DepartmentSerializer(serializers.ModelSerializer):
@@ -21,6 +33,10 @@ class EmployeeSerializer(serializers.ModelSerializer):
     pf_employer = serializers.ReadOnlyField()
     total_pf = serializers.ReadOnlyField()
     gross_salary = serializers.ReadOnlyField()
+
+    def validate_dob(self, value):
+        validate_minimum_employee_age(value)
+        return value
     
     class Meta:
         model = Employee
@@ -35,6 +51,10 @@ class EmployeeSerializer(serializers.ModelSerializer):
 
 
 class EmployeeCreateSerializer(serializers.ModelSerializer):
+    def validate_dob(self, value):
+        validate_minimum_employee_age(value)
+        return value
+
     class Meta:
         model = Employee
         fields = [

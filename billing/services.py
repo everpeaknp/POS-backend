@@ -4,7 +4,7 @@ from calendar import monthrange
 from datetime import date, timedelta
 from decimal import Decimal
 
-from django.db import transaction
+from django.db import IntegrityError, transaction
 from django.utils import timezone
 
 from billing.esewa import (
@@ -29,15 +29,18 @@ def _add_one_month(start: date) -> date:
 def ensure_subscription(tenant) -> Subscription:
     plan_code = PLAN_TYPE_TO_CODE.get(tenant.plan_type, 'free')
     today = timezone.now().date()
-    subscription, created = Subscription.objects.get_or_create(
-        tenant=tenant,
-        defaults={
-            'plan_code': plan_code,
-            'status': 'trialing' if plan_code == 'free' else 'active',
-            'current_period_start': today,
-            'current_period_end': None if plan_code == 'free' else _add_one_month(today),
-        },
-    )
+    defaults = {
+        'plan_code': plan_code,
+        'status': 'trialing' if plan_code == 'free' else 'active',
+        'current_period_start': today,
+        'current_period_end': None if plan_code == 'free' else _add_one_month(today),
+    }
+    manager = Subscription._base_manager
+    try:
+        subscription, created = manager.get_or_create(tenant=tenant, defaults=defaults)
+    except IntegrityError:
+        subscription = manager.get(tenant=tenant)
+        created = False
     if not created and subscription.plan_code != plan_code:
         subscription.plan_code = plan_code
         subscription.save(update_fields=['plan_code', 'updated_at'])
@@ -60,7 +63,7 @@ def billing_overview(tenant, user) -> dict:
     subscription = ensure_subscription(tenant)
     current_plan_code = subscription.plan_code
 
-    payments = BillingPayment.objects.filter(tenant=tenant).order_by('-created_at')[:10]
+    payments = BillingPayment._base_manager.filter(tenant=tenant).order_by('-created_at')[:10]
     return {
         'subscription': {
             'plan_code': subscription.plan_code,
@@ -125,7 +128,7 @@ def initiate_checkout(tenant, user, plan_code: str) -> dict:
     transaction_uuid = new_transaction_uuid(tenant.id)
     amount = Decimal(str(plan['price']))
 
-    BillingPayment.objects.create(
+    BillingPayment._base_manager.create(
         tenant=tenant,
         transaction_uuid=transaction_uuid,
         plan_code=plan_code,
@@ -173,7 +176,7 @@ def verify_and_activate(tenant, user, transaction_uuid: str, encoded_data: str |
         raise PermissionError('Only organization admins can manage billing')
 
     try:
-        payment = BillingPayment.objects.select_for_update().get(
+        payment = BillingPayment._base_manager.select_for_update().get(
             tenant=tenant,
             transaction_uuid=transaction_uuid,
         )

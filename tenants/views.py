@@ -119,6 +119,18 @@ class TenantViewSet(viewsets.ModelViewSet):
         
         # Initialize default permissions for the new tenant
         initialize_tenant_permissions(tenant)
+
+        # Seed standard chart of accounts when accounting module is enabled
+        active_modules = tenant.active_modules or []
+        if 'accounting' in active_modules:
+            try:
+                from accounting.chart_seed import seed_default_chart_of_accounts
+                seed_default_chart_of_accounts(tenant)
+            except Exception:
+                import logging
+                logging.getLogger(__name__).exception(
+                    'Failed to seed chart of accounts for tenant %s', tenant.id
+                )
         
         # If user is authenticated, assign this tenant as their active tenant
         if self.request.user.is_authenticated:

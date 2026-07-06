@@ -7,6 +7,7 @@ from .views import (
 urlpatterns = [
     # Accounts
     path('accounts/', AccountViewSet.as_view({'get': 'list', 'post': 'create'}), name='account-list'),
+    path('accounts/seed_default/', AccountViewSet.as_view({'post': 'seed_default'}), name='account-seed-default'),
     path('accounts/<int:pk>/', AccountViewSet.as_view({'get': 'retrieve', 'put': 'update', 'patch': 'partial_update', 'delete': 'destroy'}), name='account-detail'),
     path('accounts/tree/', AccountViewSet.as_view({'get': 'tree'}), name='account-tree'),
     path('accounts/<int:pk>/ledger/', AccountViewSet.as_view({'get': 'ledger'}), name='account-ledger'),

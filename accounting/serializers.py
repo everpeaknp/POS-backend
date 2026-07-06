@@ -33,6 +33,18 @@ class AccountSerializer(serializers.ModelSerializer):
             data['level'] = parent.level + 1
         elif 'parent' in data and data.get('parent') is None:
             data['level'] = 0
+
+        if not self.instance:
+            code = data.get('code')
+            request = self.context.get('request')
+            if code and request and getattr(request, 'user', None):
+                from tenants.utils import get_request_tenant
+                tenant = get_request_tenant(request.user)
+                if tenant and Account._base_manager.filter(tenant=tenant, code=code).exists():
+                    raise serializers.ValidationError({
+                        'code': 'An account with this code already exists.',
+                    })
+
         return data
 
     def create(self, validated_data):
@@ -41,7 +53,7 @@ class AccountSerializer(serializers.ModelSerializer):
         balance_type = validated_data.pop('balance_type', 'debit')
         tenant = validated_data['tenant']
 
-        account = super().create(validated_data)
+        account = Account._base_manager.create(**validated_data)
 
         if opening_balance > 0:
             from .services import create_account_opening_balance

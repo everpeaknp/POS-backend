@@ -9,6 +9,7 @@ from rest_framework.parsers import MultiPartParser, FormParser
 from django.db import models
 from .models import User, AuditLog
 from .notification_models import NotificationPreferences
+from .notification_utils import get_or_create_notification_preferences, preferences_payload
 from .serializers import (
     UserSerializer, RegisterSerializer, CustomTokenObtainPairSerializer, 
     AuditLogSerializer, UserProfileUpdateSerializer, PasswordChangeSerializer,
@@ -350,18 +351,8 @@ def change_password(request):
 @permission_classes([drf_permissions.IsAuthenticated])
 def get_notification_preferences(request):
     """Get user notification preferences"""
-    prefs, _ = NotificationPreferences.objects.get_or_create(user=request.user)
-    serializer = NotificationPreferencesSerializer({
-        'email_order_updates': prefs.email_order_updates,
-        'email_payment_reminders': prefs.email_payment_reminders,
-        'email_inventory_alerts': prefs.email_inventory_alerts,
-        'email_team_activity': prefs.email_team_activity,
-        'push_desktop': prefs.push_desktop,
-        'push_mobile': prefs.push_mobile,
-        'push_sound': prefs.push_sound,
-        'login_alerts': prefs.login_alerts,
-        'security_log_exports': prefs.security_log_exports,
-    })
+    prefs = get_or_create_notification_preferences(request.user)
+    serializer = NotificationPreferencesSerializer(preferences_payload(prefs))
     return Response(serializer.data, status=status.HTTP_200_OK)
 
 
@@ -376,28 +367,18 @@ def get_notification_preferences(request):
 @permission_classes([drf_permissions.IsAuthenticated])
 def update_notification_preferences(request):
     """Update user notification preferences"""
-    prefs, created = NotificationPreferences.objects.get_or_create(user=request.user)
-    
-    serializer = NotificationPreferencesSerializer(prefs, data=request.data, partial=True)
-    
+    prefs = get_or_create_notification_preferences(request.user)
+
+    serializer = NotificationPreferencesSerializer(data=request.data, partial=True)
+
     if serializer.is_valid():
         for key, value in serializer.validated_data.items():
             setattr(prefs, key, value)
         prefs.save()
 
-        response = NotificationPreferencesSerializer({
-            'email_order_updates': prefs.email_order_updates,
-            'email_payment_reminders': prefs.email_payment_reminders,
-            'email_inventory_alerts': prefs.email_inventory_alerts,
-            'email_team_activity': prefs.email_team_activity,
-            'push_desktop': prefs.push_desktop,
-            'push_mobile': prefs.push_mobile,
-            'push_sound': prefs.push_sound,
-            'login_alerts': prefs.login_alerts,
-            'security_log_exports': prefs.security_log_exports,
-        })
+        response = NotificationPreferencesSerializer(preferences_payload(prefs))
         return Response(response.data, status=status.HTTP_200_OK)
-    
+
     return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 

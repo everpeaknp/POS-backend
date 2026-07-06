@@ -118,7 +118,7 @@ class SalesOrder(TenantModel):
     def items_count(self):
         return self.lines.count()
     
-    def finalize_on_credit(self):
+    def finalize_on_credit(self, performed_by=None, warehouse_id=None):
         """
         Finalize sales order on credit
         Wrapped in transaction.atomic() for financial integrity
@@ -139,6 +139,17 @@ class SalesOrder(TenantModel):
             )
         
         with transaction.atomic():
+            old_status = self.status
+            if old_status == 'Draft':
+                from sales.stock_integration import handle_sales_order_status_change
+                handle_sales_order_status_change(
+                    self,
+                    old_status='Draft',
+                    new_status='Delivered',
+                    performed_by=performed_by,
+                    warehouse_id=warehouse_id,
+                )
+
             # Update order status
             self.status = 'Delivered'
             self.save()

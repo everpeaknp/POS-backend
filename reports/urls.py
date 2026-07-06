@@ -28,6 +28,7 @@ urlpatterns = [
     path('tax-reports/', ReportViewSet.as_view({'get': 'tax_reports'}), name='report-tax-reports'),
     
     # Custom Reports
+    path('custom-reports/fields/', ReportViewSet.as_view({'get': 'custom_reports_fields'}), name='report-custom-reports-fields'),
     path('custom-reports/', ReportViewSet.as_view({'get': 'custom_reports_list'}), name='report-custom-reports-list'),
     path('custom-reports/create/', ReportViewSet.as_view({'post': 'custom_reports_create'}), name='report-custom-reports-create'),
     path('custom-reports/<int:report_id>/', ReportViewSet.as_view({'get': 'custom_reports_detail'}), name='report-custom-reports-detail'),

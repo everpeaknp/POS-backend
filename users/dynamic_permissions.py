@@ -75,7 +75,7 @@ class DynamicModulePermission(permissions.BasePermission):
             return True
 
         try:
-            permission = RolePermission.objects.get(
+            permission = RolePermission._base_manager.get(
                 tenant=tenant,
                 role=role,
                 module=module,
@@ -85,7 +85,7 @@ class DynamicModulePermission(permissions.BasePermission):
         except RolePermission.DoesNotExist:
             sync_tenant_permissions(tenant)
             try:
-                permission = RolePermission.objects.get(
+                permission = RolePermission._base_manager.get(
                     tenant=tenant,
                     role=role,
                     module=module,
@@ -120,7 +120,7 @@ class DynamicActionPermission(permissions.BasePermission):
             return True
 
         try:
-            permission = RolePermission.objects.get(
+            permission = RolePermission._base_manager.get(
                 tenant=tenant,
                 role=role,
                 module=module,
@@ -130,7 +130,7 @@ class DynamicActionPermission(permissions.BasePermission):
         except RolePermission.DoesNotExist:
             sync_tenant_permissions(tenant)
             try:
-                permission = RolePermission.objects.get(
+                permission = RolePermission._base_manager.get(
                     tenant=tenant,
                     role=role,
                     module=module,
@@ -158,7 +158,7 @@ def has_permission(user, module, action):
         return True
 
     try:
-        permission = RolePermission.objects.get(
+        permission = RolePermission._base_manager.get(
             tenant=tenant,
             role=role,
             module=module,
@@ -168,7 +168,7 @@ def has_permission(user, module, action):
     except RolePermission.DoesNotExist:
         sync_tenant_permissions(tenant)
         try:
-            permission = RolePermission.objects.get(
+            permission = RolePermission._base_manager.get(
                 tenant=tenant,
                 role=role,
                 module=module,
@@ -191,10 +191,10 @@ def get_user_permissions(user):
     role = _effective_role(user, tenant)
     if role == 'admin' or getattr(user, 'is_superuser', False):
         sync_tenant_permissions(tenant)
-        perms = RolePermission.objects.filter(tenant=tenant, role='admin', allowed=True)
+        perms = RolePermission._base_manager.filter(tenant=tenant, role='admin', allowed=True)
     else:
         sync_tenant_permissions(tenant)
-        perms = RolePermission.objects.filter(tenant=tenant, role=role, allowed=True)
+        perms = RolePermission._base_manager.filter(tenant=tenant, role=role, allowed=True)
 
     result = {}
     for perm in perms:

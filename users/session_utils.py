@@ -62,7 +62,7 @@ def record_user_session(user, request, refresh_token: str) -> UserSession:
     ip_address = get_client_ip(request)
     refresh_jti = get_refresh_jti(refresh_token)
 
-    session, _ = UserSession.objects.update_or_create(
+    session, created = UserSession.objects.update_or_create(
         refresh_jti=refresh_jti,
         defaults={
             'user': user,
@@ -73,6 +73,13 @@ def record_user_session(user, request, refresh_token: str) -> UserSession:
             'is_revoked': False,
         },
     )
+    if created:
+        try:
+            from .notification_utils import notify_login_if_enabled
+            notify_login_if_enabled(user, session)
+        except Exception:
+            import logging
+            logging.getLogger(__name__).exception('Failed to create login alert notification')
     return session
 
 
