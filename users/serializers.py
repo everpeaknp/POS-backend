@@ -246,12 +246,19 @@ class UserSerializer(serializers.ModelSerializer):
 class UserProfileUpdateSerializer(serializers.ModelSerializer):
     """Serializer for updating user profile (name, phone, etc.)"""
     avatar = serializers.ImageField(required=False, allow_null=True)
-    
+    remove_avatar = serializers.BooleanField(required=False, write_only=True, default=False)
+
     class Meta:
         model = User
-        fields = ['first_name', 'last_name', 'phone', 'avatar']
-    
+        fields = ['first_name', 'last_name', 'phone', 'avatar', 'remove_avatar']
+
     def update(self, instance, validated_data):
+        remove_avatar = validated_data.pop('remove_avatar', False)
+        if remove_avatar:
+            if instance.avatar:
+                instance.avatar.delete(save=False)
+            instance.avatar = None
+
         for attr, value in validated_data.items():
             setattr(instance, attr, value)
         instance.save()
