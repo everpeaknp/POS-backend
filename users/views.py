@@ -165,12 +165,42 @@ class UserViewSet(viewsets.ModelViewSet):
         if not self.request.user.tenant:
             from rest_framework.exceptions import ValidationError
             raise ValidationError({'detail': 'You must be assigned to an organization to create users.'})
+        from billing.account_limits import assert_tenant_can_add_user
+        assert_tenant_can_add_user(self.request.user.tenant)
         serializer.save(tenant=self.request.user.tenant)
     
+    def perform_destroy(self, instance):
+        """Remove user from the current organization without deleting their account."""
+        from rest_framework.exceptions import ValidationError
+        from tenants.membership_models import UserTenantMembership
+
+        tenant = self.request.user.tenant
+        if not tenant:
+            raise ValidationError({'detail': 'You must be assigned to an organization to remove users.'})
+
+        if instance.id == self.request.user.id:
+            raise ValidationError({'detail': 'You cannot remove yourself from the organization.'})
+
+        UserTenantMembership.objects.filter(user=instance, tenant=tenant).delete()
+
+        if instance.tenant_id == tenant.id:
+            other_membership = (
+                UserTenantMembership.objects.filter(user=instance)
+                .select_related('tenant')
+                .first()
+            )
+            if other_membership:
+                instance.tenant = other_membership.tenant
+                instance.role = other_membership.role
+            else:
+                instance.tenant = None
+                instance.role = 'viewer'
+            instance.save(update_fields=['tenant', 'role'])
+    
     def get_permissions(self):
-        """Only admins and managers can create/update/delete users"""
+        """Settings edit permission required to create/update/remove users"""
         if self.action in ['create', 'update', 'partial_update', 'destroy']:
-            return [permissions.IsAuthenticated(), IsAdminOrManager()]
+            return [permissions.IsAuthenticated(), CanEditTenantSettings()]
         return super().get_permissions()
 
 
@@ -250,7 +280,7 @@ from rest_framework.decorators import api_view, permission_classes
 from rest_framework import permissions as drf_permissions
 from .permission_models import RolePermission, get_default_permissions, initialize_tenant_permissions, sync_tenant_permissions
 from .serializers import PermissionsMatrixSerializer, UpdatePermissionsSerializer
-from .permissions import IsAdminOrManager
+from .permissions import IsAdminOrManager, CanEditTenantSettings
 from tenants.utils import get_request_tenant
 
 ROLE_DISPLAY_MAP = {
@@ -627,7 +657,7 @@ def delete_account(request):
     responses={200: PermissionsMatrixSerializer}
 )
 @api_view(['GET'])
-@permission_classes([drf_permissions.IsAuthenticated, IsAdminOrManager])
+@permission_classes([drf_permissions.IsAuthenticated, CanEditTenantSettings])
 def get_permissions(request):
     """
     Get the complete permissions matrix for all roles.
@@ -694,7 +724,7 @@ def get_my_permissions(request):
     responses={200: {'description': 'Permissions updated successfully'}}
 )
 @api_view(['POST'])
-@permission_classes([drf_permissions.IsAuthenticated, IsAdminOrManager])
+@permission_classes([drf_permissions.IsAuthenticated, CanEditTenantSettings])
 def update_permissions(request):
     """
     Update the permissions matrix for all roles.
@@ -732,6 +762,7 @@ def update_permissions(request):
         'Inventory': 'inventory',
         'Accounting': 'accounting',
         'Construction': 'construction',
+        'Hardware': 'hardware',
         'Reports': 'reports',
         'Settings': 'settings',
         'HR': 'hr',

@@ -13,6 +13,7 @@ class TenantSerializer(serializers.ModelSerializer):
     """Serializer for Tenant model"""
     user_role = serializers.SerializerMethodField()
     allowed_modules = serializers.SerializerMethodField()
+    user_limits = serializers.SerializerMethodField()
     
     class Meta:
         model = Tenant
@@ -21,12 +22,12 @@ class TenantSerializer(serializers.ModelSerializer):
             'phone', 'address', 'pan_vat_number', 'website',
             'accounting_start_date', 'vat_registered',
             'workspace_name', 'logo', 'is_active', 'plan_type', 'active_modules',
-            'allowed_modules',
+            'allowed_modules', 'user_limits',
             'created_at', 'updated_at', 'created_by', 'user_role'
         ]
         read_only_fields = [
             'id', 'slug', 'created_at', 'updated_at', 'created_by',
-            'user_role', 'allowed_modules',
+            'user_role', 'allowed_modules', 'user_limits',
         ]
     
     def get_user_role(self, obj):
@@ -60,6 +61,22 @@ class TenantSerializer(serializers.ModelSerializer):
         except Exception:
             from billing.account_limits import get_allowed_modules_for_plan
             return get_allowed_modules_for_plan('free')
+
+    def get_user_limits(self, obj):
+        from billing.account_limits import get_tenant_user_limits
+
+        try:
+            return get_tenant_user_limits(obj)
+        except Exception:
+            return {
+                'plan_code': 'free',
+                'plan_name': 'Free',
+                'max_users': 1,
+                'current_users': 0,
+                'pending_invites': 0,
+                'seats_used': 0,
+                'can_invite': True,
+            }
 
 
 class TenantCreateSerializer(serializers.ModelSerializer):
@@ -188,7 +205,14 @@ class OrganizationInvitationSerializer(serializers.ModelSerializer):
             })
         
         # Check if user is already in this organization
-        if invited_user.tenant == tenant:
+        from tenants.membership_models import UserTenantMembership
+
+        if invited_user.tenant_id == tenant.id:
+            raise serializers.ValidationError({
+                'invited_user': 'This user is already a member of this organization'
+            })
+
+        if UserTenantMembership.objects.filter(user=invited_user, tenant=tenant).exists():
             raise serializers.ValidationError({
                 'invited_user': 'This user is already a member of this organization'
             })
@@ -204,6 +228,9 @@ class OrganizationInvitationSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError({
                 'invited_user': 'This user already has a pending invitation to this organization'
             })
+
+        from billing.account_limits import assert_tenant_can_add_user
+        assert_tenant_can_add_user(tenant)
         
         # Set invited_by from request user
         if request and request.user:

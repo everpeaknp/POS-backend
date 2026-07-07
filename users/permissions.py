@@ -95,6 +95,16 @@ class CanManageUsers(permissions.BasePermission):
         )
 
 
+class CanEditTenantSettings(permissions.BasePermission):
+    """Tenant-scoped settings edit (user management, permissions, invites)."""
+
+    def has_permission(self, request, view):
+        if not request.user or not request.user.is_authenticated:
+            return False
+        from users.dynamic_permissions import has_permission
+        return has_permission(request.user, 'settings', 'edit')
+
+
 class CanEditData(permissions.BasePermission):
     """
     Permission class for editing data (not just viewing)

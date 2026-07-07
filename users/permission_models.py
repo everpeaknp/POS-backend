@@ -95,7 +95,7 @@ def get_default_permissions():
             'construction': ['view', 'create', 'edit'],
             'hardware': ['view', 'create', 'edit'],
             'reports': ['view', 'export'],
-            'settings': ['view'],
+            'settings': ['view', 'edit'],
             'hr': ['view', 'create', 'edit'],
             'pos': ['view', 'create', 'edit'],
         },

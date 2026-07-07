@@ -422,20 +422,18 @@ class OrganizationInvitationViewSet(viewsets.ModelViewSet):
         return received
     
     def perform_create(self, serializer):
-        """Create invitation - admins and managers can invite users"""
+        """Create invitation — requires settings edit permission."""
         from rest_framework.exceptions import PermissionDenied
+        from users.dynamic_permissions import has_permission
 
         user = self.request.user
 
-        # Check if user is part of an organization
         if not user.tenant:
             raise PermissionDenied("You must be part of an organization to invite users")
 
-        # Check if user is admin or manager
-        if not (user.is_admin or user.is_manager):
-            raise PermissionDenied("Only admins and managers can invite users to the organization")
-        
-        # Set tenant to user's primary organization
+        if not has_permission(user, 'settings', 'edit'):
+            raise PermissionDenied("You do not have permission to invite users")
+
         serializer.save(tenant=user.tenant, invited_by=user)
     
     @extend_schema(
@@ -480,19 +478,20 @@ class OrganizationInvitationViewSet(viewsets.ModelViewSet):
     
     @action(detail=True, methods=['post'])
     def cancel(self, request, pk=None):
-        """Cancel an invitation (by inviter/admin)"""
+        """Cancel an invitation (by inviter or anyone with settings edit)."""
+        from users.dynamic_permissions import has_permission
+
         invitation = self.get_object()
-        
-        # Check if user is admin of the organization
+
         if not request.user.tenant or request.user.tenant != invitation.tenant:
             return Response(
                 {'error': 'You can only cancel invitations from your organization'},
                 status=status.HTTP_403_FORBIDDEN
             )
-        
-        if not request.user.is_admin:
+
+        if not has_permission(request.user, 'settings', 'edit'):
             return Response(
-                {'error': 'Only admins can cancel invitations'},
+                {'error': 'You do not have permission to cancel invitations'},
                 status=status.HTTP_403_FORBIDDEN
             )
         
@@ -520,20 +519,25 @@ class OrganizationInvitationViewSet(viewsets.ModelViewSet):
     
     @action(detail=False, methods=['get'])
     def sent(self, request):
-        """Get invitations sent by organizations where user is admin or manager"""
-        # Import here to avoid circular import
+        """Get invitations sent by the user's active organization."""
+        from users.dynamic_permissions import has_permission
+
+        tenant = request.user.tenant
+        if tenant and has_permission(request.user, 'settings', 'edit'):
+            invitations = OrganizationInvitation.objects.filter(tenant=tenant)
+            serializer = self.get_serializer(invitations, many=True)
+            return Response(serializer.data)
+
         from .membership_models import UserTenantMembership
-        
-        # Get all tenants where user is admin or manager
+
         admin_manager_memberships = UserTenantMembership.objects.filter(
             user=request.user,
-            role__in=['admin', 'manager']
+            role__in=['admin', 'manager'],
         ).values_list('tenant_id', flat=True)
-        
+
         if not admin_manager_memberships:
             return Response([])
-        
-        # Get invitations from those tenants
+
         invitations = OrganizationInvitation.objects.filter(
             tenant_id__in=admin_manager_memberships
         )

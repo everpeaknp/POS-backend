@@ -149,3 +149,71 @@ def assert_tenant_can_enable_module(tenant, module_name: str) -> None:
 
 def get_tenant_allowed_modules(tenant) -> list[str]:
     return get_allowed_modules_for_plan(get_tenant_plan_code(tenant))
+
+
+def count_tenant_members(tenant) -> int:
+    """Distinct users assigned to a tenant via membership or primary tenant."""
+    from tenants.membership_models import UserTenantMembership
+    from users.models import User
+
+    member_ids = set(
+        UserTenantMembership.objects.filter(tenant=tenant).values_list('user_id', flat=True)
+    )
+    primary_ids = set(User.objects.filter(tenant=tenant).values_list('id', flat=True))
+    return len(member_ids | primary_ids)
+
+
+def count_pending_tenant_invitations(tenant) -> int:
+    from tenants.invitation_models import OrganizationInvitation
+
+    return OrganizationInvitation.objects.filter(tenant=tenant, status='pending').count()
+
+
+def get_tenant_user_limits(tenant) -> dict:
+    """Seat usage for the workspace based on its subscription plan."""
+    plan_code = get_tenant_plan_code(tenant)
+    plan = get_plan(plan_code)
+    max_users = plan.get('max_users')
+    current_users = count_tenant_members(tenant)
+    pending_invites = count_pending_tenant_invitations(tenant)
+    seats_used = current_users + pending_invites
+    can_invite = max_users is None or seats_used < max_users
+
+    return {
+        'plan_code': plan_code,
+        'plan_name': plan['name'],
+        'max_users': max_users,
+        'current_users': current_users,
+        'pending_invites': pending_invites,
+        'seats_used': seats_used,
+        'can_invite': can_invite,
+    }
+
+
+def assert_tenant_can_add_user(tenant, additional_seats: int = 1) -> None:
+    """Raise ValidationError when inviting would exceed the plan user limit."""
+    limits = get_tenant_user_limits(tenant)
+    max_users = limits['max_users']
+    if max_users is None:
+        return
+
+    seats_after = limits['seats_used'] + additional_seats
+    if seats_after <= max_users:
+        return
+
+    plan_name = limits['plan_name']
+    current_users = limits['current_users']
+    pending_invites = limits['pending_invites']
+    detail = (
+        f'Your {plan_name} plan allows up to {max_users} user'
+        f'{"s" if max_users != 1 else ""}. '
+        f'You have {current_users} member{"s" if current_users != 1 else ""}'
+    )
+    if pending_invites:
+        detail += (
+            f' and {pending_invites} pending invitation'
+            f'{"s" if pending_invites != 1 else ""}'
+        )
+    detail += '. Upgrade your plan to add more users.'
+
+    raise serializers.ValidationError({'detail': detail})
