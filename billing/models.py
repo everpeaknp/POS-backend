@@ -72,6 +72,70 @@ class BillingPayment(TenantModel):
         return f'{self.transaction_uuid} — {self.plan_code} — {self.status}'
 
 
+class SubscriptionPlan(models.Model):
+    """Platform subscription plan catalog shown at /settings/billing."""
+
+    PLAN_TYPE_CHOICES = [
+        ('free', 'Free'),
+        ('basic', 'Basic'),
+        ('premium', 'Premium'),
+        ('enterprise', 'Enterprise'),
+    ]
+
+    code = models.CharField(
+        max_length=32,
+        unique=True,
+        help_text='Stable plan identifier used in checkout (e.g. starter, business)',
+    )
+    name = models.CharField(max_length=100)
+    plan_type = models.CharField(
+        max_length=20,
+        choices=PLAN_TYPE_CHOICES,
+        help_text='Maps to tenant.plan_type when a user subscribes',
+    )
+    price = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        default=Decimal('0.00'),
+        help_text='Monthly price in NPR (0 = free)',
+    )
+    max_users = models.PositiveIntegerField(
+        null=True,
+        blank=True,
+        help_text='Leave blank for unlimited users',
+    )
+    features = models.JSONField(
+        default=list,
+        blank=True,
+        help_text='Bullet points shown on the billing page',
+    )
+    modules = models.JSONField(
+        default=list,
+        blank=True,
+        help_text='Modules enabled for organizations on this plan',
+    )
+    is_active = models.BooleanField(
+        default=True,
+        help_text='Inactive plans are hidden from /settings/billing',
+    )
+    is_popular = models.BooleanField(
+        default=False,
+        help_text='Highlights this plan as "Most popular" in the customer app',
+    )
+    sort_order = models.PositiveSmallIntegerField(default=0)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'billing_subscription_plans'
+        ordering = ['sort_order', 'code']
+        verbose_name = 'Subscription plan'
+        verbose_name_plural = 'Subscription plans'
+
+    def __str__(self):
+        return f'{self.name} ({self.code})'
+
+
 class EsewaSettings(models.Model):
     """Singleton platform settings for eSewa subscription payments."""
 

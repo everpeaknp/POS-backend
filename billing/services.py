@@ -15,7 +15,7 @@ from billing.esewa import (
     verify_callback_signature,
 )
 from billing.models import BillingPayment, Subscription
-from billing.plans import PLAN_TYPE_TO_CODE, SUBSCRIPTION_PLANS, get_plan
+from billing.plans import get_plan, get_plan_type_to_code_map, list_active_plans
 from billing.esewa_config import get_esewa_config
 
 
@@ -27,7 +27,7 @@ def _add_one_month(start: date) -> date:
 
 
 def ensure_subscription(tenant) -> Subscription:
-    plan_code = PLAN_TYPE_TO_CODE.get(tenant.plan_type, 'free')
+    plan_code = get_plan_type_to_code_map().get(tenant.plan_type, 'free')
     today = timezone.now().date()
     defaults = {
         'plan_code': plan_code,
@@ -56,6 +56,7 @@ def serialize_plan(plan_code: str, current_plan_code: str | None = None) -> dict
         'max_users': plan['max_users'],
         'features': plan['features'],
         'is_current': plan_code == current_plan_code,
+        'is_popular': bool(plan.get('is_popular')),
     }
 
 
@@ -76,8 +77,8 @@ def billing_overview(tenant, user) -> dict:
             'monthly_price': float(get_plan(subscription.plan_code)['price']),
         },
         'plans': [
-            serialize_plan(code, current_plan_code)
-            for code in SUBSCRIPTION_PLANS
+            serialize_plan(plan['code'], current_plan_code)
+            for plan in list_active_plans()
         ],
         'payments': [
             {

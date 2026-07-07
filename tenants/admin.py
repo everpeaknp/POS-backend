@@ -2,7 +2,7 @@ from django.contrib import admin, messages
 from django.utils.html import format_html
 
 from billing.models import Subscription
-from billing.plans import PLAN_TYPE_TO_CODE, get_plan
+from billing.plans import get_plan_type_to_code_map, get_plan
 from billing.services import ensure_subscription
 from tenants.forms import TenantAdminForm
 from .models import Tenant
@@ -82,7 +82,7 @@ class TenantAdmin(admin.ModelAdmin):
             return '—'
         sub = ensure_subscription(obj)
         warn = ''
-        expected = PLAN_TYPE_TO_CODE.get(obj.plan_type, 'free')
+        expected = get_plan_type_to_code_map().get(obj.plan_type, 'free')
         if sub.plan_code != expected:
             warn = format_html(' <span style="color:#dc2626;">(plan mismatch)</span>')
         return format_html(
@@ -103,7 +103,7 @@ class TenantAdmin(admin.ModelAdmin):
     def apply_plan_modules_from_catalog(self, request, queryset):
         updated = 0
         for tenant in queryset:
-            code = PLAN_TYPE_TO_CODE.get(tenant.plan_type, 'free')
+            code = get_plan_type_to_code_map().get(tenant.plan_type, 'free')
             try:
                 plan = get_plan(code)
                 tenant.active_modules = plan['modules']
