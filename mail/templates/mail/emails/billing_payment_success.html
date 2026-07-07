@@ -1,0 +1,9 @@
+{% extends "mail/emails/base.html" %}
+{% block content %}
+<h1>Payment successful</h1>
+<p>Hi {{ first_name }},</p>
+<p>We received <strong>{{ amount_display }}</strong> for the <strong>{{ plan_name }}</strong> plan for <strong>{{ organization_name }}</strong>.</p>
+<p>Transaction ID: <strong>{{ transaction_uuid }}</strong></p>
+{% if period_end %}<p>Subscription valid until: <strong>{{ period_end }}</strong></p>{% endif %}
+<p><a href="{{ billing_url }}" class="btn">View billing</a></p>
+{% endblock %}

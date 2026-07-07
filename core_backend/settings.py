@@ -953,6 +953,7 @@ JAZZMIN_SETTINGS = {
         "users",
         "auth",
         "billing.esewasettings",
+        "billing.googleoauthsettings",
         "billing.subscriptionplan",
         "billing.subscription",
         "billing.billingpayment",
@@ -983,6 +984,7 @@ JAZZMIN_SETTINGS = {
         "billing.SubscriptionPlan": "fas fa-tags",
         "billing.BillingPayment": "fas fa-wallet",
         "billing.EsewaSettings": "fas fa-cog",
+        "billing.GoogleOAuthSettings": "fab fa-google",
         "mail.SmtpSettings": "fas fa-server",
         "mail.EmailBranding": "fas fa-palette",
         "mail.EmailTemplate": "fas fa-file-code",
@@ -1007,6 +1009,7 @@ JAZZMIN_SETTINGS = {
         "auth.user": "horizontal_tabs",
         "users.user": "horizontal_tabs",
         "billing.esewasettings": "horizontal_tabs",
+        "billing.googleoauthsettings": "horizontal_tabs",
     },
     
     "language_chooser": False,

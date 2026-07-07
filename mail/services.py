@@ -53,6 +53,40 @@ def build_message_context(user=None, extra: dict | None = None) -> dict:
     return ctx
 
 
+def build_preview_context() -> dict:
+    """Sample context for admin email template previews."""
+    branding = EmailBranding.get_solo()
+    frontend = get_frontend_url()
+    return build_message_context(extra={
+        'first_name': 'Alex',
+        'last_name': 'Johnson',
+        'email': 'alex@example.com',
+        'full_name': 'Alex Johnson',
+        'verification_link': f'{frontend}/auth/verify?token=preview',
+        'invitation_link': f'{frontend}/dashboard/settings/users?invitation=preview',
+        'company_name': branding.company_name,
+        'organization_name': 'Everacy Pvt. Ltd.',
+        'inviter_name': 'Jane Admin',
+        'role': 'Manager',
+        'custom_message': 'Welcome to the team!',
+        'expires_at': 'August 7, 2026',
+        'plan_name': 'Business',
+        'amount_display': 'NPR 2,999',
+        'period_end': 'August 7, 2026',
+        'billing_url': f'{frontend}/settings/billing',
+        'transaction_uuid': 'TXN-2026-000123',
+        'payment_method': 'eSewa',
+        'failure_reason': 'Insufficient balance',
+    })
+
+
+def render_email_preview(subject: str, html_body: str) -> tuple[str, str]:
+    ctx = build_preview_context()
+    rendered_subject = render_template_string(subject or '', ctx)
+    rendered_html = render_template_string(html_body or '', ctx)
+    return rendered_subject, rendered_html
+
+
 def get_smtp_connection():
     smtp = SmtpSettings.get_solo()
     if not smtp.enabled or not smtp.host:
@@ -185,6 +219,9 @@ def render_system_email(slug: str, context: dict) -> tuple[str, str, str]:
         'welcome': 'mail/emails/welcome.html',
         'verification': 'mail/emails/verification.html',
         'acceptance': 'mail/emails/acceptance.html',
+        'billing-plan-activated': 'mail/emails/billing_plan_activated.html',
+        'billing-payment-success': 'mail/emails/billing_payment_success.html',
+        'billing-payment-failed': 'mail/emails/billing_payment_failed.html',
     }
     path = file_map.get(slug, 'mail/emails/welcome.html')
     subject_defaults = {
@@ -192,6 +229,9 @@ def render_system_email(slug: str, context: dict) -> tuple[str, str, str]:
         'welcome': 'Welcome to KHATA, {{ first_name }}!',
         'verification': 'Verify your KHATA email',
         'acceptance': 'You joined {{ company_name }} on KHATA',
+        'billing-plan-activated': '{{ organization_name }} is now on the {{ plan_name }} plan',
+        'billing-payment-success': 'Payment received for {{ plan_name }} — {{ organization_name }}',
+        'billing-payment-failed': 'Payment could not be completed for {{ plan_name }}',
     }
     subject = render_template_string(subject_defaults.get(slug, 'KHATA Notification'), context)
     html_body = render_to_string(path, {**context, 'subject': subject})
@@ -242,6 +282,88 @@ def dispatch_acceptance_email(invitation):
     return queue_or_send(user.email, subject, html, text, template=get_template('acceptance'), user=user)
 
 
+def _billing_settings_url() -> str:
+    return f'{get_frontend_url()}/settings/billing'
+
+
+def dispatch_billing_plan_activated_email(
+    user,
+    *,
+    organization_name: str,
+    plan_name: str,
+    amount_display: str,
+    period_end: str = '',
+):
+    ctx = build_message_context(user, {
+        'organization_name': organization_name,
+        'plan_name': plan_name,
+        'amount_display': amount_display,
+        'period_end': period_end,
+        'billing_url': _billing_settings_url(),
+    })
+    subject, html, text = render_system_email('billing-plan-activated', ctx)
+    return queue_or_send(
+        user.email, subject, html, text,
+        template=get_template('billing-plan-activated'),
+        user=user,
+        metadata={'billing_event': 'plan_activated', 'plan_name': plan_name},
+    )
+
+
+def dispatch_billing_payment_success_email(
+    user,
+    *,
+    organization_name: str,
+    plan_name: str,
+    amount_display: str,
+    transaction_uuid: str,
+    payment_method: str = 'eSewa',
+    period_end: str = '',
+):
+    ctx = build_message_context(user, {
+        'organization_name': organization_name,
+        'plan_name': plan_name,
+        'amount_display': amount_display,
+        'transaction_uuid': transaction_uuid,
+        'payment_method': payment_method,
+        'period_end': period_end,
+        'billing_url': _billing_settings_url(),
+    })
+    subject, html, text = render_system_email('billing-payment-success', ctx)
+    return queue_or_send(
+        user.email, subject, html, text,
+        template=get_template('billing-payment-success'),
+        user=user,
+        metadata={'billing_event': 'payment_success', 'transaction_uuid': transaction_uuid},
+    )
+
+
+def dispatch_billing_payment_failed_email(
+    user,
+    *,
+    organization_name: str,
+    plan_name: str,
+    amount_display: str,
+    transaction_uuid: str,
+    failure_reason: str = '',
+):
+    ctx = build_message_context(user, {
+        'organization_name': organization_name,
+        'plan_name': plan_name,
+        'amount_display': amount_display,
+        'transaction_uuid': transaction_uuid,
+        'failure_reason': failure_reason,
+        'billing_url': _billing_settings_url(),
+    })
+    subject, html, text = render_system_email('billing-payment-failed', ctx)
+    return queue_or_send(
+        user.email, subject, html, text,
+        template=get_template('billing-payment-failed'),
+        user=user,
+        metadata={'billing_event': 'payment_failed', 'transaction_uuid': transaction_uuid},
+    )
+
+
 def test_smtp_connection() -> tuple[bool, str]:
     try:
         connection = get_smtp_connection()
@@ -264,6 +386,25 @@ def send_test_email(to_email: str) -> tuple[bool, str]:
         return True, f'Test email sent to {to_email}'
     except Exception as exc:
         return False, str(exc)
+
+
+def send_all_test_emails(to_email: str) -> tuple[list[str], list[str]]:
+    """Send every active email template with sample preview data."""
+    ctx = build_preview_context()
+    sent, failed = [], []
+
+    for template in EmailTemplate.objects.filter(is_active=True).order_by('category', 'slug'):
+        try:
+            subject = render_template_string(template.subject, ctx)
+            html_body = render_template_string(template.html_body, ctx)
+            text_body = render_template_string(template.text_body, ctx) if template.text_body else ''
+            subject = f'[KHATA Test: {template.slug}] {subject}'
+            send_email_now(to_email, subject, html_body, text_body)
+            sent.append(template.slug)
+        except Exception as exc:
+            failed.append(f'{template.slug}: {exc}')
+
+    return sent, failed
 
 
 def process_email_queue(limit: int = 50) -> dict:

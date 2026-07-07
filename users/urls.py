@@ -8,7 +8,7 @@ from .views import (
     update_notification_preferences, get_active_sessions, revoke_session, revoke_other_sessions,
     get_appearance_preferences, update_appearance_preferences, NotificationViewSet,
     get_privacy_preferences, update_privacy_preferences, export_user_data, delete_account,
-    ensure_current_session, get_employee_invite_options,
+    ensure_current_session, get_employee_invite_options, google_oauth_config, google_login,
 )
 
 TokenRefreshView = extend_schema(
@@ -21,6 +21,8 @@ urlpatterns = [
     # Authentication
     path('register/', RegisterView.as_view(), name='register'),
     path('login/', CustomTokenObtainPairView.as_view(), name='token_obtain_pair'),
+    path('google/config/', google_oauth_config, name='google_oauth_config'),
+    path('google/', google_login, name='google_login'),
     path('token/refresh/', TokenRefreshView.as_view(), name='token_refresh'),
     path('profile/', UserProfileView.as_view(), name='user_profile'),
     

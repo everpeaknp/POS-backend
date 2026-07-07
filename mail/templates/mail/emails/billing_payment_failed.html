@@ -1,0 +1,10 @@
+{% extends "mail/emails/base.html" %}
+{% block content %}
+<h1>Payment not completed</h1>
+<p>Hi {{ first_name }},</p>
+<p>Your payment for <strong>{{ plan_name }}</strong> ({{ organization_name }}) could not be completed.</p>
+{% if failure_reason %}<p><strong>{{ failure_reason }}</strong></p>{% endif %}
+<p>Amount: <strong>{{ amount_display }}</strong></p>
+<p>Transaction ID: <strong>{{ transaction_uuid }}</strong></p>
+<p><a href="{{ billing_url }}" class="btn">Try again</a></p>
+{% endblock %}

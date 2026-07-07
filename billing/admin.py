@@ -5,7 +5,7 @@ from django.urls import reverse
 from django.utils.html import format_html
 
 from core_backend.platform_constants import AVAILABLE_MODULES
-from billing.models import BillingPayment, EsewaSettings, Subscription, SubscriptionPlan
+from billing.models import BillingPayment, EsewaSettings, GoogleOAuthSettings, Subscription, SubscriptionPlan
 from billing import services as billing_services
 
 
@@ -250,6 +250,117 @@ class EsewaSettingsAdmin(admin.ModelAdmin):
         settings_obj = EsewaSettings.get_solo()
         return HttpResponseRedirect(
             reverse('admin:billing_esewasettings_change', args=(settings_obj.pk,))
+        )
+
+
+class GoogleOAuthSettingsAdminForm(forms.ModelForm):
+    client_secret = forms.CharField(
+        required=False,
+        widget=forms.PasswordInput(render_value=True, attrs={'class': 'vTextField', 'style': 'width: 100%; max-width: 640px;'}),
+        label='Client secret',
+        help_text='Leave blank to keep the current secret.',
+    )
+
+    class Meta:
+        model = GoogleOAuthSettings
+        fields = '__all__'
+        exclude = ['client_secret_encrypted']
+        widgets = {
+            'client_id': forms.TextInput(attrs={'style': 'width: 100%; max-width: 640px;'}),
+        }
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        if self.instance and self.instance.pk:
+            self.fields['client_secret'].initial = self.instance.get_client_secret()
+
+    def save(self, commit=True):
+        instance = super().save(commit=False)
+        raw_secret = self.cleaned_data.get('client_secret')
+        if raw_secret:
+            instance.set_client_secret(raw_secret)
+        if commit:
+            instance.save()
+        return instance
+
+
+@admin.register(GoogleOAuthSettings)
+class GoogleOAuthSettingsAdmin(admin.ModelAdmin):
+    """Singleton admin for Google OAuth on login and signup."""
+
+    form = GoogleOAuthSettingsAdminForm
+
+    readonly_fields = ['integration_summary', 'setup_notes', 'updated_at']
+
+    fieldsets = (
+        ('Integration status', {
+            'fields': ('integration_summary', 'enabled', 'updated_at'),
+            'description': 'Configure Google sign-in for /auth/login and /auth/signup.',
+        }),
+        ('Google OAuth credentials', {
+            'fields': ('client_id', 'client_secret'),
+            'description': (
+                'Create credentials at console.cloud.google.com — OAuth 2.0 Client ID, Web application type.'
+            ),
+        }),
+        ('Setup guide', {
+            'fields': ('setup_notes',),
+        }),
+    )
+
+    @admin.display(description='Configuration health')
+    def integration_summary(self, obj):
+        if not obj:
+            return '—'
+        checks = []
+        if obj.enabled:
+            checks.append(('Enabled', '#16a34a'))
+        else:
+            checks.append(('Disabled', '#6b7280'))
+        if obj.client_id:
+            checks.append(('Client ID set', '#16a34a'))
+        else:
+            checks.append(('Missing client ID', '#dc2626'))
+        if obj.client_secret_encrypted:
+            checks.append(('Client secret set', '#16a34a'))
+        else:
+            checks.append(('Client secret optional', '#6b7280'))
+        badges = ''.join(
+            format_html(
+                '<span style="display:inline-block;margin:0 6px 6px 0;padding:4px 10px;border-radius:9999px;'
+                'font-size:12px;font-weight:600;color:#fff;background:{};">{}</span>',
+                color,
+                label,
+            )
+            for label, color in checks
+        )
+        return format_html('<div>{}</div>', badges)
+
+    @admin.display(description='Google Cloud Console setup')
+    def setup_notes(self, obj):
+        from django.conf import settings as django_settings
+        frontend = getattr(django_settings, 'FRONTEND_URL', 'http://localhost:3000').rstrip('/')
+        return format_html(
+            '<div style="padding:12px 14px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;'
+            'font-size:13px;line-height:1.7;color:#334155;">'
+            '<p style="margin:0 0 8px;"><strong>Authorized JavaScript origins</strong></p>'
+            '<code style="display:block;padding:8px;background:#fff;border-radius:6px;margin-bottom:12px;">{}</code>'
+            '<p style="margin:0 0 8px;">ID-token flow — redirect URIs are not required.</p>'
+            '<p style="margin:0;">After saving, the Google button appears on login and signup when enabled.</p>'
+            '</div>',
+            frontend,
+        )
+
+    def has_add_permission(self, request):
+        return not GoogleOAuthSettings.objects.exists()
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+    def changelist_view(self, request, extra_context=None):
+        settings_obj = GoogleOAuthSettings.get_solo()
+        return HttpResponseRedirect(
+            reverse('admin:billing_googleoauthsettings_change', args=(settings_obj.pk,))
         )
 
 

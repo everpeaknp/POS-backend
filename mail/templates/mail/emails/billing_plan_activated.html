@@ -1,0 +1,9 @@
+{% extends "mail/emails/base.html" %}
+{% block content %}
+<h1>Your plan is active</h1>
+<p>Hi {{ first_name }},</p>
+<p><strong>{{ organization_name }}</strong> is now on the <strong>{{ plan_name }}</strong> plan.</p>
+<p>Monthly price: <strong>{{ amount_display }}</strong></p>
+{% if period_end %}<p>Current period ends: <strong>{{ period_end }}</strong></p>{% endif %}
+<p><a href="{{ billing_url }}" class="btn">View billing</a></p>
+{% endblock %}

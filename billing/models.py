@@ -250,3 +250,48 @@ class EsewaSettings(models.Model):
         )
         return obj
 
+
+class GoogleOAuthSettings(models.Model):
+    """Singleton platform settings for Google sign-in on login and signup."""
+
+    enabled = models.BooleanField(
+        default=False,
+        help_text='Allow users to sign in with Google on /auth/login and /auth/signup',
+    )
+    client_id = models.CharField(
+        max_length=255,
+        blank=True,
+        help_text='OAuth 2.0 Client ID from Google Cloud Console (Web application)',
+    )
+    client_secret_encrypted = models.TextField(blank=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'billing_google_oauth_settings'
+        verbose_name = 'Google sign-in'
+        verbose_name_plural = 'Google sign-in'
+
+    def __str__(self):
+        state = 'Enabled' if self.enabled else 'Disabled'
+        return f'Google OAuth — {state}'
+
+    def save(self, *args, **kwargs):
+        self.pk = 1
+        super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        pass
+
+    def set_client_secret(self, raw_secret: str):
+        from mail.encryption import encrypt_value
+        self.client_secret_encrypted = encrypt_value(raw_secret) if raw_secret else ''
+
+    def get_client_secret(self) -> str:
+        from mail.encryption import decrypt_value
+        return decrypt_value(self.client_secret_encrypted)
+
+    @classmethod
+    def get_solo(cls):
+        obj, _ = cls.objects.get_or_create(pk=1)
+        return obj
+

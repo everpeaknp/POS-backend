@@ -1,5 +1,6 @@
 """Billing business logic."""
 
+import logging
 from calendar import monthrange
 from datetime import date, timedelta
 from decimal import Decimal
@@ -17,6 +18,86 @@ from billing.esewa import (
 from billing.models import BillingPayment, Subscription
 from billing.plans import get_plan, get_plan_type_to_code_map, list_active_plans
 from billing.esewa_config import get_esewa_config
+
+logger = logging.getLogger(__name__)
+
+
+def _format_amount_display(amount) -> str:
+    value = Decimal(str(amount))
+    if value == 0:
+        return 'Free'
+    return f'NPR {value:,.2f}'
+
+
+def _format_period_end(subscription: Subscription) -> str:
+    if subscription.current_period_end:
+        return subscription.current_period_end.strftime('%B %d, %Y')
+    return ''
+
+
+def _notify_plan_activated(user, tenant, plan: dict, subscription: Subscription) -> None:
+    try:
+        from mail.services import dispatch_billing_plan_activated_email
+
+        dispatch_billing_plan_activated_email(
+            user,
+            organization_name=tenant.name,
+            plan_name=plan['name'],
+            amount_display=_format_amount_display(plan['price']),
+            period_end=_format_period_end(subscription),
+        )
+    except Exception:
+        logger.exception('Failed to send plan activated email for tenant %s', tenant.pk)
+
+
+def _notify_payment_success(user, tenant, plan: dict, payment: BillingPayment, subscription: Subscription) -> None:
+    try:
+        from mail.services import dispatch_billing_payment_success_email
+
+        dispatch_billing_payment_success_email(
+            user,
+            organization_name=tenant.name,
+            plan_name=plan['name'],
+            amount_display=_format_amount_display(payment.amount),
+            transaction_uuid=payment.transaction_uuid,
+            payment_method=payment.payment_method,
+            period_end=_format_period_end(subscription),
+        )
+    except Exception:
+        logger.exception('Failed to send payment success email for %s', payment.transaction_uuid)
+
+
+def _notify_payment_failed(user, tenant, plan: dict, payment: BillingPayment, failure_reason: str = '') -> None:
+    try:
+        from mail.services import dispatch_billing_payment_failed_email
+
+        dispatch_billing_payment_failed_email(
+            user,
+            organization_name=tenant.name,
+            plan_name=plan['name'],
+            amount_display=_format_amount_display(payment.amount),
+            transaction_uuid=payment.transaction_uuid,
+            failure_reason=failure_reason,
+        )
+    except Exception:
+        logger.exception('Failed to send payment failed email for %s', payment.transaction_uuid)
+
+
+def _mark_payment_failed(
+    payment: BillingPayment,
+    reason: str,
+    callback_payload: dict | None = None,
+) -> bool:
+    """Mark payment failed; returns True if status changed from pending."""
+    was_pending = payment.status == 'pending'
+    payment.status = 'failed'
+    payment.failure_reason = reason
+    update_fields = ['status', 'failure_reason', 'updated_at']
+    if callback_payload is not None:
+        payment.callback_payload = callback_payload
+        update_fields.append('callback_payload')
+    payment.save(update_fields=update_fields)
+    return was_pending
 
 
 def _add_one_month(start: date) -> date:
@@ -164,6 +245,8 @@ def activate_plan_without_payment(tenant, user, plan_code: str) -> dict:
     tenant.is_active = True
     tenant.save(update_fields=['plan_type', 'active_modules', 'is_active', 'updated_at'])
 
+    _notify_plan_activated(user, tenant, plan, subscription)
+
     return {
         'activated': True,
         'message': f'Successfully switched to {plan["name"]}',
@@ -198,11 +281,10 @@ def verify_and_activate(tenant, user, transaction_uuid: str, encoded_data: str |
 
     if encoded_data:
         callback_payload = decode_callback_data(encoded_data)
+        plan = get_plan(payment.plan_code)
         if not verify_callback_signature(callback_payload, get_esewa_config().secret_key):
-            payment.status = 'failed'
-            payment.failure_reason = 'Invalid eSewa signature'
-            payment.callback_payload = callback_payload
-            payment.save()
+            if _mark_payment_failed(payment, 'Invalid eSewa signature', callback_payload):
+                _notify_payment_failed(user, tenant, plan, payment, 'Invalid eSewa signature')
             raise ValueError('Invalid payment signature')
 
         if callback_payload.get('transaction_uuid') != transaction_uuid:
@@ -210,18 +292,18 @@ def verify_and_activate(tenant, user, transaction_uuid: str, encoded_data: str |
 
         total_amount = callback_payload.get('total_amount', total_amount)
         if callback_payload.get('status') not in ('COMPLETE', 'COMPLETED'):
-            payment.status = 'failed'
-            payment.failure_reason = f"Payment status: {callback_payload.get('status')}"
-            payment.callback_payload = callback_payload
-            payment.save()
+            reason = f"Payment status: {callback_payload.get('status')}"
+            if _mark_payment_failed(payment, reason, callback_payload):
+                _notify_payment_failed(user, tenant, plan, payment, reason)
             raise ValueError('Payment was not completed')
 
     status_payload = check_transaction_status(transaction_uuid, total_amount)
     if status_payload.get('status') not in ('COMPLETE', 'COMPLETED'):
-        payment.status = 'failed'
-        payment.failure_reason = f"eSewa status: {status_payload.get('status')}"
-        payment.callback_payload = {'callback': callback_payload, 'status_api': status_payload}
-        payment.save()
+        plan = get_plan(payment.plan_code)
+        payload = {'callback': callback_payload, 'status_api': status_payload}
+        reason = f"eSewa status: {status_payload.get('status')}"
+        if _mark_payment_failed(payment, reason, payload):
+            _notify_payment_failed(user, tenant, plan, payment, reason)
         raise ValueError('Payment verification failed')
 
     payment.status = 'completed'
@@ -244,6 +326,8 @@ def verify_and_activate(tenant, user, transaction_uuid: str, encoded_data: str |
     tenant.active_modules = plan['modules']
     tenant.is_active = True
     tenant.save(update_fields=['plan_type', 'active_modules', 'is_active', 'updated_at'])
+
+    _notify_payment_success(user, tenant, plan, payment, subscription)
 
     return {
         'status': 'completed',

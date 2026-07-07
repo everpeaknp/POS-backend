@@ -14,7 +14,7 @@ from .serializers import (
     UserSerializer, RegisterSerializer, CustomTokenObtainPairSerializer, 
     AuditLogSerializer, UserProfileUpdateSerializer, PasswordChangeSerializer,
     NotificationPreferencesSerializer, SessionSerializer, PrivacyPreferencesSerializer,
-    AccountDeleteSerializer,
+    AccountDeleteSerializer, GoogleAuthSerializer,
 )
 from .permissions import IsAdminOrManager
 
@@ -53,6 +53,32 @@ class CustomTokenRefreshView(TokenRefreshView):
             except Exception:
                 pass
         return response
+
+
+@extend_schema(
+    tags=['Authentication'],
+    summary='Google OAuth configuration',
+    description='Public config for Google sign-in button (client ID when enabled).',
+)
+@api_view(['GET'])
+@permission_classes([permissions.AllowAny])
+def google_oauth_config(request):
+    from users.google_auth import get_google_oauth_config
+    return Response(get_google_oauth_config())
+
+
+@extend_schema(
+    tags=['Authentication'],
+    summary='Sign in with Google',
+    description='Exchange a Google ID token for JWT access and refresh tokens.',
+    request=GoogleAuthSerializer,
+)
+@api_view(['POST'])
+@permission_classes([permissions.AllowAny])
+def google_login(request):
+    serializer = GoogleAuthSerializer(data=request.data, context={'request': request})
+    serializer.is_valid(raise_exception=True)
+    return Response(serializer.validated_data, status=status.HTTP_200_OK)
 
 
 @extend_schema(

@@ -1,0 +1,82 @@
+{% extends "admin/change_form.html" %}
+
+{% block admin_change_form_document_ready %}
+{{ block.super }}
+<script>
+(function () {
+  const container = document.getElementById("email-template-preview");
+  if (!container) return;
+
+  const previewUrl = container.dataset.previewUrl;
+  const frame = document.getElementById("email-preview-frame");
+  const subjectEl = document.getElementById("email-preview-subject");
+  const refreshBtn = document.getElementById("email-preview-refresh");
+  const form = document.getElementById("emailtemplate_form");
+
+  function getCsrfToken() {
+    const input = form && form.querySelector("[name=csrfmiddlewaretoken]");
+    if (input && input.value) {
+      return input.value;
+    }
+    const match = document.cookie.match(/(?:^|;\s*)csrftoken=([^;]+)/);
+    return match ? decodeURIComponent(match[1]) : "";
+  }
+
+  function readEditorValue(id) {
+    const el = document.getElementById(id);
+    return el ? el.value : "";
+  }
+
+  function refreshPreview() {
+    const subject = readEditorValue("id_subject");
+    const htmlBody = readEditorValue("id_html_body");
+
+    fetch(previewUrl + "?meta=1", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-CSRFToken": getCsrfToken(),
+      },
+      body: JSON.stringify({ subject: subject, html_body: htmlBody }),
+    })
+      .then(function (response) { return response.json(); })
+      .then(function (data) {
+        if (subjectEl && data.subject) {
+          subjectEl.textContent = data.subject;
+        }
+      })
+      .catch(function () {});
+
+    fetch(previewUrl, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-CSRFToken": getCsrfToken(),
+      },
+      body: JSON.stringify({ subject: subject, html_body: htmlBody }),
+    })
+      .then(function (response) { return response.text(); })
+      .then(function (html) {
+        if (frame) {
+          frame.srcdoc = html;
+        }
+      })
+      .catch(function () {
+        if (frame) {
+          frame.removeAttribute("srcdoc");
+          frame.src = previewUrl + "?t=" + Date.now();
+        }
+      });
+  }
+
+  if (refreshBtn) {
+    refreshBtn.addEventListener("click", function (event) {
+      event.preventDefault();
+      refreshPreview();
+    });
+  }
+
+  refreshPreview();
+})();
+</script>
+{% endblock %}

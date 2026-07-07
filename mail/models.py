@@ -109,6 +109,7 @@ class EmailTemplate(models.Model):
         ('acceptance', 'Invitation Accepted'),
         ('marketing', 'Marketing'),
         ('transactional', 'Transactional'),
+        ('billing', 'Billing & Subscriptions'),
         ('custom', 'Custom'),
     ]
 

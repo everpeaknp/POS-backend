@@ -50,75 +50,8 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
                 code='authorization'
             )
         
-        # Generate tokens
-        refresh = self.get_token(user)
-        
-        data = {
-            'refresh': str(refresh),
-            'access': str(refresh.access_token),
-        }
-        
-        # Add user information to the response
-        data['user'] = {
-            'id': user.id,
-            'username': user.username,
-            'email': user.email,
-            'first_name': user.first_name,
-            'last_name': user.last_name,
-            'phone': user.phone,
-            'avatar': user.avatar.url if user.avatar else None,
-            'role': user.role,
-            'permissions': {
-                'is_admin': user.is_admin,
-                'is_manager': user.is_manager,
-                'is_supervisor': user.is_supervisor,
-                'is_accountant': user.is_accountant,
-                'is_viewer': user.is_viewer,
-                'can_approve_purchases': user.can_approve_purchases(),
-                'can_manage_users': user.can_manage_users(),
-                'can_view_financials': user.can_view_financials(),
-                'can_edit_data': user.can_edit_data(),
-                'modules': {
-                    'dashboard': user.has_module_access('dashboard'),
-                    'sales': user.has_module_access('sales'),
-                    'purchase': user.has_module_access('purchase'),
-                    'inventory': user.has_module_access('inventory'),
-                    'construction': user.has_module_access('construction'),
-                    'accounting': user.has_module_access('accounting'),
-                    'hardware': user.has_module_access('hardware'),
-                    'reports': user.has_module_access('reports'),
-                    'settings': user.has_module_access('settings'),
-                    'pos': user.has_module_access('pos'),
-                    'hr': user.has_module_access('hr'),
-                }
-            }
-        }
-        
-        # Add tenant information to the response
-        tenant = user.get_tenant()
-        if tenant:
-            data['tenant'] = {
-                'id': tenant.id,
-                'name': tenant.name,
-                'slug': tenant.slug,
-                'workspace_name': tenant.workspace_name,
-                'email': tenant.email,
-                'business_type': tenant.business_type,
-                'plan_type': tenant.plan_type,
-                'active_modules': tenant.active_modules,
-            }
-        else:
-            data['tenant'] = None
-
-        refresh_token = data.get('refresh')
-        if refresh_token:
-            request = self.context.get('request')
-            if request:
-                from .session_utils import record_user_session
-                session = record_user_session(user, request, refresh_token)
-                data['session_id'] = str(session.id)
-        
-        return data
+        from users.auth_tokens import issue_tokens_for_user
+        return issue_tokens_for_user(user, self.context.get('request'))
 
 
 class TenantSerializer(serializers.ModelSerializer):
@@ -465,6 +398,19 @@ class AccountDeleteSerializer(serializers.Serializer):
         if not user.check_password(value):
             raise serializers.ValidationError('Password is incorrect.')
         return value
+
+
+class GoogleAuthSerializer(serializers.Serializer):
+    credential = serializers.CharField(write_only=True)
+
+    def validate(self, attrs):
+        from users.google_auth import verify_google_id_token, authenticate_or_create_google_user
+        from users.auth_tokens import issue_tokens_for_user
+
+        idinfo = verify_google_id_token(attrs['credential'])
+        user = authenticate_or_create_google_user(idinfo)
+        request = self.context.get('request')
+        return issue_tokens_for_user(user, request)
 
 
 class AppearancePreferencesSerializer(serializers.Serializer):
