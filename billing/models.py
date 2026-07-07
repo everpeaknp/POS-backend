@@ -104,6 +104,11 @@ class SubscriptionPlan(models.Model):
         blank=True,
         help_text='Leave blank for unlimited users',
     )
+    max_orgs = models.PositiveIntegerField(
+        null=True,
+        blank=True,
+        help_text='Max organizations per account. Leave blank for unlimited.',
+    )
     features = models.JSONField(
         default=list,
         blank=True,

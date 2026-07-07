@@ -17,6 +17,7 @@ from billing.esewa import (
 )
 from billing.models import BillingPayment, Subscription
 from billing.plans import get_plan, get_plan_type_to_code_map, list_active_plans
+from billing.account_limits import get_tenant_allowed_modules
 from billing.esewa_config import get_esewa_config
 
 logger = logging.getLogger(__name__)
@@ -135,6 +136,7 @@ def serialize_plan(plan_code: str, current_plan_code: str | None = None) -> dict
         'name': plan['name'],
         'price': float(plan['price']),
         'max_users': plan['max_users'],
+        'max_orgs': plan.get('max_orgs'),
         'features': plan['features'],
         'is_current': plan_code == current_plan_code,
         'is_popular': bool(plan.get('is_popular')),
@@ -176,6 +178,7 @@ def billing_overview(tenant, user) -> dict:
         ],
         'esewa_enabled': get_esewa_config().enabled,
         'can_manage_billing': _user_can_manage_billing(user, tenant),
+        'allowed_modules': get_tenant_allowed_modules(tenant),
     }
 
 

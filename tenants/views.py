@@ -110,12 +110,19 @@ class TenantViewSet(viewsets.ModelViewSet):
         # Import here to avoid circular import
         from .membership_models import UserTenantMembership
         from users.permission_models import initialize_tenant_permissions
+        from billing.services import ensure_subscription
+        from billing.account_limits import assert_user_can_create_org
+
+        if self.request.user.is_authenticated:
+            assert_user_can_create_org(self.request.user)
         
         # Save tenant with created_by field and created_from_registration=False
         tenant = serializer.save(
             created_by=self.request.user if self.request.user.is_authenticated else None,
             created_from_registration=False  # Explicitly created tenant
         )
+
+        ensure_subscription(tenant)
         
         # Initialize default permissions for the new tenant
         initialize_tenant_permissions(tenant)
@@ -287,6 +294,13 @@ class TenantViewSet(viewsets.ModelViewSet):
                 {'error': 'A valid module_name is required'},
                 status=status.HTTP_400_BAD_REQUEST
             )
+
+        from billing.account_limits import assert_tenant_can_enable_module
+
+        try:
+            assert_tenant_can_enable_module(tenant, module_name)
+        except ValueError as exc:
+            return Response({'error': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
 
         tenant.activate_module(module_name)
         serializer = self.get_serializer(tenant)

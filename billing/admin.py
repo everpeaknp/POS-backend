@@ -55,7 +55,7 @@ class SubscriptionPlanAdminForm(forms.ModelForm):
 class SubscriptionPlanAdmin(admin.ModelAdmin):
     form = SubscriptionPlanAdminForm
     list_display = [
-        'name', 'code', 'price', 'max_users_display',
+        'name', 'code', 'price', 'max_users_display', 'max_orgs_display',
         'plan_type', 'is_active', 'is_popular', 'sort_order',
     ]
     list_editable = ['is_active', 'is_popular', 'sort_order', 'price']
@@ -70,7 +70,7 @@ class SubscriptionPlanAdmin(admin.ModelAdmin):
             'description': 'Plans listed here appear on the customer billing page at /settings/billing.',
         }),
         ('Pricing & limits', {
-            'fields': ('price', 'max_users'),
+            'fields': ('price', 'max_users', 'max_orgs'),
         }),
         ('Customer-facing content', {
             'fields': ('features_text', 'features', 'module_choices', 'modules'),
@@ -94,6 +94,10 @@ class SubscriptionPlanAdmin(admin.ModelAdmin):
     @admin.display(description='Users')
     def max_users_display(self, obj):
         return obj.max_users if obj.max_users is not None else 'Unlimited'
+
+    @admin.display(description='Organizations')
+    def max_orgs_display(self, obj):
+        return obj.max_orgs if obj.max_orgs is not None else 'Unlimited'
 
     @admin.display(description='Customer app preview')
     def customer_preview(self, obj):

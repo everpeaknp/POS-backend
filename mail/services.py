@@ -1,5 +1,6 @@
 """Email sending, templating, queue, and campaign services."""
 
+import logging
 import re
 import uuid
 from datetime import timedelta
@@ -11,6 +12,8 @@ from django.template.loader import render_to_string
 from django.utils import timezone
 
 from mail.models import EmailBranding, EmailLog, EmailQueue, EmailTemplate, MarketingCampaign, SmtpSettings
+
+logger = logging.getLogger(__name__)
 
 VARIABLE_PATTERN = re.compile(r'\{\{\s*(\w+)\s*\}\}')
 
@@ -140,6 +143,16 @@ def get_smtp_connection():
     )
 
 
+def get_mail_connection():
+    """Admin SMTP when configured; otherwise Django EMAIL_BACKEND (e.g. console in dev)."""
+    connection = get_smtp_connection()
+    if connection is not None:
+        return connection
+    if getattr(django_settings, 'DEBUG', False):
+        return get_connection()
+    return None
+
+
 def create_email_log(to_email, subject, *, template_slug='', category='', user=None, invitation_id=None, campaign=None):
     tracking_id = uuid.uuid4()
     log = EmailLog.objects.create(
@@ -175,15 +188,23 @@ def inject_tracking_pixel(html_body: str, log: EmailLog) -> str:
 
 def send_email_now(to_email, subject, html_body, text_body='', *, log: EmailLog | None = None):
     smtp = SmtpSettings.get_solo()
-    from_email = f'{smtp.sender_name} <{smtp.sender_email}>' if smtp.sender_name and smtp.sender_email else smtp.sender_email or 'noreply@khata.app'
-    reply_to = [smtp.reply_to_email] if smtp.reply_to_email else None
+    if smtp.enabled and smtp.sender_email:
+        from_email = (
+            f'{smtp.sender_name} <{smtp.sender_email}>'
+            if smtp.sender_name
+            else smtp.sender_email
+        )
+        reply_to = [smtp.reply_to_email] if smtp.reply_to_email else None
+    else:
+        from_email = getattr(django_settings, 'DEFAULT_FROM_EMAIL', 'noreply@khata.app')
+        reply_to = None
 
     html_body = prepare_html_for_email(html_body)
 
     if smtp.default_signature and smtp.default_signature not in html_body:
         html_body = f'{html_body}<br><br><p style="color:#6b7280;font-size:13px;">{smtp.default_signature}</p>'
 
-    connection = get_smtp_connection()
+    connection = get_mail_connection()
     if connection is None:
         raise ValueError('SMTP is disabled or not configured')
 
@@ -208,7 +229,18 @@ def strip_html(html: str) -> str:
     return re.sub(r'<[^>]+>', '', html).strip()
 
 
-def queue_or_send(to_email, subject, html_body, text_body='', *, template=None, user=None, campaign=None, metadata=None):
+def queue_or_send(
+    to_email,
+    subject,
+    html_body,
+    text_body='',
+    *,
+    template=None,
+    user=None,
+    campaign=None,
+    metadata=None,
+    skip_queue: bool = False,
+):
     smtp = SmtpSettings.get_solo()
     log = create_email_log(
         to_email,
@@ -223,7 +255,7 @@ def queue_or_send(to_email, subject, html_body, text_body='', *, template=None, 
     log.metadata = meta
     log.save(update_fields=['metadata'])
 
-    if smtp.queue_enabled:
+    if smtp.queue_enabled and not skip_queue:
         EmailQueue.objects.create(
             to_email=to_email,
             subject=subject,
@@ -276,6 +308,9 @@ def render_system_email(slug: str, context: dict) -> tuple[str, str, str]:
 
 def dispatch_invitation_email(invitation):
     user = invitation.invited_user
+    if not user.email:
+        raise ValueError('Invited user has no email address')
+
     frontend = get_frontend_url()
     ctx = build_message_context(user, {
         'company_name': invitation.tenant.name,
@@ -283,13 +318,23 @@ def dispatch_invitation_email(invitation):
         'role': invitation.get_role_display(),
         'custom_message': invitation.message,
         'expires_at': invitation.expires_at.strftime('%B %d, %Y'),
-        'invitation_link': f'{frontend}/dashboard/settings/users?invitation={invitation.token}',
+        'invitation_link': f'{frontend}/erp?tab=invitation',
     })
     subject, html, text = render_system_email('invitation', ctx)
-    log = queue_or_send(user.email, subject, html, text, template=get_template('invitation'), user=user, metadata={'invitation_id': invitation.pk})
+    log = queue_or_send(
+        user.email,
+        subject,
+        html,
+        text,
+        template=get_template('invitation'),
+        user=user,
+        metadata={'invitation_id': invitation.pk},
+        skip_queue=True,
+    )
     if log:
         log.invitation_id = invitation.pk
         log.save(update_fields=['invitation_id'])
+    logger.info('Invitation email sent to %s for invitation %s', user.email, invitation.pk)
     return log
 
 
@@ -299,13 +344,13 @@ def dispatch_welcome_email(user):
         return None
     ctx = build_message_context(user)
     subject, html, text = render_system_email('welcome', ctx)
-    return queue_or_send(user.email, subject, html, text, template=get_template('welcome'), user=user)
+    return queue_or_send(user.email, subject, html, text, template=get_template('welcome'), user=user, skip_queue=True)
 
 
 def dispatch_verification_email(user, verification_link: str):
     ctx = build_message_context(user, {'verification_link': verification_link})
     subject, html, text = render_system_email('verification', ctx)
-    return queue_or_send(user.email, subject, html, text, template=get_template('verification'), user=user)
+    return queue_or_send(user.email, subject, html, text, template=get_template('verification'), user=user, skip_queue=True)
 
 
 def dispatch_acceptance_email(invitation):
@@ -315,7 +360,7 @@ def dispatch_acceptance_email(invitation):
         'role': invitation.get_role_display(),
     })
     subject, html, text = render_system_email('acceptance', ctx)
-    return queue_or_send(user.email, subject, html, text, template=get_template('acceptance'), user=user)
+    return queue_or_send(user.email, subject, html, text, template=get_template('acceptance'), user=user, skip_queue=True)
 
 
 def _billing_settings_url() -> str:
@@ -343,6 +388,7 @@ def dispatch_billing_plan_activated_email(
         template=get_template('billing-plan-activated'),
         user=user,
         metadata={'billing_event': 'plan_activated', 'plan_name': plan_name},
+        skip_queue=True,
     )
 
 
@@ -371,6 +417,7 @@ def dispatch_billing_payment_success_email(
         template=get_template('billing-payment-success'),
         user=user,
         metadata={'billing_event': 'payment_success', 'transaction_uuid': transaction_uuid},
+        skip_queue=True,
     )
 
 
@@ -397,6 +444,7 @@ def dispatch_billing_payment_failed_email(
         template=get_template('billing-payment-failed'),
         user=user,
         metadata={'billing_event': 'payment_failed', 'transaction_uuid': transaction_uuid},
+        skip_queue=True,
     )
 
 

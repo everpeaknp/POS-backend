@@ -6,6 +6,7 @@ from drf_spectacular.utils import extend_schema
 
 from billing.serializers import CheckoutSerializer, VerifyPaymentSerializer
 from billing import services
+from billing.account_limits import get_user_account_limits
 from tenants.utils import get_request_tenant
 
 
@@ -18,6 +19,18 @@ class BillingOverviewView(APIView):
         if not tenant:
             return Response({'detail': 'No organization in context'}, status=status.HTTP_400_BAD_REQUEST)
         return Response(services.billing_overview(tenant, request.user))
+
+
+class BillingAccountLimitsView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(
+        tags=['Billing'],
+        summary='Get account org-creation and module limits',
+        description='Used when creating a new organization before a tenant context exists.',
+    )
+    def get(self, request):
+        return Response(get_user_account_limits(request.user))
 
 
 class BillingCheckoutView(APIView):

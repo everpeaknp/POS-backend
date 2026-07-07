@@ -2,11 +2,17 @@ from rest_framework import serializers
 from .models import Tenant
 from .invitation_models import OrganizationInvitation
 from users.models import User
+from billing.account_limits import (
+    assert_modules_allowed_for_plan,
+    assert_user_can_create_org,
+    normalize_active_modules_for_plan,
+)
 
 
 class TenantSerializer(serializers.ModelSerializer):
     """Serializer for Tenant model"""
     user_role = serializers.SerializerMethodField()
+    allowed_modules = serializers.SerializerMethodField()
     
     class Meta:
         model = Tenant
@@ -15,9 +21,13 @@ class TenantSerializer(serializers.ModelSerializer):
             'phone', 'address', 'pan_vat_number', 'website',
             'accounting_start_date', 'vat_registered',
             'workspace_name', 'logo', 'is_active', 'plan_type', 'active_modules',
+            'allowed_modules',
             'created_at', 'updated_at', 'created_by', 'user_role'
         ]
-        read_only_fields = ['id', 'slug', 'created_at', 'updated_at', 'created_by', 'user_role']
+        read_only_fields = [
+            'id', 'slug', 'created_at', 'updated_at', 'created_by',
+            'user_role', 'allowed_modules',
+        ]
     
     def get_user_role(self, obj):
         """Get the current user's role in this specific tenant"""
@@ -41,6 +51,15 @@ class TenantSerializer(serializers.ModelSerializer):
             if user.tenant == obj:
                 return user.role
             return None
+
+    def get_allowed_modules(self, obj):
+        from billing.account_limits import get_tenant_allowed_modules
+
+        try:
+            return get_tenant_allowed_modules(obj)
+        except Exception:
+            from billing.account_limits import get_allowed_modules_for_plan
+            return get_allowed_modules_for_plan('free')
 
 
 class TenantCreateSerializer(serializers.ModelSerializer):
@@ -66,18 +85,28 @@ class TenantCreateSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError('An organization with this name already exists.')
         return value
     
+    def validate(self, data):
+        request = self.context.get('request')
+        user = getattr(request, 'user', None) if request else None
+
+        if user and user.is_authenticated:
+            assert_user_can_create_org(user)
+
+        new_org_plan_code = 'free'
+        modules = data.get('active_modules')
+        if modules:
+            assert_modules_allowed_for_plan(new_org_plan_code, modules)
+            data['active_modules'] = normalize_active_modules_for_plan(new_org_plan_code, modules)
+        else:
+            data['active_modules'] = normalize_active_modules_for_plan(new_org_plan_code, None)
+
+        return data
+
     def create(self, validated_data):
         """Create tenant with default values"""
-        # Set default modules if not provided
-        if 'active_modules' not in validated_data or not validated_data['active_modules']:
-            validated_data['active_modules'] = [
-                'inventory', 'sales', 'purchase', 'accounting', 'reports'
-            ]
-        
-        # Set default plan
         validated_data['plan_type'] = 'free'
         validated_data['is_active'] = True
-        
+
         return super().create(validated_data)
 
 
