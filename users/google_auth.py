@@ -5,7 +5,7 @@ from google.auth.transport import requests as google_requests
 from google.oauth2 import id_token
 from rest_framework import serializers
 
-from billing.models import GoogleOAuthSettings
+from setting.models import GoogleOAuthSettings
 
 User = get_user_model()
 

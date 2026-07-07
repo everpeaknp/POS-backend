@@ -64,6 +64,7 @@ INSTALLED_APPS = [
     'tenants',
     'users',
     'utils',
+    'setting',
     'billing',
     'mail',
     
@@ -935,6 +936,14 @@ JAZZMIN_SETTINGS = {
     "hide_models": [],
 
     "custom_links": {
+        "setting": [
+            {
+                "name": "Platform settings",
+                "url": "/admin/setting/",
+                "icon": "fas fa-sliders-h",
+                "permissions": ["auth.view_user"],
+            },
+        ],
         "mail": [
             {
                 "name": "Mail Center",
@@ -948,12 +957,14 @@ JAZZMIN_SETTINGS = {
     # App ordering
     "order_with_respect_to": [
         "tenants",
+        "setting",
         "billing",
         "mail",
         "users",
         "auth",
-        "billing.esewasettings",
-        "billing.googleoauthsettings",
+        "setting.googleoauthsettings",
+        "setting.esewasettings",
+        "setting.sitesettings",
         "billing.subscriptionplan",
         "billing.subscription",
         "billing.billingpayment",
@@ -969,7 +980,8 @@ JAZZMIN_SETTINGS = {
     # Icons for models
     "icons": {
         "tenants": "fas fa-building",
-        "billing": "fas fa-cog",
+        "setting": "fas fa-sliders-h",
+        "billing": "fas fa-file-invoice-dollar",
         "mail": "fas fa-envelope",
         "users": "fas fa-users",
         "auth": "fas fa-shield-alt",
@@ -983,8 +995,9 @@ JAZZMIN_SETTINGS = {
         "billing.Subscription": "fas fa-file-invoice-dollar",
         "billing.SubscriptionPlan": "fas fa-tags",
         "billing.BillingPayment": "fas fa-wallet",
-        "billing.EsewaSettings": "fas fa-cog",
-        "billing.GoogleOAuthSettings": "fab fa-google",
+        "setting.EsewaSettings": "fas fa-cog",
+        "setting.GoogleOAuthSettings": "fab fa-google",
+        "setting.SiteSettings": "fas fa-globe",
         "mail.SmtpSettings": "fas fa-server",
         "mail.EmailBranding": "fas fa-palette",
         "mail.EmailTemplate": "fas fa-file-code",
@@ -1008,8 +1021,9 @@ JAZZMIN_SETTINGS = {
     "changeform_format_overrides": {
         "auth.user": "horizontal_tabs",
         "users.user": "horizontal_tabs",
-        "billing.esewasettings": "horizontal_tabs",
-        "billing.googleoauthsettings": "horizontal_tabs",
+        "setting.esewasettings": "horizontal_tabs",
+        "setting.googleoauthsettings": "horizontal_tabs",
+        "setting.sitesettings": "horizontal_tabs",
     },
     
     "language_chooser": False,

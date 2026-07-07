@@ -1,0 +1,58 @@
+{% extends "admin/base_site.html" %}
+
+{% block content_title %}{{ title }}{% endblock %}
+
+{% block extrastyle %}
+<style>
+  .setting-hub { --green: #22c55e; --muted: #64748b; }
+  .setting-hub .subtitle { color: var(--muted); margin: 0 0 1.25rem; font-size: 0.9rem; }
+  .setting-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 1rem; }
+  .setting-card {
+    background: #fff; border: 1px solid #e2e8f0; border-radius: 12px; padding: 1.25rem;
+    box-shadow: 0 1px 3px rgba(0,0,0,.04);
+  }
+  .setting-card h2 { margin: 0 0 0.5rem; font-size: 1rem; font-weight: 700; color: #0f172a; }
+  .setting-card p { margin: 0 0 1rem; font-size: 0.85rem; color: var(--muted); line-height: 1.5; }
+  .setting-card .status { font-size: 0.75rem; font-weight: 600; margin-bottom: 0.75rem; }
+  .setting-card .status.on { color: #16a34a; }
+  .setting-card .status.off { color: #6b7280; }
+  .setting-card a {
+    display: inline-block; padding: 0.5rem 1rem; border-radius: 8px; font-size: 0.85rem; font-weight: 500;
+    background: var(--green); color: #fff; text-decoration: none;
+  }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="setting-hub col-12">
+  <p class="subtitle">Site identity, integrations, and authentication.</p>
+
+  <div class="setting-grid">
+    <div class="setting-card">
+      <h2>Site settings</h2>
+      <p class="status on">{{ site.site_name }}</p>
+      <p>Site name, logo, favicon, and SEO defaults for the customer app.</p>
+      <a href="{% url 'admin:setting_sitesettings_change' 1 %}">Configure site</a>
+    </div>
+
+    <div class="setting-card">
+      <h2>eSewa integration</h2>
+      <p class="status {% if esewa.enabled %}on{% else %}off{% endif %}">
+        {% if esewa.enabled %}Enabled{% else %}Disabled{% endif %}
+        · {% if esewa.use_sandbox %}Sandbox{% else %}Production{% endif %}
+      </p>
+      <p>Subscription billing via eSewa — merchant credentials, gateway URLs, and customer redirect URLs.</p>
+      <a href="{% url 'admin:setting_esewasettings_change' 1 %}">Configure eSewa</a>
+    </div>
+
+    <div class="setting-card">
+      <h2>Google sign-in</h2>
+      <p class="status {% if google.enabled %}on{% else %}off{% endif %}">
+        {% if google.enabled %}Enabled{% else %}Disabled{% endif %}
+      </p>
+      <p>Google OAuth for /auth/login and /auth/signup — client ID and secret from Google Cloud Console.</p>
+      <a href="{% url 'admin:setting_googleoauthsettings_change' 1 %}">Configure Google</a>
+    </div>
+  </div>
+</div>
+{% endblock %}

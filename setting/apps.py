@@ -1,7 +1,7 @@
 from django.apps import AppConfig
 
 
-class BillingConfig(AppConfig):
+class SettingConfig(AppConfig):
     default_auto_field = 'django.db.models.BigAutoField'
-    name = 'billing'
-    verbose_name = 'Billing'
+    name = 'setting'
+    verbose_name = 'Setting'

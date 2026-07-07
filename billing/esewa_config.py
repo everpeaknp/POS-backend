@@ -29,7 +29,7 @@ class EsewaConfig:
 
 
 def get_esewa_config() -> EsewaConfig:
-    from billing.models import EsewaSettings
+    from setting.models import EsewaSettings
 
     solo = EsewaSettings.get_solo()
     endpoints = ESEWA_SANDBOX if solo.use_sandbox else ESEWA_PRODUCTION
