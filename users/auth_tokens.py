@@ -50,6 +50,7 @@ def build_tenant_payload(user):
         'slug': tenant.slug,
         'workspace_name': tenant.workspace_name,
         'email': tenant.email,
+        'address': tenant.address,
         'business_type': tenant.business_type,
         'plan_type': tenant.plan_type,
         'active_modules': tenant.active_modules,
