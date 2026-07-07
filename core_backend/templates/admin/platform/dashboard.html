@@ -159,11 +159,11 @@
     <div class="chart-card">
       <h3>Recent payments</h3>
       <table class="data-table">
-        <thead><tr><th>Tenant</th><th>Plan</th><th>Amount</th><th>Status</th></tr></thead>
+        <thead><tr><th>Account</th><th>Plan</th><th>Amount</th><th>Status</th></tr></thead>
         <tbody>
         {% for p in stats.recent_payments %}
           <tr>
-            <td>{{ p.tenant__name }}</td>
+            <td>{{ p.initiated_by__email|default:"—" }}</td>
             <td>{{ p.plan_code|title }}</td>
             <td>Rs. {{ p.amount }}</td>
             <td>

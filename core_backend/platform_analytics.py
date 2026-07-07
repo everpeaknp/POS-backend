@@ -8,7 +8,7 @@ from django.db.models import Count, Sum
 from django.db.models.functions import TruncDate
 from django.utils import timezone
 
-from billing.models import BillingPayment, Subscription
+from billing.models import BillingPayment, Subscription, UserSubscription
 from core_backend.platform_constants import AVAILABLE_MODULES
 from mail.models import EmailLog, EmailQueue
 from tenants.invitation_models import OrganizationInvitation
@@ -37,7 +37,7 @@ def platform_dashboard_stats() -> dict:
     total_users = User.objects.filter(is_active=True).count()
     new_users_month = User.objects.filter(date_joined__date__gte=month_start).count()
 
-    subs = Subscription.objects.all()
+    subs = UserSubscription.objects.select_related('user').all()
     subs_by_status = dict(
         subs.values('status').annotate(c=Count('id')).values_list('status', 'c')
     )
@@ -45,7 +45,7 @@ def platform_dashboard_stats() -> dict:
         subs.values('plan_code').annotate(c=Count('id')).values_list('plan_code', 'c')
     )
 
-    payments = BillingPayment.objects.all()
+    payments = BillingPayment.objects.select_related('initiated_by').all()
     payments_by_status = dict(
         payments.values('status').annotate(c=Count('id')).values_list('status', 'c')
     )
@@ -122,8 +122,15 @@ def platform_dashboard_stats() -> dict:
         )
     )
     recent_payments = list(
-        payments.select_related('tenant').order_by('-created_at')[:8].values(
-            'transaction_uuid', 'tenant__name', 'plan_code', 'amount', 'status', 'created_at'
+        payments.order_by('-created_at')[:8].values(
+            'transaction_uuid',
+            'initiated_by__first_name',
+            'initiated_by__last_name',
+            'initiated_by__email',
+            'plan_code',
+            'amount',
+            'status',
+            'created_at',
         )
     )
 

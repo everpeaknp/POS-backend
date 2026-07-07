@@ -3,7 +3,10 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from drf_spectacular.utils import extend_schema
+from django.http import HttpResponse
 
+from billing.models import BillingPayment
+from billing.invoice import render_invoice_html, user_can_view_payment
 from billing.serializers import CheckoutSerializer, VerifyPaymentSerializer
 from billing import services
 from billing.account_limits import get_user_account_limits
@@ -16,8 +19,6 @@ class BillingOverviewView(APIView):
     @extend_schema(tags=['Billing'], summary='Get billing overview')
     def get(self, request):
         tenant = get_request_tenant(request.user)
-        if not tenant:
-            return Response({'detail': 'No organization in context'}, status=status.HTTP_400_BAD_REQUEST)
         return Response(services.billing_overview(tenant, request.user))
 
 
@@ -38,9 +39,8 @@ class BillingCheckoutView(APIView):
 
     @extend_schema(tags=['Billing'], summary='Start eSewa checkout for a plan')
     def post(self, request):
-        tenant = get_request_tenant(request.user)
-        if not tenant:
-            return Response({'detail': 'No organization in context'}, status=status.HTTP_400_BAD_REQUEST)
+        context_tenant = get_request_tenant(request.user)
+        tenant = services.resolve_checkout_tenant(request.user, context_tenant)
 
         serializer = CheckoutSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
@@ -97,3 +97,26 @@ class BillingVerifyView(APIView):
                 {'detail': f'Payment verification failed: {exc}'},
                 status=status.HTTP_502_BAD_GATEWAY,
             )
+
+
+class BillingPaymentInvoiceView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(tags=['Billing'], summary='Download subscription payment invoice (HTML/PDF)')
+    def get(self, request, payment_id: int):
+        try:
+            payment = BillingPayment.objects.select_related('tenant', 'initiated_by').get(pk=payment_id)
+        except BillingPayment.DoesNotExist:
+            return Response({'detail': 'Payment not found'}, status=status.HTTP_404_NOT_FOUND)
+
+        if not user_can_view_payment(request.user, payment):
+            return Response({'detail': 'You do not have access to this invoice'}, status=status.HTTP_403_FORBIDDEN)
+
+        if payment.status != 'completed':
+            return Response({'detail': 'Invoice is only available for completed payments'}, status=status.HTTP_400_BAD_REQUEST)
+
+        html = render_invoice_html(payment, request.user)
+        filename = f'invoice-{payment.transaction_uuid}.html'
+        response = HttpResponse(html, content_type='text/html; charset=utf-8')
+        response['Content-Disposition'] = f'inline; filename="{filename}"'
+        return response

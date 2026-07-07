@@ -5,7 +5,7 @@ from django.urls import reverse
 from django.utils.html import format_html
 
 from core_backend.platform_constants import AVAILABLE_MODULES
-from billing.models import BillingPayment, Subscription, SubscriptionPlan
+from billing.models import BillingPayment, Subscription, SubscriptionPlan, UserSubscription
 from billing import services as billing_services
 
 
@@ -120,12 +120,49 @@ class SubscriptionPlanAdmin(admin.ModelAdmin):
         )
 
 
+@admin.register(UserSubscription)
+class UserSubscriptionAdmin(admin.ModelAdmin):
+    list_display = [
+        'account_user', 'account_email', 'plan_code', 'status',
+        'current_period_end', 'auto_renew', 'updated_at',
+    ]
+    list_filter = ['status', 'plan_code']
+    search_fields = ['user__email', 'user__username', 'user__first_name', 'user__last_name']
+    readonly_fields = ['created_at', 'updated_at']
+    ordering = ['-updated_at']
+
+    def get_queryset(self, request):
+        return UserSubscription.objects.select_related('user').all()
+
+    @admin.display(description='Account')
+    def account_user(self, obj):
+        return obj.user.get_full_name() or obj.user.username
+
+    @admin.display(description='Email')
+    def account_email(self, obj):
+        return obj.user.email
+
+
 @admin.register(Subscription)
 class SubscriptionAdmin(admin.ModelAdmin):
-    list_display = ['tenant', 'plan_code', 'status', 'current_period_end', 'auto_renew']
+    list_display = ['account_holder', 'workspace_name', 'plan_code', 'status', 'current_period_end', 'auto_renew']
     list_filter = ['status', 'plan_code']
-    search_fields = ['tenant__name']
+    search_fields = ['tenant__name', 'tenant__created_by__email', 'tenant__created_by__username']
     actions = ['extend_30_days', 'activate_subscription', 'cancel_subscription']
+
+    def get_queryset(self, request):
+        return Subscription._base_manager.select_related('tenant', 'tenant__created_by').all()
+
+    @admin.display(description='Account holder')
+    def account_holder(self, obj):
+        owner = obj.tenant.created_by
+        if not owner:
+            return '—'
+        return owner.get_full_name() or owner.username
+
+    @admin.display(description='Workspace')
+    def workspace_name(self, obj):
+        return obj.tenant.name
 
     @admin.action(description='Extend period by 30 days')
     def extend_30_days(self, request, queryset):
@@ -147,13 +184,28 @@ class SubscriptionAdmin(admin.ModelAdmin):
 @admin.register(BillingPayment)
 class BillingPaymentAdmin(admin.ModelAdmin):
     list_display = [
-        'transaction_uuid', 'tenant', 'plan_code', 'amount',
+        'transaction_uuid', 'account_holder', 'plan_code', 'amount',
         'status', 'payment_method', 'completed_at',
     ]
     list_filter = ['status', 'plan_code', 'payment_method']
-    search_fields = ['transaction_uuid', 'tenant__name']
+    search_fields = [
+        'transaction_uuid',
+        'initiated_by__email',
+        'initiated_by__username',
+        'tenant__name',
+    ]
     readonly_fields = ['callback_payload', 'completed_at', 'created_at', 'updated_at']
     actions = ['reverify_esewa', 'mark_failed', 'mark_cancelled']
+
+    def get_queryset(self, request):
+        return BillingPayment.objects.select_related('tenant', 'initiated_by').all()
+
+    @admin.display(description='Account')
+    def account_holder(self, obj):
+        payer = obj.initiated_by
+        if not payer:
+            return '—'
+        return payer.get_full_name() or payer.username
 
     @admin.action(description='Re-verify with eSewa')
     def reverify_esewa(self, request, queryset):

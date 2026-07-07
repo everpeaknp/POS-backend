@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Invoice {{ invoice_number }}</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      color: #111827;
+      margin: 0;
+      padding: 32px;
+      background: #fff;
+    }
+    .invoice {
+      max-width: 720px;
+      margin: 0 auto;
+      border: 1px solid #e5e7eb;
+      border-radius: 12px;
+      overflow: hidden;
+    }
+    .header {
+      display: flex;
+      justify-content: space-between;
+      gap: 24px;
+      padding: 28px 32px;
+      background: #f8fafc;
+      border-bottom: 1px solid #e5e7eb;
+    }
+    .brand {
+      font-size: 22px;
+      font-weight: 700;
+      color: #16a34a;
+    }
+    .meta {
+      text-align: right;
+      font-size: 13px;
+      color: #6b7280;
+      line-height: 1.6;
+    }
+    .meta strong {
+      display: block;
+      color: #111827;
+      font-size: 15px;
+    }
+    .section {
+      padding: 24px 32px;
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 24px;
+      margin-bottom: 24px;
+    }
+    .label {
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: #9ca3af;
+      margin-bottom: 6px;
+      font-weight: 600;
+    }
+    .value {
+      font-size: 14px;
+      line-height: 1.5;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 8px;
+    }
+    th, td {
+      padding: 12px 0;
+      border-bottom: 1px solid #f3f4f6;
+      text-align: left;
+      font-size: 14px;
+    }
+    th {
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: #9ca3af;
+      font-weight: 600;
+    }
+    td.amount {
+      text-align: right;
+      font-weight: 700;
+    }
+    .total-row td {
+      border-top: 2px solid #111827;
+      border-bottom: none;
+      padding-top: 16px;
+      font-size: 16px;
+      font-weight: 700;
+    }
+    .footer {
+      padding: 20px 32px 28px;
+      border-top: 1px solid #e5e7eb;
+      font-size: 12px;
+      color: #6b7280;
+      line-height: 1.6;
+    }
+    @media print {
+      body { padding: 0; }
+      .invoice { border: none; border-radius: 0; }
+    }
+  </style>
+</head>
+<body>
+  <div class="invoice">
+    <div class="header">
+      <div>
+        <div class="brand">{{ site_name }}</div>
+        <div style="margin-top:6px;font-size:13px;color:#6b7280;">Subscription invoice</div>
+      </div>
+      <div class="meta">
+        <strong>{{ invoice_number }}</strong>
+        <div>Paid {{ paid_at|date:"d M Y, H:i" }}</div>
+        <div>Reference: {{ transaction_uuid }}</div>
+      </div>
+    </div>
+
+    <div class="section">
+      <div class="grid">
+        <div>
+          <div class="label">Account</div>
+          <div class="value">
+            <strong>{{ billed_to_name }}</strong><br />
+            {{ billed_to_email }}
+          </div>
+        </div>
+        <div>
+          <div class="label">Subscription</div>
+          <div class="value">
+            <strong>{{ plan_name }}</strong><br />
+            <span style="color:#6b7280;font-size:12px;">Khata account plan</span>
+          </div>
+        </div>
+      </div>
+
+      <table>
+        <thead>
+          <tr>
+            <th>Description</th>
+            <th>Period</th>
+            <th style="text-align:right;">Amount</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>
+              <strong>{{ plan_name }}</strong> plan<br />
+              <span style="color:#6b7280;font-size:12px;">Monthly subscription via {{ payment_method|title }}</span>
+            </td>
+            <td>
+              {% if period_start and period_end %}
+                {{ period_start|date:"d M Y" }} – {{ period_end|date:"d M Y" }}
+              {% else %}
+                —
+              {% endif %}
+            </td>
+            <td class="amount">{{ amount_display }}</td>
+          </tr>
+          <tr class="total-row">
+            <td colspan="2">Total paid</td>
+            <td class="amount">{{ amount_display }}</td>
+          </tr>
+        </tbody>
+      </table>
+
+      {% if esewa_reference %}
+      <p style="margin-top:18px;font-size:13px;color:#6b7280;">
+        eSewa reference: <strong>{{ esewa_reference }}</strong>
+      </p>
+      {% endif %}
+
+      {% if period_end %}
+      <p style="margin-top:10px;font-size:13px;color:#374151;">
+        Subscription valid until <strong>{{ period_end|date:"d M Y" }}</strong>.
+      </p>
+      {% endif %}
+    </div>
+
+    <div class="footer">
+      Thank you for your subscription. This invoice was generated on {{ generated_at|date:"d M Y, H:i" }}.
+      Your plan applies to your Khata account and any organizations you create.
+    </div>
+  </div>
+</body>
+</html>

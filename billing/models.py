@@ -1,9 +1,51 @@
 from decimal import Decimal
 
+from django.conf import settings
 from django.db import models
 from django.utils import timezone
 
 from utils.models import TenantModel
+
+
+class UserSubscription(models.Model):
+    """Account-level subscription for a Khata user (not tied to one organization)."""
+
+    STATUS_CHOICES = [
+        ('trialing', 'Trialing'),
+        ('active', 'Active'),
+        ('past_due', 'Past Due'),
+        ('cancelled', 'Cancelled'),
+    ]
+
+    user = models.OneToOneField(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='account_subscription',
+    )
+    plan_code = models.CharField(max_length=32, default='free')
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='trialing')
+    current_period_start = models.DateField(null=True, blank=True)
+    current_period_end = models.DateField(null=True, blank=True)
+    auto_renew = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'billing_user_subscriptions'
+        verbose_name = 'Account subscription'
+        verbose_name_plural = 'Account subscriptions'
+
+    def __str__(self):
+        label = self.user.get_full_name() or self.user.email
+        return f'{label} — {self.plan_code} ({self.status})'
+
+    @property
+    def is_active(self):
+        if self.status not in ('active', 'trialing'):
+            return False
+        if self.current_period_end and self.current_period_end < timezone.now().date():
+            return False
+        return True
 
 
 class Subscription(TenantModel):
@@ -38,7 +80,7 @@ class Subscription(TenantModel):
         return True
 
 
-class BillingPayment(TenantModel):
+class BillingPayment(models.Model):
     STATUS_CHOICES = [
         ('pending', 'Pending'),
         ('completed', 'Completed'),
@@ -46,6 +88,14 @@ class BillingPayment(TenantModel):
         ('cancelled', 'Cancelled'),
     ]
 
+    tenant = models.ForeignKey(
+        'tenants.Tenant',
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name='billing_payments',
+        help_text='Optional workspace linked to this payment record',
+    )
     transaction_uuid = models.CharField(max_length=64, unique=True, db_index=True)
     plan_code = models.CharField(max_length=32)
     amount = models.DecimalField(max_digits=12, decimal_places=2)
@@ -63,13 +113,17 @@ class BillingPayment(TenantModel):
     completed_at = models.DateTimeField(null=True, blank=True)
     failure_reason = models.TextField(blank=True)
     callback_payload = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
         db_table = 'billing_payments'
         ordering = ['-created_at']
 
     def __str__(self):
-        return f'{self.transaction_uuid} — {self.plan_code} — {self.status}'
+        payer = self.initiated_by
+        label = payer.get_full_name() if payer else (self.tenant.name if self.tenant_id else self.transaction_uuid)
+        return f'{label} — {self.plan_code} — {self.status}'
 
 
 class SubscriptionPlan(models.Model):

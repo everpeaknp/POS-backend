@@ -36,23 +36,13 @@ def get_tenant_plan_code(tenant) -> str:
 
 
 def get_user_account_plan_code(user) -> str:
-    """Best subscription tier among organizations this user created."""
-    from tenants.models import Tenant
+    """Account subscription tier for this user."""
+    from billing.models import UserSubscription
 
-    best_code = 'free'
-    best_rank = PLAN_RANK['free']
-
-    for tenant in Tenant.objects.filter(created_by=user).only('id', 'plan_type'):
-        try:
-            code = get_tenant_plan_code(tenant)
-        except Exception:
-            code = 'free'
-        rank = PLAN_RANK.get(code, 0)
-        if rank > best_rank:
-            best_rank = rank
-            best_code = code
-
-    return best_code
+    try:
+        return UserSubscription.objects.get(user=user).plan_code
+    except UserSubscription.DoesNotExist:
+        return 'free'
 
 
 def count_orgs_created_by_user(user) -> int:

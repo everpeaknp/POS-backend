@@ -4,6 +4,7 @@ from billing.views import (
     BillingAccountLimitsView,
     BillingCheckoutView,
     BillingOverviewView,
+    BillingPaymentInvoiceView,
     BillingVerifyView,
 )
 
@@ -12,4 +13,5 @@ urlpatterns = [
     path('overview/', BillingOverviewView.as_view(), name='billing-overview'),
     path('checkout/', BillingCheckoutView.as_view(), name='billing-checkout'),
     path('verify/', BillingVerifyView.as_view(), name='billing-verify'),
+    path('payments/<int:payment_id>/invoice/', BillingPaymentInvoiceView.as_view(), name='billing-payment-invoice'),
 ]
