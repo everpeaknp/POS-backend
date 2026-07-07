@@ -84,7 +84,41 @@ def render_email_preview(subject: str, html_body: str) -> tuple[str, str]:
     ctx = build_preview_context()
     rendered_subject = render_template_string(subject or '', ctx)
     rendered_html = render_template_string(html_body or '', ctx)
-    return rendered_subject, rendered_html
+    return rendered_subject, prepare_html_for_email(rendered_html)
+
+
+def _wrap_email_document(html: str) -> str:
+    if not html:
+        return html
+    lower = html.lower()
+    if '<html' in lower:
+        return html
+    return (
+        '<!DOCTYPE html>'
+        '<html><head><meta charset="utf-8">'
+        '<meta name="viewport" content="width=device-width, initial-scale=1.0">'
+        '</head><body>'
+        f'{html}'
+        '</body></html>'
+    )
+
+
+def prepare_html_for_email(html: str) -> str:
+    """Inline CSS so Gmail and other clients render template styles."""
+    if not html:
+        return html
+    wrapped = _wrap_email_document(html)
+    try:
+        from premailer import transform
+        return transform(
+            wrapped,
+            keep_style_tags=False,
+            remove_classes=False,
+            strip_important=False,
+            disable_validation=True,
+        )
+    except Exception:
+        return wrapped
 
 
 def get_smtp_connection():
@@ -143,6 +177,8 @@ def send_email_now(to_email, subject, html_body, text_body='', *, log: EmailLog 
     smtp = SmtpSettings.get_solo()
     from_email = f'{smtp.sender_name} <{smtp.sender_email}>' if smtp.sender_name and smtp.sender_email else smtp.sender_email or 'noreply@khata.app'
     reply_to = [smtp.reply_to_email] if smtp.reply_to_email else None
+
+    html_body = prepare_html_for_email(html_body)
 
     if smtp.default_signature and smtp.default_signature not in html_body:
         html_body = f'{html_body}<br><br><p style="color:#6b7280;font-size:13px;">{smtp.default_signature}</p>'
