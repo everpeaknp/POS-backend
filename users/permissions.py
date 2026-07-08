@@ -96,13 +96,63 @@ class CanManageUsers(permissions.BasePermission):
 
 
 class CanEditTenantSettings(permissions.BasePermission):
-    """Tenant-scoped settings edit (user management, permissions, invites)."""
+    """Tenant settings edit or HR invite/assign for user management."""
 
     def has_permission(self, request, view):
         if not request.user or not request.user.is_authenticated:
             return False
         from users.dynamic_permissions import has_permission
-        return has_permission(request.user, 'settings', 'edit')
+
+        if has_permission(request.user, 'settings', 'edit'):
+            return True
+        # HR: Invite = add users; Assign = change roles / membership access
+        action = getattr(view, 'action', None)
+        if action == 'create':
+            return has_permission(request.user, 'hr', 'invite')
+        if action in ('update', 'partial_update'):
+            return has_permission(request.user, 'hr', 'assign')
+        if action == 'destroy':
+            return has_permission(request.user, 'hr', 'invite')
+        return False
+
+
+class CanInviteUsers(permissions.BasePermission):
+    """Permission to invite / add users to the organization."""
+
+    def has_permission(self, request, view):
+        if not request.user or not request.user.is_authenticated:
+            return False
+        from users.dynamic_permissions import has_permission
+        return (
+            has_permission(request.user, 'settings', 'edit')
+            or has_permission(request.user, 'hr', 'invite')
+        )
+
+
+class CanAssignUserRoles(permissions.BasePermission):
+    """Permission to change user roles in the organization."""
+
+    def has_permission(self, request, view):
+        if not request.user or not request.user.is_authenticated:
+            return False
+        from users.dynamic_permissions import has_permission
+        return (
+            has_permission(request.user, 'settings', 'edit')
+            or has_permission(request.user, 'hr', 'assign')
+        )
+
+
+class CanConfigurePermissions(permissions.BasePermission):
+    """Permission to open Manage Permissions and edit the role matrix."""
+
+    def has_permission(self, request, view):
+        if not request.user or not request.user.is_authenticated:
+            return False
+        from users.dynamic_permissions import has_permission
+        return (
+            has_permission(request.user, 'settings', 'edit')
+            or has_permission(request.user, 'hr', 'configure')
+        )
 
 
 class CanEditData(permissions.BasePermission):

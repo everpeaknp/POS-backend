@@ -46,6 +46,10 @@ class RolePermission(TenantModel):
         ('delete', 'Delete'),
         ('export', 'Export'),
         ('approve', 'Approve'),
+        # HR user-management actions (shown under Manage Permissions → HR)
+        ('invite', 'Invite'),
+        ('assign', 'Assign'),
+        ('configure', 'Configure'),
     ]
     
     role = models.CharField(max_length=20, choices=ROLE_CHOICES)
@@ -84,7 +88,7 @@ def get_default_permissions():
             'hardware': ['view', 'create', 'edit', 'delete', 'export'],
             'reports': ['view', 'export'],
             'settings': ['view', 'edit'],
-            'hr': ['view', 'create', 'edit', 'delete'],
+            'hr': ['view', 'create', 'edit', 'delete', 'invite', 'assign', 'configure'],
             'pos': ['view', 'create', 'edit', 'delete'],
         },
         'manager': {
@@ -96,7 +100,7 @@ def get_default_permissions():
             'hardware': ['view', 'create', 'edit'],
             'reports': ['view', 'export'],
             'settings': ['view', 'edit'],
-            'hr': ['view', 'create', 'edit'],
+            'hr': ['view', 'create', 'edit', 'invite', 'assign', 'configure'],
             'pos': ['view', 'create', 'edit'],
         },
         'supervisor': {
@@ -145,7 +149,7 @@ def sync_tenant_permissions(tenant):
     for role, modules in default_perms.items():
         for module, actions in modules.items():
             for action in actions:
-                _, was_created = RolePermission.objects.get_or_create(
+                _, was_created = RolePermission._base_manager.get_or_create(
                     tenant=tenant,
                     role=role,
                     module=module,

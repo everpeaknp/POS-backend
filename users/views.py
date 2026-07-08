@@ -256,7 +256,10 @@ def get_employee_invite_options(request):
     if not tenant_has_active_module(tenant, 'hr'):
         return Response({'results': []})
 
-    if not has_permission(request.user, 'settings', 'edit'):
+    if (
+        not has_permission(request.user, 'settings', 'edit')
+        and not has_permission(request.user, 'hr', 'invite')
+    ):
         return Response(
             {'detail': 'You do not have permission to manage users.'},
             status=status.HTTP_403_FORBIDDEN,
@@ -313,7 +316,7 @@ from rest_framework.decorators import api_view, permission_classes
 from rest_framework import permissions as drf_permissions
 from .permission_models import RolePermission, get_default_permissions, initialize_tenant_permissions, sync_tenant_permissions
 from .serializers import PermissionsMatrixSerializer, UpdatePermissionsSerializer
-from .permissions import IsAdminOrManager, CanEditTenantSettings
+from .permissions import IsAdminOrManager, CanEditTenantSettings, CanConfigurePermissions
 from tenants.utils import get_request_tenant
 
 ROLE_DISPLAY_MAP = {
@@ -346,6 +349,9 @@ ACTION_DISPLAY_MAP = {
     'delete': 'Delete',
     'export': 'Export',
     'approve': 'Approve',
+    'invite': 'Invite',
+    'assign': 'Assign',
+    'configure': 'Configure',
 }
 
 
@@ -692,7 +698,7 @@ def delete_account(request):
     responses={200: PermissionsMatrixSerializer}
 )
 @api_view(['GET'])
-@permission_classes([drf_permissions.IsAuthenticated, CanEditTenantSettings])
+@permission_classes([drf_permissions.IsAuthenticated, CanConfigurePermissions])
 def get_permissions(request):
     """
     Get the complete permissions matrix for all roles.
@@ -759,7 +765,7 @@ def get_my_permissions(request):
     responses={200: {'description': 'Permissions updated successfully'}}
 )
 @api_view(['POST'])
-@permission_classes([drf_permissions.IsAuthenticated, CanEditTenantSettings])
+@permission_classes([drf_permissions.IsAuthenticated, CanConfigurePermissions])
 def update_permissions(request):
     """
     Update the permissions matrix for all roles.
@@ -811,6 +817,9 @@ def update_permissions(request):
         'Delete': 'delete',
         'Export': 'export',
         'Approve': 'approve',
+        'Invite': 'invite',
+        'Assign': 'assign',
+        'Configure': 'configure',
     }
     
     import time

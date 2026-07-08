@@ -421,7 +421,7 @@ class OrganizationInvitationViewSet(viewsets.ModelViewSet):
         if not user.tenant:
             raise PermissionDenied("You must be part of an organization to invite users")
 
-        if not has_permission(user, 'settings', 'edit'):
+        if not has_permission(user, 'settings', 'edit') and not has_permission(user, 'hr', 'invite'):
             raise PermissionDenied("You do not have permission to invite users")
 
         serializer.save(tenant=user.tenant, invited_by=user)
@@ -485,7 +485,10 @@ class OrganizationInvitationViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_403_FORBIDDEN
             )
 
-        if not has_permission(request.user, 'settings', 'edit'):
+        if (
+            not has_permission(request.user, 'settings', 'edit')
+            and not has_permission(request.user, 'hr', 'invite')
+        ):
             return Response(
                 {'error': 'You do not have permission to cancel invitations'},
                 status=status.HTTP_403_FORBIDDEN
@@ -521,7 +524,10 @@ class OrganizationInvitationViewSet(viewsets.ModelViewSet):
         from users.dynamic_permissions import has_permission
 
         tenant = request.user.tenant
-        if tenant and has_permission(request.user, 'settings', 'edit'):
+        if tenant and (
+            has_permission(request.user, 'settings', 'edit')
+            or has_permission(request.user, 'hr', 'invite')
+        ):
             invitations = OrganizationInvitation.objects.filter(tenant=tenant)
             serializer = self.get_serializer(invitations, many=True)
             return Response(serializer.data)
