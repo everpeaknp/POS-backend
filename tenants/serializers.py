@@ -141,101 +141,95 @@ class TenantProfileSerializer(serializers.ModelSerializer):
 
 
 class OrganizationInvitationSerializer(serializers.ModelSerializer):
-    """Serializer for organization invitations"""
-    invited_user_email = serializers.EmailField(write_only=True, required=False)
+    """Serializer for organization invitations (registered users or email-only)."""
+    invited_user_email = serializers.EmailField(write_only=True, required=True)
+    invited_email = serializers.EmailField(read_only=True)
     invited_user_name = serializers.SerializerMethodField()
     invited_by_name = serializers.SerializerMethodField()
     tenant_name = serializers.CharField(source='tenant.name', read_only=True)
     is_expired = serializers.ReadOnlyField()
-    tenant = serializers.PrimaryKeyRelatedField(read_only=True)  # Set by viewset
-    invited_user = serializers.PrimaryKeyRelatedField(read_only=True, required=False)  # Set by validation
-    
+    requires_signup = serializers.SerializerMethodField()
+    tenant = serializers.PrimaryKeyRelatedField(read_only=True)
+    invited_user = serializers.PrimaryKeyRelatedField(read_only=True, required=False, allow_null=True)
+
     class Meta:
         model = OrganizationInvitation
         fields = [
-            'id', 'tenant', 'tenant_name', 'invited_user', 'invited_user_email',
-            'invited_user_name', 'invited_by', 'invited_by_name', 'role',
+            'id', 'token', 'tenant', 'tenant_name', 'invited_user', 'invited_user_email',
+            'invited_email', 'invited_user_name', 'invited_by', 'invited_by_name', 'role',
             'status', 'message', 'created_at', 'updated_at', 'expires_at',
-            'responded_at', 'is_expired'
+            'responded_at', 'is_expired', 'requires_signup',
         ]
-        read_only_fields = ['id', 'invited_by', 'status', 'created_at', 'updated_at', 'responded_at', 'expires_at']
-    
+        read_only_fields = [
+            'id', 'token', 'invited_by', 'invited_email', 'status',
+            'created_at', 'updated_at', 'responded_at', 'expires_at', 'requires_signup',
+        ]
+
     def get_invited_user_name(self, obj):
-        """Get invited user's full name"""
         if obj.invited_user:
-            return f"{obj.invited_user.first_name} {obj.invited_user.last_name}".strip() or obj.invited_user.username
-        return None
-    
+            return (
+                f"{obj.invited_user.first_name} {obj.invited_user.last_name}".strip()
+                or obj.invited_user.username
+            )
+        return obj.invited_email or None
+
     def get_invited_by_name(self, obj):
-        """Get inviter's full name"""
         if obj.invited_by:
-            return f"{obj.invited_by.first_name} {obj.invited_by.last_name}".strip() or obj.invited_by.username
+            return (
+                f"{obj.invited_by.first_name} {obj.invited_by.last_name}".strip()
+                or obj.invited_by.username
+            )
         return None
-    
+
+    def get_requires_signup(self, obj):
+        return obj.invited_user_id is None and bool(obj.invited_email)
+
     def validate(self, data):
-        """Validate invitation data"""
         request = self.context.get('request')
-        
-        # Get invited user by email if provided
-        if 'invited_user_email' in data:
-            email = data.pop('invited_user_email')
-            try:
-                invited_user = User.objects.get(email=email)
-                data['invited_user'] = invited_user
-            except User.DoesNotExist:
-                raise serializers.ValidationError({
-                    'invited_user_email': 'No user found with this email address'
-                })
-        
-        # Validate invited user exists
-        if 'invited_user' not in data:
+        email = (data.pop('invited_user_email', '') or '').strip().lower()
+        if not email:
             raise serializers.ValidationError({
-                'invited_user': 'Invited user is required'
+                'invited_user_email': 'Email address is required',
             })
-        
-        invited_user = data['invited_user']
-        
-        # Get tenant from request user (set by viewset)
-        request = self.context.get('request')
+
         tenant = request.user.tenant if request and request.user else None
-        
         if not tenant:
             raise serializers.ValidationError({
-                'tenant': 'You must be part of an organization to invite users'
+                'tenant': 'You must be part of an organization to invite users',
             })
-        
-        # Check if user is already in this organization
+
         from tenants.membership_models import UserTenantMembership
 
-        if invited_user.tenant_id == tenant.id:
-            raise serializers.ValidationError({
-                'invited_user': 'This user is already a member of this organization'
-            })
+        invited_user = User.objects.filter(email__iexact=email).first()
+        if invited_user:
+            if invited_user.tenant_id == tenant.id:
+                raise serializers.ValidationError({
+                    'invited_user_email': 'This user is already a member of this organization',
+                })
+            if UserTenantMembership.objects.filter(user=invited_user, tenant=tenant).exists():
+                raise serializers.ValidationError({
+                    'invited_user_email': 'This user is already a member of this organization',
+                })
+            data['invited_user'] = invited_user
+        else:
+            data['invited_user'] = None
 
-        if UserTenantMembership.objects.filter(user=invited_user, tenant=tenant).exists():
-            raise serializers.ValidationError({
-                'invited_user': 'This user is already a member of this organization'
-            })
-        
-        # Check if there's already a pending invitation
-        existing = OrganizationInvitation.objects.filter(
-            tenant=tenant,
-            invited_user=invited_user,
-            status='pending'
-        ).exists()
-        
+        pending = OrganizationInvitation.objects.filter(tenant=tenant, status='pending')
+        existing = pending.filter(invited_email__iexact=email).exists()
+        if invited_user and not existing:
+            existing = pending.filter(invited_user=invited_user).exists()
+
         if existing:
             raise serializers.ValidationError({
-                'invited_user': 'This user already has a pending invitation to this organization'
+                'invited_user_email': 'This email already has a pending invitation to this organization',
             })
 
         from billing.account_limits import assert_tenant_can_add_user
         assert_tenant_can_add_user(tenant)
-        
-        # Set invited_by from request user
+
+        data['invited_email'] = email
         if request and request.user:
             data['invited_by'] = request.user
-        
         return data
 
 

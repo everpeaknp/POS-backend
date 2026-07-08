@@ -66,7 +66,7 @@ def build_preview_context() -> dict:
         'email': 'alex@example.com',
         'full_name': 'Alex Johnson',
         'verification_link': f'{frontend}/auth/verify?token=preview',
-        'invitation_link': f'{frontend}/dashboard/settings/users?invitation=preview',
+        'invitation_link': f'{frontend}/invite/preview',
         'company_name': branding.company_name,
         'organization_name': 'Everacy Pvt. Ltd.',
         'inviter_name': 'Jane Admin',
@@ -307,22 +307,32 @@ def render_system_email(slug: str, context: dict) -> tuple[str, str, str]:
 
 
 def dispatch_invitation_email(invitation):
-    user = invitation.invited_user
-    if not user.email:
-        raise ValueError('Invited user has no email address')
+    email = invitation.recipient_email
+    if not email:
+        raise ValueError('Invitation has no recipient email address')
 
+    user = invitation.invited_user
     frontend = get_frontend_url()
+    invite_link = f'{frontend}/invite/{invitation.token}'
+
+    if user:
+        first_name = (user.first_name or '').strip() or email.split('@')[0]
+    else:
+        first_name = email.split('@')[0]
+
     ctx = build_message_context(user, {
+        'first_name': first_name,
+        'email': email,
         'company_name': invitation.tenant.name,
         'inviter_name': invitation.invited_by.get_full_name() if invitation.invited_by else 'A team member',
         'role': invitation.get_role_display(),
         'custom_message': invitation.message,
         'expires_at': invitation.expires_at.strftime('%B %d, %Y'),
-        'invitation_link': f'{frontend}/erp?tab=invitation',
+        'invitation_link': invite_link,
     })
     subject, html, text = render_system_email('invitation', ctx)
     log = queue_or_send(
-        user.email,
+        email,
         subject,
         html,
         text,
@@ -334,7 +344,7 @@ def dispatch_invitation_email(invitation):
     if log:
         log.invitation_id = invitation.pk
         log.save(update_fields=['invitation_id'])
-    logger.info('Invitation email sent to %s for invitation %s', user.email, invitation.pk)
+    logger.info('Invitation email sent to %s for invitation %s', email, invitation.pk)
     return log
 
 

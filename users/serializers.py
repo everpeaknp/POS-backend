@@ -294,6 +294,12 @@ class RegisterSerializer(serializers.ModelSerializer):
             )
 
             try:
+                from tenants.invitation_models import claim_pending_invitations_for_user
+                claim_pending_invitations_for_user(user)
+            except Exception:
+                pass
+
+            try:
                 from mail.services import dispatch_welcome_email
                 dispatch_welcome_email(user)
             except Exception:

@@ -1,8 +1,9 @@
 from rest_framework import viewsets, status
-from rest_framework.decorators import action
+from rest_framework.decorators import action, api_view, permission_classes
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated, AllowAny
 from drf_spectacular.utils import extend_schema, OpenApiParameter
+from django.db.models import Q
 from .models import Tenant
 from .invitation_models import OrganizationInvitation
 from .serializers import TenantSerializer, TenantProfileSerializer, TenantCreateSerializer, OrganizationInvitationSerializer, InvitationResponseSerializer
@@ -404,23 +405,20 @@ class OrganizationInvitationViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAuthenticated]
     
     def get_queryset(self):
-        """
-        Return invitations based on user role:
-        - Invitations sent by user's organization (if user is admin)
-        - Invitations received by the user
-        """
+        """Invitations received by the user (by account or email) plus org-sent for admins."""
         user = self.request.user
-        
-        # Get invitations received by this user
-        received = OrganizationInvitation.objects.filter(invited_user=user)
-        
-        # If user is admin of an organization, also show invitations sent by their org
+        email = (user.email or '').strip().lower()
+
+        received = OrganizationInvitation.objects.filter(
+            Q(invited_user=user) | Q(invited_email__iexact=email)
+        )
+
         if user.tenant and user.is_admin:
             sent = OrganizationInvitation.objects.filter(tenant=user.tenant)
             return (received | sent).distinct()
-        
-        return received
-    
+
+        return received.distinct()
+
     def perform_create(self, serializer):
         """Create invitation — requires settings edit permission."""
         from rest_framework.exceptions import PermissionDenied
@@ -435,7 +433,7 @@ class OrganizationInvitationViewSet(viewsets.ModelViewSet):
             raise PermissionDenied("You do not have permission to invite users")
 
         serializer.save(tenant=user.tenant, invited_by=user)
-    
+
     @extend_schema(
         request=InvitationResponseSerializer,
         responses={200: OrganizationInvitationSerializer}
@@ -444,32 +442,38 @@ class OrganizationInvitationViewSet(viewsets.ModelViewSet):
     def respond(self, request, pk=None):
         """Accept or decline an invitation"""
         invitation = self.get_object()
-        
-        # Check if user is the invited user
-        if invitation.invited_user != request.user:
+        user = request.user
+        email = (user.email or '').strip().lower()
+        invited_email = (invitation.invited_email or '').strip().lower()
+
+        is_recipient = (
+            invitation.invited_user_id == user.id
+            or (invited_email and invited_email == email)
+        )
+        if not is_recipient:
             return Response(
                 {'error': 'You can only respond to your own invitations'},
                 status=status.HTTP_403_FORBIDDEN
             )
-        
+
         serializer = InvitationResponseSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        
+
         action_type = serializer.validated_data['action']
-        
+
         try:
             if action_type == 'accept':
-                invitation.accept()
+                invitation.accept(user=user)
                 message = f'You have joined {invitation.tenant.name} as {invitation.get_role_display()}'
             else:
-                invitation.decline()
+                invitation.decline(user=user)
                 message = 'Invitation declined'
-            
+
             return Response({
                 'message': message,
                 'invitation': OrganizationInvitationSerializer(invitation).data
             })
-        
+
         except ValueError as e:
             return Response(
                 {'error': str(e)},
@@ -509,11 +513,13 @@ class OrganizationInvitationViewSet(viewsets.ModelViewSet):
     
     @action(detail=False, methods=['get'])
     def received(self, request):
-        """Get invitations received by the current user"""
+        """Get invitations received by the current user (by account or email)."""
+        email = (request.user.email or '').strip().lower()
         invitations = OrganizationInvitation.objects.filter(
-            invited_user=request.user,
-            status='pending'
-        )
+            status='pending',
+        ).filter(
+            Q(invited_user=request.user) | Q(invited_email__iexact=email)
+        ).distinct()
         serializer = self.get_serializer(invitations, many=True)
         return Response(serializer.data)
     
@@ -543,3 +549,73 @@ class OrganizationInvitationViewSet(viewsets.ModelViewSet):
         )
         serializer = self.get_serializer(invitations, many=True)
         return Response(serializer.data)
+
+
+def _public_invitation_payload(invitation):
+    return {
+        'token': str(invitation.token),
+        'tenant_name': invitation.tenant.name,
+        'role': invitation.role,
+        'role_display': invitation.get_role_display(),
+        'invited_email': invitation.recipient_email,
+        'invited_by_name': (
+            invitation.invited_by.get_full_name()
+            if invitation.invited_by
+            else 'A team member'
+        ),
+        'message': invitation.message,
+        'expires_at': invitation.expires_at,
+        'is_expired': invitation.is_expired,
+        'status': invitation.status,
+        'requires_signup': invitation.invited_user_id is None,
+    }
+
+
+@extend_schema(
+    tags=['Organization Invitations'],
+    summary='Preview invitation by token',
+    description='Public endpoint to load invite details before signup or login.',
+)
+@api_view(['GET'])
+@permission_classes([AllowAny])
+def preview_invitation(request, token):
+    invitation = OrganizationInvitation.objects.select_related(
+        'tenant', 'invited_by', 'invited_user'
+    ).filter(token=token).first()
+
+    if not invitation:
+        return Response({'detail': 'Invitation not found'}, status=status.HTTP_404_NOT_FOUND)
+
+    if invitation.is_expired and invitation.status == 'pending':
+        invitation.status = 'expired'
+        invitation.save(update_fields=['status', 'updated_at'])
+
+    return Response(_public_invitation_payload(invitation))
+
+
+@extend_schema(
+    tags=['Organization Invitations'],
+    summary='Accept invitation by token',
+    description='Authenticated users accept an invite via the email token.',
+    request=None,
+)
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def accept_invitation_by_token(request, token):
+    invitation = OrganizationInvitation.objects.select_related(
+        'tenant', 'invited_by', 'invited_user'
+    ).filter(token=token).first()
+
+    if not invitation:
+        return Response({'detail': 'Invitation not found'}, status=status.HTTP_404_NOT_FOUND)
+
+    try:
+        invitation.accept(user=request.user)
+    except ValueError as exc:
+        return Response({'detail': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+    return Response({
+        'message': f'You have joined {invitation.tenant.name} as {invitation.get_role_display()}',
+        'invitation': OrganizationInvitationSerializer(invitation).data,
+        'tenant_slug': invitation.tenant.slug,
+    })
