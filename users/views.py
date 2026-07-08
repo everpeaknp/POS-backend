@@ -168,24 +168,57 @@ class UserViewSet(viewsets.ModelViewSet):
         from billing.account_limits import assert_tenant_can_add_user
         assert_tenant_can_add_user(self.request.user.tenant)
         serializer.save(tenant=self.request.user.tenant)
+
+    def perform_update(self, serializer):
+        """Protect Super Admin; prevent self-disable; otherwise apply updates."""
+        from rest_framework.exceptions import ValidationError
+        from tenants.utils import get_request_tenant, is_tenant_super_admin
+
+        instance = self.get_object()
+        tenant = get_request_tenant(self.request.user)
+        next_active = serializer.validated_data.get('is_active', None)
+        next_role = serializer.validated_data.get('role', None)
+
+        if tenant and is_tenant_super_admin(instance, tenant):
+            if next_active is not None:
+                raise ValidationError({
+                    'detail': 'No one can enable or disable the Super Admin.'
+                })
+            if next_role is not None:
+                raise ValidationError({
+                    'detail': 'No one can change the Super Admin role.'
+                })
+
+        if (
+            instance.id == self.request.user.id
+            and next_active is False
+        ):
+            raise ValidationError({'detail': 'You cannot disable your own access to this organization.'})
+        serializer.save()
     
     def perform_destroy(self, instance):
         """Remove user from the current organization without deleting their account."""
         from rest_framework.exceptions import ValidationError
         from tenants.membership_models import UserTenantMembership
+        from tenants.utils import get_request_tenant, is_tenant_super_admin
 
-        tenant = self.request.user.tenant
+        tenant = get_request_tenant(self.request.user)
         if not tenant:
             raise ValidationError({'detail': 'You must be assigned to an organization to remove users.'})
 
         if instance.id == self.request.user.id:
             raise ValidationError({'detail': 'You cannot remove yourself from the organization.'})
 
+        if is_tenant_super_admin(instance, tenant):
+            raise ValidationError({
+                'detail': 'The Super Admin who created this business cannot be removed.'
+            })
+
         UserTenantMembership.objects.filter(user=instance, tenant=tenant).delete()
 
         if instance.tenant_id == tenant.id:
             other_membership = (
-                UserTenantMembership.objects.filter(user=instance)
+                UserTenantMembership.objects.filter(user=instance, is_active=True)
                 .select_related('tenant')
                 .first()
             )
@@ -318,6 +351,8 @@ ACTION_DISPLAY_MAP = {
 
 def get_effective_role(user, tenant):
     from tenants.membership_models import UserTenantMembership
+    if tenant and tenant.created_by_id == getattr(user, 'id', None):
+        return 'admin'
     membership = UserTenantMembership.objects.filter(user=user, tenant=tenant).first()
     if membership:
         return membership.role
@@ -672,14 +707,14 @@ def get_permissions(request):
         )
     
     # Get all permissions for this tenant
-    permissions = RolePermission.objects.filter(tenant=tenant)
+    permissions = RolePermission._base_manager.filter(tenant=tenant)
     
     # If no permissions exist, initialize with defaults
     if not permissions.exists():
         initialize_tenant_permissions(tenant)
     else:
         sync_tenant_permissions(tenant)
-    permissions = RolePermission.objects.filter(tenant=tenant)
+    permissions = RolePermission._base_manager.filter(tenant=tenant)
     
     matrix = build_permissions_matrix(permissions)
     return Response(matrix, status=status.HTTP_200_OK)
@@ -699,12 +734,12 @@ def get_my_permissions(request):
         return Response({}, status=status.HTTP_200_OK)
 
     role = get_effective_role(request.user, tenant)
-    permissions = RolePermission.objects.filter(tenant=tenant, role=role)
+    permissions = RolePermission._base_manager.filter(tenant=tenant, role=role)
     if not permissions.exists():
         initialize_tenant_permissions(tenant)
     else:
         sync_tenant_permissions(tenant)
-    permissions = RolePermission.objects.filter(tenant=tenant, role=role)
+    permissions = RolePermission._base_manager.filter(tenant=tenant, role=role)
 
     role_display = ROLE_DISPLAY_MAP.get(role, role.capitalize())
     role_perms = {}
@@ -778,66 +813,79 @@ def update_permissions(request):
         'Approve': 'approve',
     }
     
-    # Use transaction for atomicity
-    with transaction.atomic():
-        # Fetch all existing permissions for this tenant in one query
-        existing_perms = {
-            (p.role, p.module, p.action): p
-            for p in RolePermission.objects.filter(tenant=tenant).select_for_update()
-        }
-        
-        permissions_to_create = []
-        permissions_to_update = []
-        
-        # Process each role's permissions
-        for role_display, perms in serializer.validated_data.items():
-            role_db = role_map.get(role_display)
-            if not role_db:
-                continue
-            
-            for key, allowed in perms.items():
-                # Parse the key (e.g., "Sales-View" -> module="sales", action="view")
-                parts = key.split('-')
-                if len(parts) != 2:
-                    continue
-                
-                module_display, action_display = parts
-                module_db = module_map.get(module_display)
-                action_db = action_map.get(action_display)
-                
-                if not module_db or not action_db:
-                    continue
-                
-                perm_key = (role_db, module_db, action_db)
-                
-                if perm_key in existing_perms:
-                    # Update existing permission
-                    perm = existing_perms[perm_key]
-                    if perm.allowed != allowed:
-                        perm.allowed = allowed
-                        permissions_to_update.append(perm)
-                else:
-                    # Create new permission
-                    permissions_to_create.append(
-                        RolePermission(
-                            tenant=tenant,
-                            role=role_db,
-                            module=module_db,
-                            action=action_db,
-                            allowed=allowed
-                        )
+    import time
+    from django.db import OperationalError
+
+    # Avoid select_for_update — SQLite often raises "database is locked" under concurrent reads.
+    max_attempts = 3
+    total_updated = 0
+    last_error = None
+
+    for attempt in range(max_attempts):
+        try:
+            with transaction.atomic():
+                existing_perms = {
+                    (p.role, p.module, p.action): p
+                    for p in RolePermission._base_manager.filter(tenant=tenant)
+                }
+
+                permissions_to_create = []
+                permissions_to_update = []
+
+                for role_display, perms in serializer.validated_data.items():
+                    role_db = role_map.get(role_display)
+                    if not role_db:
+                        continue
+
+                    for key, allowed in perms.items():
+                        if '-' not in key:
+                            continue
+                        module_display, action_display = key.rsplit('-', 1)
+                        module_db = module_map.get(module_display)
+                        action_db = action_map.get(action_display)
+
+                        if not module_db or not action_db:
+                            continue
+
+                        perm_key = (role_db, module_db, action_db)
+
+                        if perm_key in existing_perms:
+                            perm = existing_perms[perm_key]
+                            if perm.allowed != allowed:
+                                perm.allowed = allowed
+                                permissions_to_update.append(perm)
+                        else:
+                            permissions_to_create.append(
+                                RolePermission(
+                                    tenant=tenant,
+                                    role=role_db,
+                                    module=module_db,
+                                    action=action_db,
+                                    allowed=allowed,
+                                )
+                            )
+
+                if permissions_to_create:
+                    RolePermission._base_manager.bulk_create(
+                        permissions_to_create, ignore_conflicts=True
                     )
-        
-        # Bulk create new permissions
-        if permissions_to_create:
-            RolePermission.objects.bulk_create(permissions_to_create, ignore_conflicts=True)
-        
-        # Bulk update existing permissions
-        if permissions_to_update:
-            RolePermission.objects.bulk_update(permissions_to_update, ['allowed'])
-        
-        total_updated = len(permissions_to_create) + len(permissions_to_update)
-    
+
+                if permissions_to_update:
+                    RolePermission._base_manager.bulk_update(
+                        permissions_to_update, ['allowed']
+                    )
+
+                total_updated = len(permissions_to_create) + len(permissions_to_update)
+            break
+        except OperationalError as exc:
+            last_error = exc
+            if 'locked' not in str(exc).lower() or attempt == max_attempts - 1:
+                raise
+            time.sleep(0.15 * (attempt + 1))
+    else:
+        if last_error:
+            raise last_error
+
     return Response(
         {
             'message': 'Permissions updated successfully',

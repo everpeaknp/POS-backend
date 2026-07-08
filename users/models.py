@@ -84,18 +84,30 @@ class User(AbstractUser):
     def get_tenant(self):
         """
         Get the user's tenant - either direct assignment or via membership.
-        For users with memberships, returns the first active membership's tenant.
+        Only active memberships count; disabled org access must not resolve a tenant.
         """
-        # Direct tenant assignment (for admin/owner)
-        if self.tenant:
-            return self.tenant
-        
-        # Check for membership (for invited users)
         from tenants.membership_models import UserTenantMembership
-        membership = UserTenantMembership.objects.filter(user=self).first()
+
+        # Direct tenant assignment — only if membership is still enabled (or user is creator)
+        if self.tenant_id:
+            membership = UserTenantMembership.objects.filter(
+                user=self, tenant_id=self.tenant_id
+            ).first()
+            if membership is None or membership.is_active:
+                return self.tenant
+            if self.tenant.created_by_id == self.id:
+                return self.tenant
+            # Stale primary tenant after org access was disabled
+            return None
+
+        membership = (
+            UserTenantMembership.objects.filter(user=self, is_active=True)
+            .select_related('tenant')
+            .first()
+        )
         if membership:
             return membership.tenant
-        
+
         return None
     
     def has_module_access(self, module):

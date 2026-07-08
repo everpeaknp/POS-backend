@@ -59,49 +59,79 @@ class TenantSerializer(serializers.ModelSerializer):
         model = Tenant
         fields = [
             'id', 'name', 'slug', 'workspace_name', 'email', 'address', 'business_type',
-            'is_active', 'plan_type', 'active_modules',
+            'is_active', 'plan_type', 'active_modules', 'created_by',
         ]
-        read_only_fields = ['id', 'slug']
+        read_only_fields = ['id', 'slug', 'created_by']
 
 
 class UserSerializer(serializers.ModelSerializer):
     tenant = serializers.SerializerMethodField()
     password = serializers.CharField(write_only=True, required=False, min_length=8)
     permissions = serializers.SerializerMethodField()
-    role = serializers.SerializerMethodField()
+    role = serializers.ChoiceField(choices=User.ROLE_CHOICES, required=False)
+    is_super_admin = serializers.SerializerMethodField()
+    # Membership access in the active org (business card). Not Khata login.
+    is_active = serializers.BooleanField(required=False)
     avatar = serializers.ImageField(required=False, allow_null=True)
     
     class Meta:
         model = User
-        fields = ['id', 'username', 'email', 'first_name', 'last_name', 'role', 'phone', 'avatar', 'tenant', 'password', 'is_active', 'last_login', 'date_joined', 'permissions']
-        read_only_fields = ['id', 'last_login', 'date_joined', 'permissions']
+        fields = [
+            'id', 'username', 'email', 'first_name', 'last_name', 'role', 'phone',
+            'avatar', 'tenant', 'password', 'is_active', 'last_login', 'date_joined',
+            'permissions', 'is_super_admin',
+        ]
+        read_only_fields = ['id', 'last_login', 'date_joined', 'permissions', 'is_super_admin']
+
+    def get_is_super_admin(self, obj):
+        tenant = self._request_tenant() or obj.get_tenant()
+        return bool(tenant and tenant.created_by_id == obj.id)
 
     def get_tenant(self, obj):
         tenant = obj.get_tenant()
         if not tenant:
             return None
         return TenantSerializer(tenant).data
-    
-    def get_role(self, obj):
-        """
-        Get the tenant-specific role from UserTenantMembership if available,
-        otherwise fall back to the user's global role.
-        """
-        # Get the current request's tenant from context
+
+    def _request_tenant(self):
         request = self.context.get('request')
-        tenant = obj.get_tenant()
-        if tenant:
-            from tenants.membership_models import UserTenantMembership
-            membership = UserTenantMembership.objects.filter(
-                user=obj,
-                tenant=tenant
-            ).first()
-            
-            if membership:
-                return membership.role
-        
-        # Fall back to user's global role
+        if not request or not getattr(request, 'user', None):
+            return None
+        from tenants.utils import get_request_tenant
+        return get_request_tenant(request.user)
+
+    def _get_membership(self, obj):
+        tenant = self._request_tenant() or obj.get_tenant()
+        if not tenant:
+            return None
+        from tenants.membership_models import UserTenantMembership
+        return UserTenantMembership.objects.filter(user=obj, tenant=tenant).first()
+
+    def _get_effective_role(self, obj):
+        """Tenant membership role for the active organization, else global role."""
+        tenant = self._request_tenant() or obj.get_tenant()
+        if tenant and tenant.created_by_id == obj.id:
+            return 'super_admin'
+        membership = self._get_membership(obj)
+        if membership:
+            return membership.role
         return obj.role
+
+    def _get_effective_is_active(self, obj):
+        """Whether membership for the active org is enabled (business access)."""
+        tenant = self._request_tenant() or obj.get_tenant()
+        if tenant and tenant.created_by_id == obj.id:
+            return True
+        membership = self._get_membership(obj)
+        if membership is not None:
+            return bool(membership.is_active)
+        return True
+
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        data['role'] = self._get_effective_role(instance)
+        data['is_active'] = self._get_effective_is_active(instance)
+        return data
     
     def get_permissions(self, obj):
         """Get user permissions including module access"""
@@ -133,6 +163,8 @@ class UserSerializer(serializers.ModelSerializer):
     def create(self, validated_data):
         """Create user with password"""
         password = validated_data.pop('password', None)
+        # Account-level login status stays enabled; org access is membership.is_active
+        validated_data.pop('is_active', None)
         user = User(**validated_data)
         if password:
             user.set_password(password)
@@ -142,39 +174,70 @@ class UserSerializer(serializers.ModelSerializer):
         return user
     
     def update(self, instance, validated_data):
-        """Update user, handle password and role separately"""
+        """Update user; role/is_active apply to membership in the active organization."""
+        from rest_framework.exceptions import ValidationError
+
         password = validated_data.pop('password', None)
         role = validated_data.pop('role', None)
-        
-        # Update other fields
+        membership_active = validated_data.pop('is_active', None)
+
+        tenant = self._request_tenant()
+        if tenant and tenant.created_by_id == instance.id:
+            if membership_active is not None:
+                raise ValidationError({'detail': 'No one can enable or disable the Super Admin.'})
+            if role is not None:
+                raise ValidationError({'detail': 'No one can change the Super Admin role.'})
+
         for attr, value in validated_data.items():
             setattr(instance, attr, value)
         
-        # Handle password update
         if password:
             instance.set_password(password)
         
-        # Handle role update - update both global role and membership role
-        if role:
+        if tenant and (role is not None or membership_active is not None):
+            from tenants.membership_models import UserTenantMembership
+
+            membership, _ = UserTenantMembership.objects.get_or_create(
+                user=instance,
+                tenant=tenant,
+                defaults={
+                    'role': role or instance.role or 'viewer',
+                    'is_active': True if membership_active is None else membership_active,
+                },
+            )
+            membership_updates = []
+            if role is not None and membership.role != role:
+                membership.role = role
+                membership_updates.append('role')
+            if membership_active is not None and membership.is_active != membership_active:
+                membership.is_active = membership_active
+                membership_updates.append('is_active')
+            if membership_updates:
+                membership_updates.append('updated_at')
+                membership.save(update_fields=membership_updates)
+
+            if role is not None and instance.tenant_id == tenant.id:
+                instance.role = role
+
+            # If access to current org was disabled, move them off this business card
+            if membership_active is False and instance.tenant_id == tenant.id:
+                other = (
+                    UserTenantMembership.objects.filter(user=instance, is_active=True)
+                    .exclude(tenant=tenant)
+                    .select_related('tenant')
+                    .first()
+                )
+                if other:
+                    instance.tenant = other.tenant
+                    instance.role = other.role
+                else:
+                    instance.tenant = None
+                    instance.role = 'viewer'
+        elif role is not None:
             instance.role = role
-            
-            # Also update the membership role for the current tenant
-            request = self.context.get('request')
-            if request and hasattr(request, 'user') and request.user.tenant:
-                from tenants.membership_models import UserTenantMembership
-                
-                membership = UserTenantMembership.objects.filter(
-                    user=instance,
-                    tenant=request.user.tenant
-                ).first()
-                
-                if membership:
-                    membership.role = role
-                    membership.save()
         
         instance.save()
         return instance
-
 
 class UserProfileUpdateSerializer(serializers.ModelSerializer):
     """Serializer for updating user profile (name, phone, etc.)"""

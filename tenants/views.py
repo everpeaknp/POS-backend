@@ -48,9 +48,10 @@ class TenantViewSet(viewsets.ModelViewSet):
             # Import here to avoid circular import
             from .membership_models import UserTenantMembership
             
-            # Get all tenant IDs where user has membership
+            # Get all tenant IDs where user has an active membership (enabled business access)
             membership_tenant_ids = list(UserTenantMembership.objects.filter(
-                user=self.request.user
+                user=self.request.user,
+                is_active=True,
             ).values_list('tenant_id', flat=True))
             
             # Return tenants where user has membership OR is the creator
@@ -159,34 +160,20 @@ class TenantViewSet(viewsets.ModelViewSet):
     
     def perform_destroy(self, instance):
         """
-        Delete tenant and handle cleanup
-        - Only admins of the organization can delete it
-        - Delete related tenant data in dependency order
+        Delete tenant and handle cleanup.
+        Only the Super Admin (business card creator) can delete it.
         """
         from rest_framework.exceptions import PermissionDenied, ValidationError
-        from .membership_models import UserTenantMembership
         from .deletion import delete_tenant
+        from .utils import is_tenant_super_admin
         
-        # Verify user is authenticated
         if not self.request.user or not self.request.user.is_authenticated:
             raise PermissionDenied("Authentication required")
-        
-        # Check if user is admin of this organization through membership
-        membership = UserTenantMembership.objects.filter(
-            user=self.request.user,
-            tenant=instance,
-            role='admin'
-        ).first()
-        
-        # Also check if user is the creator
-        is_creator = instance.created_by == self.request.user
-        
-        if not membership and not is_creator:
-            raise PermissionDenied("You must be an admin of this organization to delete it")
-        
-        # If user has membership but not admin role
-        if membership and membership.role != 'admin' and not is_creator:
-            raise PermissionDenied("Only organization admins can delete the organization")
+
+        if not is_tenant_super_admin(self.request.user, instance):
+            raise PermissionDenied(
+                "Only the Super Admin who created this business can delete it"
+            )
 
         try:
             delete_tenant(instance)
@@ -263,6 +250,11 @@ class TenantViewSet(viewsets.ModelViewSet):
         updates = {'tenant': tenant}
         membership = UserTenantMembership.objects.filter(user=user, tenant=tenant).first()
         if membership:
+            if not membership.is_active:
+                return Response(
+                    {'error': 'Your access to this organization has been disabled'},
+                    status=status.HTTP_403_FORBIDDEN,
+                )
             updates['role'] = membership.role
         elif tenant.created_by_id == user.id:
             updates['role'] = 'admin'

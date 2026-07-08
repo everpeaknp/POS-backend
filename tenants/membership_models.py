@@ -33,6 +33,11 @@ class UserTenantMembership(models.Model):
         ],
         default='viewer'
     )
+    # Organization access for this membership (business card). Does not disable Khata login.
+    is_active = models.BooleanField(
+        default=True,
+        help_text='If false, the user cannot open or switch into this organization.',
+    )
     
     # Timestamps
     joined_at = models.DateTimeField(auto_now_add=True)

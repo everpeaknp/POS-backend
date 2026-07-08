@@ -26,6 +26,9 @@ def tenant_has_active_module(tenant, module):
 
 
 def _effective_role(user, tenant):
+    # Business card creator is Super Admin and has full access (same as admin matrix)
+    if tenant and tenant.created_by_id == getattr(user, 'id', None):
+        return 'admin'
     role = user.role
     membership = UserTenantMembership.objects.filter(user=user, tenant=tenant).first()
     if membership:

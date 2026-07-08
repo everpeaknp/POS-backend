@@ -194,15 +194,15 @@ class OrganizationInvitationAdmin(admin.ModelAdmin):
 
 @admin.register(UserTenantMembership)
 class UserTenantMembershipAdmin(admin.ModelAdmin):
-    list_display = ['user', 'tenant', 'role', 'joined_at']
-    list_filter = ['role', 'joined_at', 'tenant']
+    list_display = ['user', 'tenant', 'role', 'is_active', 'joined_at']
+    list_filter = ['role', 'is_active', 'joined_at', 'tenant']
     search_fields = ['user__email', 'user__username', 'tenant__name']
     readonly_fields = ['joined_at', 'updated_at']
     autocomplete_fields = ['user', 'tenant']
 
     fieldsets = (
         ('Membership', {
-            'fields': ('user', 'tenant', 'role'),
+            'fields': ('user', 'tenant', 'role', 'is_active'),
         }),
         ('Timestamps', {
             'fields': ('joined_at', 'updated_at'),

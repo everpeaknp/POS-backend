@@ -38,18 +38,20 @@ class TenantSerializer(serializers.ModelSerializer):
         
         user = request.user
         
-        # Check if user is the creator/owner
-        if obj.created_by == user:
-            return 'admin'
+        # Creator of the business card is Super Admin (top-level owner)
+        if obj.created_by_id == user.id:
+            return 'super_admin'
         
         # Check UserTenantMembership for role in this tenant
         from .membership_models import UserTenantMembership
         try:
             membership = UserTenantMembership.objects.get(user=user, tenant=obj)
+            if not membership.is_active:
+                return None
             return membership.role
         except UserTenantMembership.DoesNotExist:
             # Fallback to user's primary role if they're in this tenant
-            if user.tenant == obj:
+            if user.tenant_id == obj.id:
                 return user.role
             return None
 

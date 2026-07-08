@@ -288,8 +288,14 @@ class ReportViewSet(viewsets.ViewSet):
         """Main dashboard data for /dashboard page"""
         try:
             from reports.dashboard_modules import build_main_dashboard_response
+            from tenants.utils import user_has_tenant_access
 
             tenant = self.get_tenant()
+            if not tenant or not user_has_tenant_access(request.user, tenant):
+                return Response(
+                    {'detail': 'You do not have access to this organization'},
+                    status=status.HTTP_403_FORBIDDEN,
+                )
             period = request.query_params.get('period', 'month')
             return Response(build_main_dashboard_response(tenant, period))
         except Exception as e:
