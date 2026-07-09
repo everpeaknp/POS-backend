@@ -54,8 +54,11 @@ class ReportViewSet(viewsets.ViewSet):
 
     def get_permissions(self):
         """Main org dashboard is available to any authenticated tenant member."""
-        if getattr(self, 'action', None) in ('main_dashboard', 'dashboard_summary'):
+        action = getattr(self, 'action', None)
+        if action == 'main_dashboard':
             return [IsAuthenticated()]
+        if action == 'financial_reports':
+            return [IsAuthenticated(), ReportsPermission(), CanViewFinancials()]
         return [IsAuthenticated(), ReportsPermission()]
     
     def get_tenant(self):
@@ -102,182 +105,49 @@ class ReportViewSet(viewsets.ViewSet):
     )
     @action(detail=False, methods=['get'], url_path='dashboard-summary')
     def dashboard_summary(self, request):
-        """Complete dashboard summary for main dashboard page"""
-        tenant = self.get_tenant()
-        
-        # ===== FINANCIALS =====
-        # Total Receivables (Customer Credit Outstanding)
-        total_receivables = Customer.objects.filter(tenant=tenant).aggregate(
-            total=Coalesce(Sum('current_balance'), Value(Decimal('0.00')))
-        )['total']
-        
-        # Total Payables (Supplier Credit Outstanding) - Import Supplier model
-        try:
-            from purchase.models import Supplier
-            total_payables = Supplier.objects.filter(tenant=tenant).aggregate(
-                total=Coalesce(Sum('current_balance'), Value(Decimal('0.00')))
-            )['total']
-        except:
-            total_payables = Decimal('0.00')
-        
-        # Revenue calculation
-        sales_revenue = SalesOrder.objects.filter(
-            tenant=tenant, status='Delivered'
-        ).aggregate(
-            total=Coalesce(Sum('total'), Value(Decimal('0.00')))
-        )['total']
-        
-        invoice_revenue = Invoice.objects.filter(tenant=tenant).exclude(
-            status='Draft'
-        ).aggregate(
-            total=Coalesce(Sum('amount'), Value(Decimal('0.00')))
-        )['total']
-        
-        total_revenue = sales_revenue + invoice_revenue
-        
-        # Expenses calculation
-        purchase_expenses = PurchaseInvoice.objects.filter(
-            tenant=tenant, status='Paid'
-        ).aggregate(
-            total=Coalesce(Sum('amount'), Value(Decimal('0.00')))
-        )['total']
-        
-        material_expenses = MaterialConsumption.objects.filter(
-            tenant=tenant
-        ).aggregate(
-            total=Coalesce(Sum(F('quantity') * F('unit_cost'), output_field=DecimalField()), Value(Decimal('0.00')))
-        )['total']
-        
-        labor_expenses = Attendance.objects.filter(tenant=tenant).aggregate(
-            total=Coalesce(Sum('wage_amount'), Value(Decimal('0.00')))
-        )['total']
-        
-        total_expenses = purchase_expenses + material_expenses + labor_expenses
-        net_profit = total_revenue - total_expenses
-        profit_margin = (net_profit / total_revenue * 100) if total_revenue > 0 else Decimal('0.00')
-        
-        # ===== INVENTORY - LOW STOCK ALERTS =====
-        low_stock_products = Product.objects.filter(tenant=tenant).annotate(
-            total_stock=Coalesce(Sum('stocks__quantity'), Value(Decimal('0.00')))
-        ).filter(
-            total_stock__lt=F('reorder_level')
-        ).order_by('total_stock')[:5]
-        
-        low_stock_items = []
-        for product in low_stock_products:
-            stock_deficit = product.reorder_level - product.total_stock
-            urgency = 'critical' if product.total_stock < (product.reorder_level * Decimal('0.5')) else 'low'
-            
-            # Get warehouse breakdown
-            warehouses = Stock.objects.filter(
-                tenant=tenant, product=product
-            ).values('warehouse__name').annotate(
-                quantity=Sum('quantity')
-            )
-            
-            low_stock_items.append({
-                'product_id': str(product.id),
-                'product_name': product.name,
-                'sku': product.sku,
-                'current_stock': float(product.total_stock),
-                'reorder_level': float(product.reorder_level),
-                'unit': product.unit.name if product.unit else 'unit',
-                'stock_deficit': float(stock_deficit),
-                'urgency': urgency,
-                'warehouses': list(warehouses),
-            })
-        
-        critical_items = sum(1 for item in low_stock_items if item['urgency'] == 'critical')
-        
-        # ===== CONSTRUCTION - BUDGET ALERTS =====
-        sites = Site.objects.filter(tenant=tenant, status='active')
-        budget_alert_sites = []
-        
-        for site in sites:
-            # Calculate actual spend
-            material_cost = MaterialConsumption.objects.filter(
-                tenant=tenant, site=site
-            ).aggregate(
-                total=Coalesce(Sum(F('quantity') * F('unit_cost'), output_field=DecimalField()), Value(Decimal('0.00')))
-            )['total']
-            
-            labor_cost = Attendance.objects.filter(
-                tenant=tenant, site=site
-            ).aggregate(
-                total=Coalesce(Sum('wage_amount'), Value(Decimal('0.00')))
-            )['total']
-            
-            other_expenses = site.daily_logs.aggregate(
-                total=Coalesce(Sum('other_expenses'), Value(Decimal('0.00')))
-            )['total']
+        """Complete dashboard summary for reports hub"""
+        from .utils import (
+            build_construction_budget_alerts,
+            build_dashboard_financials,
+            build_low_stock_items,
+            parse_report_dates,
+            tenant_has_module,
+        )
+        from django.utils import timezone
 
-            equipment_cost = site.equipment_usage_logs.aggregate(
-                total=Coalesce(Sum('cost'), Value(Decimal('0.00')))
-            )['total']
-            
-            actual_spend = material_cost + labor_cost + equipment_cost + other_expenses
-            budget_utilization = (actual_spend / site.allocated_budget * 100) if site.allocated_budget > 0 else Decimal('0.00')
-            
-            # Only include sites with >80% budget utilization
-            if budget_utilization > 80:
-                remaining_budget = site.allocated_budget - actual_spend
-                
-                if budget_utilization > 100:
-                    alert_level = 'critical'
-                elif budget_utilization > 95:
-                    alert_level = 'high'
-                else:
-                    alert_level = 'warning'
-                
-                budget_alert_sites.append({
-                    'site_id': str(site.id),
-                    'site_name': site.name,
-                    'location': site.location,
-                    'status': site.status,
-                    'allocated_budget': float(site.allocated_budget),
-                    'actual_spend': float(actual_spend),
-                    'budget_utilization_percentage': float(round(budget_utilization, 2)),
-                    'remaining_budget': float(remaining_budget),
-                    'alert_level': alert_level,
-                    'breakdown': {
-                        'material_cost': float(material_cost),
-                        'labor_cost': float(labor_cost),
-                        'equipment_cost': float(equipment_cost),
-                        'other_expenses': float(other_expenses),
-                    }
-                })
-        
-        critical_sites = sum(1 for site in budget_alert_sites if site['alert_level'] == 'critical')
-        total_active_sites = sites.count()
-        
+        tenant = self.get_tenant()
+        from_date, to_date = parse_report_dates(
+            request.query_params.get('from_date'),
+            request.query_params.get('to_date'),
+        )
+        include_construction = tenant_has_module(tenant, 'construction')
+
+        financials = build_dashboard_financials(
+            tenant, from_date, to_date, include_construction=include_construction
+        )
+
+        low_stock_items = build_low_stock_items(tenant)
+        critical_items = sum(1 for item in low_stock_items if item['urgency'] == 'critical')
+
+        construction_data = (
+            build_construction_budget_alerts(tenant)
+            if include_construction
+            else {
+                'budget_alert_sites': [],
+                'critical_sites': 0,
+                'total_active_sites': 0,
+            }
+        )
+
         return Response({
-            'financials': {
-                'total_receivables': float(total_receivables),
-                'total_payables': float(total_payables),
-                'total_revenue': float(total_revenue),
-                'total_expenses': float(total_expenses),
-                'net_profit': float(net_profit),
-                'profit_margin_percentage': float(round(profit_margin, 2)),
-                'breakdown': {
-                    'sales_revenue': float(sales_revenue),
-                    'invoice_revenue': float(invoice_revenue),
-                    'purchase_expenses': float(purchase_expenses),
-                    'material_expenses': float(material_expenses),
-                    'labor_expenses': float(labor_expenses),
-                }
-            },
+            'financials': financials,
             'inventory': {
                 'low_stock_items': low_stock_items,
-                'total_low_stock_items': len(low_stock_items),
                 'critical_items': critical_items,
+                'total_low_stock': len(low_stock_items),
             },
-            'construction': {
-                'budget_alert_sites': budget_alert_sites,
-                'total_alert_sites': len(budget_alert_sites),
-                'critical_sites': critical_sites,
-                'total_active_sites': total_active_sites,
-            },
-            'generated_at': datetime.now().isoformat(),
+            'construction': construction_data,
+            'generated_at': timezone.now().isoformat(),
         })
     
     @extend_schema(
@@ -701,6 +571,27 @@ class ReportViewSet(viewsets.ViewSet):
             'products': products_data,
             'total_products': len(products_data),
         })
+
+    @action(detail=False, methods=['get'], url_path='inventory-stock-summary')
+    def inventory_stock_summary(self, request):
+        from .utils import build_inventory_stock_summary
+
+        tenant = self.get_tenant()
+        return Response(build_inventory_stock_summary(tenant))
+
+    @action(detail=False, methods=['get'], url_path='inventory-low-stock')
+    def inventory_low_stock(self, request):
+        from .utils import build_inventory_low_stock
+
+        tenant = self.get_tenant()
+        return Response(build_inventory_low_stock(tenant))
+
+    @action(detail=False, methods=['get'], url_path='inventory-valuation-report')
+    def inventory_valuation_report(self, request):
+        from .utils import build_inventory_valuation_report
+
+        tenant = self.get_tenant()
+        return Response(build_inventory_valuation_report(tenant))
     
     @extend_schema(
         tags=['Reports'],
@@ -1102,265 +993,27 @@ class ReportViewSet(viewsets.ViewSet):
     def financial_reports(self, request):
         """Comprehensive financial reports combining P&L, Balance Sheet, Trial Balance, and Cash Flow"""
         try:
-            from accounting.models import Account, JournalLine
+            from .utils import build_financial_reports, parse_report_dates
             from django.utils import timezone
-            
+
             tenant = self.get_tenant()
-            
-            # Parse date parameters
-            from_date_str = request.query_params.get('from_date')
-            to_date_str = request.query_params.get('to_date')
             as_of_date_str = request.query_params.get('as_of_date')
-            
-            # Default dates if not provided
-            if not as_of_date_str:
-                as_of_date = timezone.now().date()
-            else:
-                as_of_date = datetime.strptime(as_of_date_str, '%Y-%m-%d').date()
-            
-            if not from_date_str:
-                from_date = as_of_date.replace(day=1)
-            else:
-                from_date = datetime.strptime(from_date_str, '%Y-%m-%d').date()
-            
-            if not to_date_str:
-                to_date = as_of_date
-            else:
-                to_date = datetime.strptime(to_date_str, '%Y-%m-%d').date()
-            
-            # ===== PROFIT & LOSS =====
-            income_accounts = Account.objects.filter(tenant=tenant, type='Income', status='active')
-            expense_accounts = Account.objects.filter(tenant=tenant, type='Expense', status='active')
-            
-            pnl_data = []
-            total_income = Decimal('0.00')
-            total_expenses = Decimal('0.00')
-            
-            # Income section
-            for account in income_accounts:
-                lines = JournalLine.objects.filter(
-                    journal_entry__tenant=tenant,
-                    journal_entry__status='posted',
-                    journal_entry__date__gte=from_date,
-                    journal_entry__date__lte=to_date,
-                    account=account
-                )
-                credit_total = lines.aggregate(total=Coalesce(Sum('credit'), Value(Decimal('0.00'))))['total']
-                debit_total = lines.aggregate(total=Coalesce(Sum('debit'), Value(Decimal('0.00'))))['total']
-                balance = credit_total - debit_total
-                
-                if balance != 0:
-                    total_income += balance
-                    pnl_data.append({
-                        'account': account.name,
-                        'type': 'Income',
-                        'amount': float(balance)
-                    })
-            
-            # Expense section
-            for account in expense_accounts:
-                lines = JournalLine.objects.filter(
-                    journal_entry__tenant=tenant,
-                    journal_entry__status='posted',
-                    journal_entry__date__gte=from_date,
-                    journal_entry__date__lte=to_date,
-                    account=account
-                )
-                debit_total = lines.aggregate(total=Coalesce(Sum('debit'), Value(Decimal('0.00'))))['total']
-                credit_total = lines.aggregate(total=Coalesce(Sum('credit'), Value(Decimal('0.00'))))['total']
-                balance = debit_total - credit_total
-                
-                if balance != 0:
-                    total_expenses += balance
-                    pnl_data.append({
-                        'account': account.name,
-                        'type': 'Expense',
-                        'amount': float(balance)
-                    })
-            
-            net_profit = total_income - total_expenses
-            
-            # ===== BALANCE SHEET =====
-            asset_accounts = Account.objects.filter(tenant=tenant, type='Assets', status='active')
-            liability_accounts = Account.objects.filter(tenant=tenant, type='Liabilities', status='active')
-            equity_accounts = Account.objects.filter(tenant=tenant, type='Equity', status='active')
-            
-            balance_sheet_data = {
-                'assets': [],
-                'liabilities': [],
-                'equity': []
-            }
-            total_assets = Decimal('0.00')
-            total_liabilities = Decimal('0.00')
-            total_equity = Decimal('0.00')
-            
-            # Assets
-            for account in asset_accounts:
-                lines = JournalLine.objects.filter(
-                    journal_entry__tenant=tenant,
-                    journal_entry__status='posted',
-                    journal_entry__date__lte=as_of_date,
-                    account=account
-                )
-                debit_total = lines.aggregate(total=Coalesce(Sum('debit'), Value(Decimal('0.00'))))['total']
-                credit_total = lines.aggregate(total=Coalesce(Sum('credit'), Value(Decimal('0.00'))))['total']
-                balance = debit_total - credit_total
-                
-                if balance != 0:
-                    total_assets += balance
-                    balance_sheet_data['assets'].append({
-                        'account': account.name,
-                        'amount': float(balance)
-                    })
-            
-            # Liabilities
-            for account in liability_accounts:
-                lines = JournalLine.objects.filter(
-                    journal_entry__tenant=tenant,
-                    journal_entry__status='posted',
-                    journal_entry__date__lte=as_of_date,
-                    account=account
-                )
-                credit_total = lines.aggregate(total=Coalesce(Sum('credit'), Value(Decimal('0.00'))))['total']
-                debit_total = lines.aggregate(total=Coalesce(Sum('debit'), Value(Decimal('0.00'))))['total']
-                balance = credit_total - debit_total
-                
-                if balance != 0:
-                    total_liabilities += balance
-                    balance_sheet_data['liabilities'].append({
-                        'account': account.name,
-                        'amount': float(balance)
-                    })
-            
-            # Equity
-            for account in equity_accounts:
-                lines = JournalLine.objects.filter(
-                    journal_entry__tenant=tenant,
-                    journal_entry__status='posted',
-                    journal_entry__date__lte=as_of_date,
-                    account=account
-                )
-                credit_total = lines.aggregate(total=Coalesce(Sum('credit'), Value(Decimal('0.00'))))['total']
-                debit_total = lines.aggregate(total=Coalesce(Sum('debit'), Value(Decimal('0.00'))))['total']
-                balance = credit_total - debit_total
-                
-                if balance != 0:
-                    total_equity += balance
-                    balance_sheet_data['equity'].append({
-                        'account': account.name,
-                        'amount': float(balance)
-                    })
-            
-            # ===== TRIAL BALANCE =====
-            all_accounts = Account.objects.filter(tenant=tenant, status='active', level__gt=0).order_by('type', 'code')
-            trial_balance_data = []
-            total_debit = Decimal('0.00')
-            total_credit = Decimal('0.00')
-            
-            for account in all_accounts:
-                lines = JournalLine.objects.filter(
-                    journal_entry__tenant=tenant,
-                    journal_entry__status='posted',
-                    journal_entry__date__lte=as_of_date,
-                    account=account
-                )
-                debit_sum = lines.aggregate(total=Coalesce(Sum('debit'), Value(Decimal('0.00'))))['total']
-                credit_sum = lines.aggregate(total=Coalesce(Sum('credit'), Value(Decimal('0.00'))))['total']
-                
-                if debit_sum != 0 or credit_sum != 0:
-                    total_debit += debit_sum
-                    total_credit += credit_sum
-                    trial_balance_data.append({
-                        'account': account.name,
-                        'debit': float(debit_sum),
-                        'credit': float(credit_sum)
-                    })
-            
-            # ===== CASH FLOW (Simplified) =====
-            # Operating activities: Net profit + adjustments
-            operating_cash = net_profit
-            
-            # Investing activities: Fixed asset purchases (simplified)
-            investing_cash = Decimal('0.00')
-            
-            # Financing activities: Capital and loans (simplified)
-            financing_cash = Decimal('0.00')
-            
-            # Get opening and closing cash balances
-            cash_accounts = Account.objects.filter(
-                tenant=tenant,
-                status='active',
-                name__icontains='cash'
+            as_of_date = (
+                datetime.strptime(as_of_date_str, '%Y-%m-%d').date()
+                if as_of_date_str
+                else timezone.now().date()
             )
-            
-            opening_cash = Decimal('0.00')
-            closing_cash = Decimal('0.00')
-            
-            for account in cash_accounts:
-                # Opening balance (before from_date)
-                opening_lines = JournalLine.objects.filter(
-                    journal_entry__tenant=tenant,
-                    journal_entry__status='posted',
-                    journal_entry__date__lt=from_date,
-                    account=account
-                )
-                opening_debit = opening_lines.aggregate(total=Coalesce(Sum('debit'), Value(Decimal('0.00'))))['total']
-                opening_credit = opening_lines.aggregate(total=Coalesce(Sum('credit'), Value(Decimal('0.00'))))['total']
-                opening_cash += (opening_debit - opening_credit)
-                
-                # Closing balance (up to to_date)
-                closing_lines = JournalLine.objects.filter(
-                    journal_entry__tenant=tenant,
-                    journal_entry__status='posted',
-                    journal_entry__date__lte=to_date,
-                    account=account
-                )
-                closing_debit = closing_lines.aggregate(total=Coalesce(Sum('debit'), Value(Decimal('0.00'))))['total']
-                closing_credit = closing_lines.aggregate(total=Coalesce(Sum('credit'), Value(Decimal('0.00'))))['total']
-                closing_cash += (closing_debit - closing_credit)
-            
-            net_cash_change = closing_cash - opening_cash
-            
-            return Response({
-                'profit_and_loss': {
-                    'period': {
-                        'from_date': from_date.isoformat(),
-                        'to_date': to_date.isoformat()
-                    },
-                    'income': [item for item in pnl_data if item['type'] == 'Income'],
-                    'expenses': [item for item in pnl_data if item['type'] == 'Expense'],
-                    'total_income': float(total_income),
-                    'total_expenses': float(total_expenses),
-                    'net_profit': float(net_profit)
-                },
-                'balance_sheet': {
-                    'as_of_date': as_of_date.isoformat(),
-                    'assets': balance_sheet_data['assets'],
-                    'liabilities': balance_sheet_data['liabilities'],
-                    'equity': balance_sheet_data['equity'],
-                    'total_assets': float(total_assets),
-                    'total_liabilities': float(total_liabilities),
-                    'total_equity': float(total_equity)
-                },
-                'trial_balance': {
-                    'as_of_date': as_of_date.isoformat(),
-                    'accounts': trial_balance_data,
-                    'total_debit': float(total_debit),
-                    'total_credit': float(total_credit)
-                },
-                'cash_flow': {
-                    'period': {
-                        'from_date': from_date.isoformat(),
-                        'to_date': to_date.isoformat()
-                    },
-                    'operating_activities': float(operating_cash),
-                    'investing_activities': float(investing_cash),
-                    'financing_activities': float(financing_cash),
-                    'net_cash_change': float(net_cash_change),
-                    'opening_cash': float(opening_cash),
-                    'closing_cash': float(closing_cash)
-                }
-            })
+            from_date, to_date = parse_report_dates(
+                request.query_params.get('from_date'),
+                request.query_params.get('to_date'),
+                default_month=True,
+            )
+            if not request.query_params.get('from_date'):
+                from_date = as_of_date.replace(day=1)
+            if not request.query_params.get('to_date'):
+                to_date = as_of_date
+
+            return Response(build_financial_reports(tenant, from_date, to_date, as_of_date))
         except Exception as e:
             import traceback
             error_msg = str(e)
@@ -1385,50 +1038,15 @@ class ReportViewSet(viewsets.ViewSet):
     def tax_reports(self, request):
         """Comprehensive tax reports including VAT, TDS, and Income Tax"""
         try:
+            from .utils import build_tax_reports, parse_report_dates
+
             tenant = self.get_tenant()
-            
-            # Parse date parameters
-            from_date_str = request.query_params.get('from_date')
-            to_date_str = request.query_params.get('to_date')
-            
-            # Default to current fiscal year if not provided
-            if not from_date_str or not to_date_str:
-                today = datetime.now().date()
-                # Assuming fiscal year starts in July (Shrawan)
-                if today.month >= 7:
-                    from_date = today.replace(month=7, day=1)
-                    to_date = today
-                else:
-                    from_date = today.replace(year=today.year - 1, month=7, day=1)
-                    to_date = today
-            else:
-                from_date = datetime.strptime(from_date_str, '%Y-%m-%d').date()
-                to_date = datetime.strptime(to_date_str, '%Y-%m-%d').date()
-            
-            # Return minimal working data structure
-            return Response({
-                'period': {
-                    'from_date': from_date.isoformat(),
-                    'to_date': to_date.isoformat()
-                },
-                'vat': {
-                    'output_vat': 0.0,
-                    'input_vat': 0.0,
-                    'net_payable': 0.0,
-                    'returns_filed': 0,
-                    'monthly': []
-                },
-                'tds': {
-                    'total_deducted': 0.0,
-                    'on_services': 0.0,
-                    'on_rent': 0.0,
-                    'on_goods': 0.0,
-                    'details': []
-                },
-                'income_tax': {
-                    'employees': []
-                }
-            })
+            from_date, to_date = parse_report_dates(
+                request.query_params.get('from_date'),
+                request.query_params.get('to_date'),
+                default_month=False,
+            )
+            return Response(build_tax_reports(tenant, from_date, to_date))
         except Exception as e:
             import traceback
             error_msg = str(e)
@@ -1666,6 +1284,7 @@ class ReportViewSet(viewsets.ViewSet):
         """Run a custom report and return results"""
         from .models import CustomReport
         from .custom_report_runner import run_custom_report
+        from .utils import tenant_has_module
         from django.utils import timezone
         
         try:
@@ -1677,6 +1296,12 @@ class ReportViewSet(viewsets.ViewSet):
                 )
 
             report = _get_custom_report(tenant, report_id)
+
+            if not tenant_has_module(tenant, report.module):
+                return Response(
+                    {'detail': f'Module "{report.module}" is not enabled for this organization'},
+                    status=status.HTTP_403_FORBIDDEN,
+                )
             
             report.last_run = timezone.now()
             report.save(update_fields=['last_run'])

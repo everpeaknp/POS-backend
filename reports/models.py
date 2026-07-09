@@ -27,6 +27,8 @@ class CustomReport(TenantModel):
         ('accounting', 'Accounting'),
         ('hr', 'HR'),
         ('pos', 'POS'),
+        ('construction', 'Construction'),
+        ('hardware', 'Hardware'),
     ]
     
     name = models.CharField(max_length=255)
