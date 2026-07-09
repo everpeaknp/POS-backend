@@ -26,7 +26,7 @@ class POSSession(TenantModel):
     ]
     
     # Session identification
-    session_number = models.CharField(max_length=50, unique=True)
+    session_number = models.CharField(max_length=50)
     
     # Cashier
     cashier = models.ForeignKey(
@@ -119,6 +119,7 @@ class POSSession(TenantModel):
     class Meta:
         db_table = 'pos_sessions'
         ordering = ['-opened_at']
+        unique_together = [['tenant', 'session_number']]
         indexes = [
             models.Index(fields=['tenant', 'cashier', 'opened_at']),
             models.Index(fields=['tenant', 'status']),
@@ -132,7 +133,12 @@ class POSSession(TenantModel):
         if not self.session_number:
             from django.db import transaction
             with transaction.atomic():
-                last_session = POSSession._base_manager.select_for_update().all().order_by('-id').first()
+                last_session = (
+                    POSSession._base_manager.filter(tenant=self.tenant)
+                    .select_for_update()
+                    .order_by('-id')
+                    .first()
+                )
                 if last_session and last_session.session_number.startswith('SES-'):
                     try:
                         last_num = int(last_session.session_number.split('-')[1])
@@ -162,7 +168,7 @@ class POSDiscount(TenantModel):
     ]
     
     name = models.CharField(max_length=255)
-    code = models.CharField(max_length=50, unique=True)
+    code = models.CharField(max_length=50)
     description = models.TextField(blank=True)
     
     discount_type = models.CharField(max_length=20, choices=DISCOUNT_TYPE_CHOICES)
@@ -215,6 +221,7 @@ class POSDiscount(TenantModel):
     class Meta:
         db_table = 'pos_discounts'
         ordering = ['-created_at']
+        unique_together = [['tenant', 'code']]
     
     def __str__(self):
         return f"{self.name} ({self.code})"
@@ -245,7 +252,7 @@ class POSTransaction(TenantModel):
     ]
     
     # Transaction details
-    transaction_number = models.CharField(max_length=50, unique=True)
+    transaction_number = models.CharField(max_length=50)
     date = models.DateTimeField(auto_now_add=True)
     
     # Session (optional - links transaction to a session)
@@ -330,6 +337,7 @@ class POSTransaction(TenantModel):
     class Meta:
         db_table = 'pos_transactions'
         ordering = ['-date']
+        unique_together = [['tenant', 'transaction_number']]
         indexes = [
             models.Index(fields=['tenant', 'date']),
             models.Index(fields=['tenant', 'cashier', 'date']),
@@ -344,7 +352,12 @@ class POSTransaction(TenantModel):
         if not self.transaction_number:
             from django.db import transaction
             with transaction.atomic():
-                last_transaction = POSTransaction._base_manager.select_for_update().all().order_by('-id').first()
+                last_transaction = (
+                    POSTransaction._base_manager.filter(tenant=self.tenant)
+                    .select_for_update()
+                    .order_by('-id')
+                    .first()
+                )
                 if last_transaction and last_transaction.transaction_number.startswith('POS-'):
                     try:
                         last_num = int(last_transaction.transaction_number.split('-')[1])

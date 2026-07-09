@@ -5,7 +5,6 @@ POS Views for API endpoints
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
-from rest_framework.permissions import IsAuthenticated
 from drf_spectacular.utils import extend_schema, extend_schema_view, OpenApiParameter
 from drf_spectacular.types import OpenApiTypes
 from django.http import Http404
@@ -158,8 +157,42 @@ class POSSessionViewSet(viewsets.ModelViewSet):
         session.cash_variance = closing_cash - session.expected_cash
         session.closed_at = timezone.now()
         session.status = 'closed'
+        notes = request.data.get('notes')
+        if notes:
+            session.notes = notes
         session.save()
         
+        serializer = self.get_serializer(session)
+        return Response(serializer.data)
+
+    def destroy(self, request, *args, **kwargs):
+        """Prevent deleting sessions that have transactions."""
+        session = self.get_object()
+        if session.transactions.exists():
+            return Response(
+                {'detail': 'Cannot delete a session that has transactions.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        return super().destroy(request, *args, **kwargs)
+
+    @extend_schema(
+        tags=['POS - Sessions'],
+        summary='Get current user open session',
+        description='Returns the open POS session for the authenticated cashier',
+    )
+    @action(detail=False, methods=['get'], url_path='my-open')
+    def my_open(self, request):
+        tenant = get_request_tenant(request.user)
+        session = POSSession.objects.filter(
+            tenant=tenant,
+            cashier=request.user,
+            status='open',
+        ).select_related('cashier', 'warehouse').first()
+        if not session:
+            return Response(
+                {'detail': 'No open POS session.'},
+                status=status.HTTP_404_NOT_FOUND,
+            )
         serializer = self.get_serializer(session)
         return Response(serializer.data)
 
@@ -260,20 +293,23 @@ class POSTransactionViewSet(viewsets.ModelViewSet):
             )
         
         with db_transaction.atomic():
-            # Restore stock
             from inventory.models import Stock, StockMovement
+            from sales.models import Customer
+            from sales.accounting_integration import reverse_pos_sale
+
+            lines = list(pos_transaction.lines.select_related('product'))
             
-            for line in pos_transaction.lines.all():
+            for line in lines:
                 if pos_transaction.warehouse:
-                    stock = Stock.objects.get(
+                    stock, _created = Stock.objects.get_or_create(
                         tenant=request.user.tenant,
                         product=line.product,
-                        warehouse=pos_transaction.warehouse
+                        warehouse=pos_transaction.warehouse,
+                        defaults={'quantity': Decimal('0.00')}
                     )
                     stock.quantity += line.quantity
                     stock.save()
                     
-                    # Create stock movement
                     StockMovement.objects.create(
                         tenant=request.user.tenant,
                         product=line.product,
@@ -286,13 +322,11 @@ class POSTransactionViewSet(viewsets.ModelViewSet):
                         performed_by=request.user
                     )
             
-            # Restore customer balance if credit sale
             if pos_transaction.payment_method == 'credit' and pos_transaction.customer:
-                customer = pos_transaction.customer
+                customer = Customer.objects.select_for_update().get(pk=pos_transaction.customer_id)
                 customer.current_balance -= pos_transaction.total
-                customer.save()
+                customer.save(update_fields=['current_balance', 'updated_at'])
                 
-                # Create ledger entry
                 from sales.models import CustomerLedger
                 CustomerLedger.objects.create(
                     tenant=request.user.tenant,
@@ -307,8 +341,9 @@ class POSTransactionViewSet(viewsets.ModelViewSet):
                     running_balance=customer.current_balance,
                     description=f'POS Transaction Cancelled - {pos_transaction.transaction_number}'
                 )
+
+            reverse_pos_sale(pos_transaction, lines)
             
-            # Update transaction status
             pos_transaction.status = 'cancelled'
             pos_transaction.save()
         
@@ -426,10 +461,18 @@ class POSDailySalesReportViewSet(viewsets.ReadOnlyModelViewSet):
             credit_sales=Sum('total', filter=Q(payment_method='credit')),
         )
         
-        # Cancelled/Refunded
-        cancelled_count = POSTransaction.objects.filter(
-            **{**filters, 'status': 'cancelled'}
-        ).count()
+        # Cancelled transactions (separate query — completed filter is on main aggregates)
+        cancelled_filters = {
+            'tenant': request.user.tenant,
+            'date__date': report_date,
+            'status': 'cancelled',
+        }
+        if cashier_id:
+            cancelled_filters['cashier_id'] = cashier_id
+        if warehouse_id:
+            cancelled_filters['warehouse_id'] = warehouse_id
+
+        cancelled_count = POSTransaction.objects.filter(**cancelled_filters).count()
         
         refunded_amount = POSTransaction.objects.filter(
             tenant=request.user.tenant,
@@ -469,7 +512,8 @@ class POSDailySalesReportViewSet(viewsets.ReadOnlyModelViewSet):
 )
 class POSProductSearchViewSet(viewsets.ReadOnlyModelViewSet):
     """ViewSet for product search in POS"""
-    permission_classes = [IsAuthenticated]
+    permission_classes = [DynamicModulePermission]
+    permission_module = 'pos'
     serializer_class = ProductSearchSerializer
     search_fields = ['name', 'sku']
     ordering_fields = ['name', 'selling_price']

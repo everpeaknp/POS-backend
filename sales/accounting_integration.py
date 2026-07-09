@@ -213,3 +213,81 @@ def post_pos_sale(transaction, lines_with_products):
         f"COGS for POS {transaction.transaction_number}",
         tenant=transaction.tenant,
     )
+
+
+def _pos_cogs_total(lines_with_products):
+    total_cogs = Decimal('0')
+    for line in lines_with_products:
+        product = line.product
+        cost = product.cost_price or Decimal('0')
+        total_cogs += Decimal(str(line.quantity)) * Decimal(str(cost))
+    return total_cogs
+
+
+def reverse_pos_sale(transaction, lines_with_products):
+    """Reverse GL revenue and COGS when a POS transaction is cancelled."""
+    from accounting.services import (
+        create_journal_entry,
+        get_accounts_receivable_account,
+        get_cash_account,
+        get_sales_revenue_account,
+        has_posted_journal,
+    )
+
+    reference = transaction.transaction_number
+    reversal_ref = f"{reference}-REV"
+    tenant = transaction.tenant
+
+    if has_posted_journal(tenant, reference, 'Sales') and not has_posted_journal(
+        tenant, reversal_ref, 'Sales'
+    ):
+        total = Decimal(str(transaction.total or 0))
+        if total > 0:
+            revenue_account = get_sales_revenue_account(tenant)
+            if transaction.payment_method == 'credit' and transaction.customer:
+                ar_account = get_accounts_receivable_account(tenant)
+                entries = [
+                    {
+                        'account': revenue_account,
+                        'debit': total,
+                        'credit': 0,
+                        'description': f"Reverse POS sale {reference}",
+                    },
+                    {
+                        'account': ar_account,
+                        'debit': 0,
+                        'credit': total,
+                        'description': f"Reverse AR for POS {reference}",
+                    },
+                ]
+            else:
+                cash_account = get_cash_account(tenant)
+                entries = [
+                    {
+                        'account': revenue_account,
+                        'debit': total,
+                        'credit': 0,
+                        'description': f"Reverse POS sale {reference}",
+                    },
+                    {
+                        'account': cash_account,
+                        'debit': 0,
+                        'credit': total,
+                        'description': f"Reverse cash POS sale {reference}",
+                    },
+                ]
+            create_journal_entry(
+                tenant=tenant,
+                description=f"Reverse POS transaction {reference}",
+                reference=reversal_ref,
+                entry_type='Sales',
+                entries=entries,
+            )
+
+    total_cogs = _pos_cogs_total(lines_with_products)
+    reverse_cogs(
+        total_cogs,
+        f"COGS-{reference}",
+        f"Reverse COGS for cancelled POS {reference}",
+        tenant=tenant,
+    )

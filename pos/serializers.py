@@ -5,8 +5,8 @@ POS Serializers for API
 from rest_framework import serializers
 from decimal import Decimal
 from .models import POSSession, POSDiscount, POSTransaction, POSTransactionLine, POSDailySalesReport
+from .utils import get_warehouse_stock, compute_pos_amounts, quantize_money
 from inventory.models import Product, Warehouse
-from sales.models import Customer
 
 
 class POSSessionSerializer(serializers.ModelSerializer):
@@ -41,6 +41,15 @@ class POSDiscountSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = ['created_at', 'updated_at']
 
+    def validate_code(self, value):
+        tenant = self.context['request'].user.tenant
+        qs = POSDiscount.objects.filter(tenant=tenant, code=value)
+        if self.instance:
+            qs = qs.exclude(pk=self.instance.pk)
+        if qs.exists():
+            raise serializers.ValidationError('A discount with this code already exists.')
+        return value
+
 
 class POSTransactionLineSerializer(serializers.ModelSerializer):
     """Serializer for POS Transaction Lines"""
@@ -52,25 +61,6 @@ class POSTransactionLineSerializer(serializers.ModelSerializer):
             'unit_price', 'discount_amount', 'line_total'
         ]
         read_only_fields = ['product_name', 'product_sku', 'line_total']
-    
-    def validate(self, data):
-        """Validate line item"""
-        product = data.get('product')
-        quantity = data.get('quantity')
-        
-        # Check stock availability
-        if product:
-            total_stock = product.get_total_stock()
-            if total_stock <= 0:
-                raise serializers.ValidationError({
-                    'product': f'{product.name} is out of stock. Cannot add to transaction.'
-                })
-            if total_stock < quantity:
-                raise serializers.ValidationError({
-                    'quantity': f'Insufficient stock for {product.name}. Available: {total_stock}, Requested: {quantity}'
-                })
-        
-        return data
 
 
 class POSTransactionCreateSerializer(serializers.ModelSerializer):
@@ -84,40 +74,88 @@ class POSTransactionCreateSerializer(serializers.ModelSerializer):
             'tax_amount', 'total', 'payment_method', 'amount_paid',
             'change_given', 'warehouse', 'notes', 'lines'
         ]
+        extra_kwargs = {
+            'subtotal': {'required': False},
+            'tax_amount': {'required': False},
+            'total': {'required': False},
+        }
     
     def validate(self, data):
-        """Validate transaction data"""
-        # Validate payment
+        """Validate transaction data and recalculate totals server-side."""
+        from sales.credit_utils import check_credit_available
+
+        request = self.context['request']
+        tenant = request.user.tenant
+        warehouse = data.get('warehouse')
+        if not warehouse:
+            raise serializers.ValidationError({'warehouse': 'Warehouse is required'})
+
+        lines = data.get('lines') or []
+        if not lines:
+            raise serializers.ValidationError({'lines': 'At least one item is required'})
+
+        open_session = POSSession.objects.filter(
+            tenant=tenant,
+            cashier=request.user,
+            status='open',
+        ).first()
+        if not open_session:
+            raise serializers.ValidationError({
+                'detail': 'Open a POS session before completing sales.'
+            })
+        data['session'] = open_session
+
+        for line_data in lines:
+            product = line_data.get('product')
+            quantity = line_data.get('quantity')
+            if not product:
+                continue
+
+            available = get_warehouse_stock(product, warehouse)
+            if available <= 0:
+                raise serializers.ValidationError({
+                    'lines': f'{product.name} is out of stock at the selected warehouse.'
+                })
+            if available < quantity:
+                raise serializers.ValidationError({
+                    'lines': (
+                        f'Insufficient stock for {product.name} at {warehouse.name}. '
+                        f'Available: {available}, Requested: {quantity}'
+                    )
+                })
+
+            line_subtotal = quantize_money(quantity * line_data['unit_price'])
+            line_discount = quantize_money(line_data.get('discount_amount', 0))
+            if line_discount > line_subtotal:
+                raise serializers.ValidationError({
+                    'lines': f'Line discount exceeds subtotal for {product.name}.'
+                })
+            line_data['line_total'] = line_subtotal - line_discount
+
+        try:
+            amounts = compute_pos_amounts(lines, data.get('discount_amount', 0))
+        except ValueError as exc:
+            raise serializers.ValidationError({'discount_amount': str(exc)}) from exc
+
+        data.update(amounts)
+
+        if data['payment_method'] == 'credit':
+            customer = data.get('customer')
+            if not customer:
+                raise serializers.ValidationError({
+                    'customer': 'Customer is required for credit sales.'
+                })
+            try:
+                check_credit_available(customer, amounts['total'])
+            except ValueError as exc:
+                raise serializers.ValidationError({'customer': str(exc)}) from exc
+
         if data['amount_paid'] < data['total']:
             raise serializers.ValidationError({
                 'amount_paid': 'Amount paid must be greater than or equal to total'
             })
-        
-        # Calculate change
+
         data['change_given'] = data['amount_paid'] - data['total']
-        
-        # Validate lines exist
-        if not data.get('lines'):
-            raise serializers.ValidationError({
-                'lines': 'At least one item is required'
-            })
-        
-        # Validate stock availability for all line items
-        for line_data in data.get('lines', []):
-            product = line_data.get('product')
-            quantity = line_data.get('quantity')
-            
-            if product:
-                total_stock = product.get_total_stock()
-                if total_stock <= 0:
-                    raise serializers.ValidationError({
-                        'lines': f'{product.name} is out of stock. Cannot complete transaction.'
-                    })
-                if total_stock < quantity:
-                    raise serializers.ValidationError({
-                        'lines': f'Insufficient stock for {product.name}. Available: {total_stock}, Requested: {quantity}'
-                    })
-        
         return data
     
     def create(self, validated_data):
@@ -127,7 +165,6 @@ class POSTransactionCreateSerializer(serializers.ModelSerializer):
         lines_data = validated_data.pop('lines')
         
         with transaction.atomic():
-            # Create transaction
             pos_transaction = POSTransaction.objects.create(
                 **validated_data,
                 cashier=self.context['request'].user,
@@ -138,11 +175,9 @@ class POSTransactionCreateSerializer(serializers.ModelSerializer):
             for line_data in lines_data:
                 product = line_data['product']
                 
-                # Snapshot product details
                 line_data['product_name'] = product.name
                 line_data['product_sku'] = product.sku
                 
-                # Create line
                 line = POSTransactionLine.objects.create(
                     transaction=pos_transaction,
                     tenant=self.context['request'].user.tenant,
@@ -151,16 +186,15 @@ class POSTransactionCreateSerializer(serializers.ModelSerializer):
                 line.product = product
                 created_lines.append(line)
                 
-                # Update stock
                 from inventory.models import Stock, StockMovement
                 warehouse = validated_data.get('warehouse')
                 
                 if warehouse:
-                    stock, created = Stock.objects.get_or_create(
+                    stock, _created = Stock.objects.get_or_create(
                         tenant=self.context['request'].user.tenant,
                         product=product,
                         warehouse=warehouse,
-                        defaults={'quantity': 0}
+                        defaults={'quantity': Decimal('0.00')}
                     )
                     
                     stock.quantity -= line_data['quantity']
@@ -181,14 +215,14 @@ class POSTransactionCreateSerializer(serializers.ModelSerializer):
             from sales.accounting_integration import post_pos_sale
             post_pos_sale(pos_transaction, created_lines)
             
-            # Update customer balance if credit sale
             if validated_data.get('payment_method') == 'credit' and validated_data.get('customer'):
-                customer = validated_data['customer']
+                from sales.models import Customer, CustomerLedger
+                customer = Customer.objects.select_for_update().get(
+                    pk=validated_data['customer'].pk
+                )
                 customer.current_balance += validated_data['total']
-                customer.save()
+                customer.save(update_fields=['current_balance', 'updated_at'])
                 
-                # Create ledger entry
-                from sales.models import CustomerLedger
                 CustomerLedger.objects.create(
                     tenant=self.context['request'].user.tenant,
                     customer=customer,
@@ -251,15 +285,28 @@ class ProductSearchSerializer(serializers.ModelSerializer):
     """Lightweight serializer for product search in POS"""
     stock_quantity = serializers.SerializerMethodField()
     category_name = serializers.CharField(source='category.name', read_only=True)
+    category_id = serializers.IntegerField(source='category_id', read_only=True)
     unit_name = serializers.CharField(source='unit.abbreviation', read_only=True)
     
     class Meta:
         model = Product
         fields = [
             'id', 'name', 'sku', 'selling_price', 'stock_quantity',
-            'category_name', 'unit_name', 'status'
+            'category_id', 'category_name', 'unit_name', 'status'
         ]
     
     def get_stock_quantity(self, obj):
-        """Get total stock across all warehouses"""
+        """Stock at selected warehouse, or total when no warehouse filter."""
+        request = self.context.get('request')
+        warehouse_id = request.query_params.get('warehouse') if request else None
+        if warehouse_id:
+            from inventory.models import Warehouse
+            try:
+                warehouse = Warehouse.objects.get(
+                    id=warehouse_id,
+                    tenant=obj.tenant,
+                )
+            except Warehouse.DoesNotExist:
+                return 0.0
+            return float(get_warehouse_stock(obj, warehouse))
         return float(obj.get_total_stock())
