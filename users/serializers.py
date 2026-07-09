@@ -162,14 +162,19 @@ class UserSerializer(serializers.ModelSerializer):
     
     def create(self, validated_data):
         """Create user with password"""
+        from users.role_guards import assert_user_can_assign_role
+
         password = validated_data.pop('password', None)
-        # Account-level login status stays enabled; org access is membership.is_active
         validated_data.pop('is_active', None)
+        role = validated_data.get('role', 'viewer')
+        request = self.context.get('request')
+        if request and request.user:
+            validated_data['role'] = assert_user_can_assign_role(request.user, role)
+        if not password:
+            from rest_framework.exceptions import ValidationError
+            raise ValidationError({'password': 'Password is required when creating a user.'})
         user = User(**validated_data)
-        if password:
-            user.set_password(password)
-        else:
-            user.set_password('changeme123')  # Default password
+        user.set_password(password)
         user.save()
         return user
     
@@ -180,6 +185,10 @@ class UserSerializer(serializers.ModelSerializer):
         password = validated_data.pop('password', None)
         role = validated_data.pop('role', None)
         membership_active = validated_data.pop('is_active', None)
+        request = self.context.get('request')
+        if role is not None and request and request.user:
+            from users.role_guards import assert_user_can_assign_role
+            role = assert_user_can_assign_role(request.user, role)
 
         tenant = self._request_tenant()
         if tenant and tenant.created_by_id == instance.id:

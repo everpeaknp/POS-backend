@@ -95,6 +95,28 @@ class CanManageUsers(permissions.BasePermission):
         )
 
 
+class CanViewTenantSettings(permissions.BasePermission):
+    """View users, audit logs, and settings pages."""
+
+    def has_permission(self, request, view):
+        if not request.user or not request.user.is_authenticated:
+            return False
+        from users.dynamic_permissions import has_permission
+
+        return has_permission(request.user, 'settings', 'view')
+
+
+class CanViewAuditLogs(permissions.BasePermission):
+    """Audit log access via dynamic settings-view permission."""
+
+    def has_permission(self, request, view):
+        if not request.user or not request.user.is_authenticated:
+            return False
+        from users.dynamic_permissions import has_permission
+
+        return has_permission(request.user, 'settings', 'view')
+
+
 class CanEditTenantSettings(permissions.BasePermission):
     """Tenant settings edit or HR invite/assign for user management."""
 

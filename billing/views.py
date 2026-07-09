@@ -63,10 +63,6 @@ class BillingVerifyView(APIView):
 
     @extend_schema(tags=['Billing'], summary='Verify eSewa payment and activate subscription')
     def post(self, request):
-        tenant = get_request_tenant(request.user)
-        if not tenant:
-            return Response({'detail': 'No organization in context'}, status=status.HTTP_400_BAD_REQUEST)
-
         serializer = VerifyPaymentSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
 
@@ -82,7 +78,7 @@ class BillingVerifyView(APIView):
 
         try:
             result = services.verify_and_activate(
-                tenant,
+                None,
                 request.user,
                 transaction_uuid,
                 encoded_data,

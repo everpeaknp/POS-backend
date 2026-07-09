@@ -16,14 +16,9 @@ class TenantViewSet(viewsets.ModelViewSet):
     CORE_MODULES = {'accounting', 'settings', 'dashboard'}
 
     def _user_is_tenant_admin(self, user, tenant):
-        from .membership_models import UserTenantMembership
+        from .utils import is_tenant_admin
 
-        membership = UserTenantMembership.objects.filter(user=user, tenant=tenant).first()
-        return (
-            tenant.created_by_id == user.id
-            or (membership and membership.role == 'admin')
-            or user.role == 'admin'
-        )
+        return is_tenant_admin(user, tenant)
 
     def _validate_module_name(self, module_name):
         from core_backend.platform_constants import AVAILABLE_MODULES
@@ -68,12 +63,6 @@ class TenantViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAuthenticated]
     lookup_field = 'slug'
     
-    def get_permissions(self):
-        """Allow unauthenticated access to create action only"""
-        if self.action == 'create':
-            return [AllowAny()]
-        return super().get_permissions()
-    
     def get_serializer_class(self):
         """Use different serializer for create action"""
         if self.action == 'create':
@@ -108,20 +97,20 @@ class TenantViewSet(viewsets.ModelViewSet):
         return Response(serializer.data)
     
     def perform_create(self, serializer):
-        """Associate the created tenant with the current user if authenticated"""
-        # Import here to avoid circular import
+        """Associate the created tenant with the current user."""
+        from rest_framework.exceptions import PermissionDenied
         from .membership_models import UserTenantMembership
         from users.permission_models import initialize_tenant_permissions
         from billing.services import ensure_subscription
         from billing.account_limits import assert_user_can_create_org
 
-        if self.request.user.is_authenticated:
-            assert_user_can_create_org(self.request.user)
-        
-        # Save tenant with created_by field and created_from_registration=False
+        if not self.request.user.is_authenticated:
+            raise PermissionDenied('Authentication required to create an organization')
+
+        assert_user_can_create_org(self.request.user)
         tenant = serializer.save(
-            created_by=self.request.user if self.request.user.is_authenticated else None,
-            created_from_registration=False  # Explicitly created tenant
+            created_by=self.request.user,
+            created_from_registration=False,
         )
 
         ensure_subscription(tenant)
@@ -216,8 +205,9 @@ class TenantViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_404_NOT_FOUND
             )
         
-        # Verify user has access to this tenant
-        if request.user.tenant != tenant:
+        from .utils import user_has_tenant_access
+
+        if not user_has_tenant_access(request.user, tenant):
             return Response(
                 {'error': 'You do not have access to this workspace'},
                 status=status.HTTP_403_FORBIDDEN
@@ -296,6 +286,9 @@ class TenantViewSet(viewsets.ModelViewSet):
             return Response({'error': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
 
         tenant.activate_module(module_name)
+        from users.audit_utils import audit_log
+
+        audit_log(request, 'update', 'settings', f'Activated module: {module_name}', tenant=tenant)
         serializer = self.get_serializer(tenant)
         return Response(serializer.data)
     
@@ -326,6 +319,9 @@ class TenantViewSet(viewsets.ModelViewSet):
             )
 
         tenant.deactivate_module(module_name)
+        from users.audit_utils import audit_log
+
+        audit_log(request, 'update', 'settings', f'Deactivated module: {module_name}', tenant=tenant)
         serializer = self.get_serializer(tenant)
         return Response(serializer.data)
     
@@ -359,18 +355,10 @@ class TenantViewSet(viewsets.ModelViewSet):
             )
 
         tenant = request.user.tenant
-        from .membership_models import UserTenantMembership
+        from .utils import is_tenant_admin
         from rest_framework.exceptions import PermissionDenied
 
-        membership = UserTenantMembership.objects.filter(
-            user=request.user, tenant=tenant
-        ).first()
-        is_admin = (
-            tenant.created_by_id == request.user.id
-            or (membership and membership.role == 'admin')
-            or request.user.role == 'admin'
-        )
-        if not is_admin:
+        if not is_tenant_admin(request.user, tenant):
             raise PermissionDenied('Only organization admins can update settings')
 
         allowed_fields = [
@@ -384,6 +372,16 @@ class TenantViewSet(viewsets.ModelViewSet):
         serializer.is_valid(raise_exception=True)
         serializer.save()
 
+        from users.audit_utils import audit_log
+
+        audit_log(
+            request,
+            'update',
+            'settings',
+            f'Updated organization settings for {tenant.name}',
+            tenant=tenant,
+        )
+
         return Response(serializer.data)
 
 
@@ -395,9 +393,12 @@ class OrganizationInvitationViewSet(viewsets.ModelViewSet):
     """
     serializer_class = OrganizationInvitationSerializer
     permission_classes = [IsAuthenticated]
+    http_method_names = ['get', 'post', 'head', 'options']
     
     def get_queryset(self):
         """Invitations received by the user (by account or email) plus org-sent for admins."""
+        from .utils import get_request_tenant, is_tenant_admin
+
         user = self.request.user
         email = (user.email or '').strip().lower()
 
@@ -405,8 +406,9 @@ class OrganizationInvitationViewSet(viewsets.ModelViewSet):
             Q(invited_user=user) | Q(invited_email__iexact=email)
         )
 
-        if user.tenant and user.is_admin:
-            sent = OrganizationInvitation.objects.filter(tenant=user.tenant)
+        tenant = get_request_tenant(user)
+        if tenant and is_tenant_admin(user, tenant):
+            sent = OrganizationInvitation.objects.filter(tenant=tenant)
             return (received | sent).distinct()
 
         return received.distinct()
@@ -425,6 +427,17 @@ class OrganizationInvitationViewSet(viewsets.ModelViewSet):
             raise PermissionDenied("You do not have permission to invite users")
 
         serializer.save(tenant=user.tenant, invited_by=user)
+
+        from users.audit_utils import audit_log
+
+        invitation = serializer.instance
+        audit_log(
+            self.request,
+            'create',
+            'settings',
+            f'Invited {invitation.invited_email} as {invitation.role}',
+            metadata={'invitation_id': invitation.id, 'role': invitation.role},
+        )
 
     @extend_schema(
         request=InvitationResponseSerializer,

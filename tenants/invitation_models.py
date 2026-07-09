@@ -161,7 +161,8 @@ class OrganizationInvitation(models.Model):
 
         if existing_membership:
             existing_membership.role = self.role
-            existing_membership.save(update_fields=['role', 'updated_at'])
+            existing_membership.is_active = True
+            existing_membership.save(update_fields=['role', 'is_active', 'updated_at'])
         else:
             UserTenantMembership.objects.create(
                 user=accepting_user,

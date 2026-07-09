@@ -194,6 +194,11 @@ class OrganizationInvitationSerializer(serializers.ModelSerializer):
                 'invited_user_email': 'Email address is required',
             })
 
+        role = data.get('role', 'viewer')
+        if request and request.user and self.instance is None:
+            from users.role_guards import assert_user_can_assign_role
+            data['role'] = assert_user_can_assign_role(request.user, role)
+
         tenant = request.user.tenant if request and request.user else None
         if not tenant:
             raise serializers.ValidationError({

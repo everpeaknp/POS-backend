@@ -34,3 +34,17 @@ def user_has_tenant_access(user, tenant):
 
     # Legacy: primary tenant with no membership row
     return user.tenant_id == tenant.id
+
+
+def is_tenant_admin(user, tenant) -> bool:
+    """True when the user is admin of the specific tenant (not global account role)."""
+    if not user or not tenant:
+        return False
+    if is_tenant_super_admin(user, tenant):
+        return True
+    membership = UserTenantMembership.objects.filter(
+        user=user,
+        tenant=tenant,
+        is_active=True,
+    ).first()
+    return membership is not None and membership.role == 'admin'

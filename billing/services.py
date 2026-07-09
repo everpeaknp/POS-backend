@@ -22,6 +22,7 @@ from billing.account_limits import (
     get_allowed_modules_for_plan,
     get_tenant_allowed_modules,
     get_user_account_plan_code,
+    normalize_active_modules_for_plan,
 )
 from billing.esewa_config import get_esewa_config
 
@@ -193,7 +194,10 @@ def apply_account_plan_to_owned_orgs(user, plan_code: str) -> None:
         subscription.save()
 
         tenant.plan_type = plan['plan_type']
-        tenant.active_modules = plan['modules']
+        tenant.active_modules = normalize_active_modules_for_plan(
+            plan_code,
+            tenant.active_modules or list(plan.get('modules') or []),
+        )
         tenant.is_active = True
         tenant.save(update_fields=['plan_type', 'active_modules', 'is_active', 'updated_at'])
 
@@ -259,8 +263,9 @@ def billing_overview(tenant, user) -> dict:
         ],
         'payments': [_serialize_payment_record(p) for p in payments],
         'esewa_enabled': get_esewa_config().enabled,
-        'can_manage_billing': True,
-        'can_upgrade_account': True,
+        'can_manage_billing': _user_owns_any_organization(user)
+        or bool(tenant and _user_can_manage_billing(user, tenant)),
+        'can_upgrade_account': _user_owns_any_organization(user),
         'billing_scope': 'account',
         'member_organization': None,
         'allowed_modules': get_allowed_modules_for_plan(current_plan_code),
@@ -495,7 +500,10 @@ def admin_reverify_payment(payment: BillingPayment) -> str:
             subscription.save()
 
             payment.tenant.plan_type = plan['plan_type']
-            payment.tenant.active_modules = plan['modules']
+            payment.tenant.active_modules = normalize_active_modules_for_plan(
+                payment.plan_code,
+                payment.tenant.active_modules or list(plan.get('modules') or []),
+            )
             payment.tenant.is_active = True
             payment.tenant.save(update_fields=['plan_type', 'active_modules', 'is_active', 'updated_at'])
         return f'Payment verified and plan activated ({plan["name"]})'

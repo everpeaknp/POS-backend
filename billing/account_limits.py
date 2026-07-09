@@ -152,14 +152,25 @@ def get_tenant_allowed_modules(tenant) -> list[str]:
 
 
 def count_tenant_members(tenant) -> int:
-    """Distinct users assigned to a tenant via membership or primary tenant."""
+    """Distinct active users assigned to a tenant via membership or primary tenant."""
     from tenants.membership_models import UserTenantMembership
     from users.models import User
 
-    member_ids = set(
-        UserTenantMembership.objects.filter(tenant=tenant).values_list('user_id', flat=True)
+    inactive_member_ids = set(
+        UserTenantMembership.objects.filter(tenant=tenant, is_active=False).values_list(
+            'user_id', flat=True
+        )
     )
-    primary_ids = set(User.objects.filter(tenant=tenant).values_list('id', flat=True))
+    member_ids = set(
+        UserTenantMembership.objects.filter(tenant=tenant, is_active=True).values_list(
+            'user_id', flat=True
+        )
+    )
+    primary_ids = set(
+        User.objects.filter(tenant=tenant)
+        .exclude(id__in=inactive_member_ids)
+        .values_list('id', flat=True)
+    )
     return len(member_ids | primary_ids)
 
 

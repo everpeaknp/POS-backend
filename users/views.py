@@ -16,7 +16,13 @@ from .serializers import (
     NotificationPreferencesSerializer, SessionSerializer, PrivacyPreferencesSerializer,
     AccountDeleteSerializer, GoogleAuthSerializer,
 )
-from .permissions import IsAdminOrManager
+from .permissions import (
+    IsAdminOrManager,
+    CanEditTenantSettings,
+    CanConfigurePermissions,
+    CanViewTenantSettings,
+    CanViewAuditLogs,
+)
 
 
 @extend_schema(
@@ -141,33 +147,49 @@ class UserViewSet(viewsets.ModelViewSet):
     
     def get_queryset(self):
         """Filter by current tenant - includes both direct tenant and membership"""
-        if not self.request.user.tenant:
-            return User.objects.none()
-        
-        # Get users who are either:
-        # 1. Directly assigned to this tenant (User.tenant)
-        # 2. Members of this tenant through UserTenantMembership
+        from tenants.utils import get_request_tenant
         from tenants.membership_models import UserTenantMembership
-        
-        # Get user IDs from memberships
+
+        tenant = get_request_tenant(self.request.user)
+        if not tenant:
+            return User.objects.none()
+
         member_user_ids = UserTenantMembership.objects.filter(
-            tenant=self.request.user.tenant
+            tenant=tenant
         ).values_list('user_id', flat=True)
-        
-        # Return users who are either directly assigned OR members
+
         return User.objects.filter(
-            models.Q(tenant=self.request.user.tenant) | 
+            models.Q(tenant=tenant) |
             models.Q(id__in=member_user_ids)
         ).distinct()
     
     def perform_create(self, serializer):
         """Assign user to current tenant when creating"""
-        if not self.request.user.tenant:
+        from tenants.membership_models import UserTenantMembership
+        from tenants.utils import get_request_tenant
+        from users.audit_utils import audit_log
+
+        tenant = get_request_tenant(self.request.user)
+        if not tenant:
             from rest_framework.exceptions import ValidationError
             raise ValidationError({'detail': 'You must be assigned to an organization to create users.'})
         from billing.account_limits import assert_tenant_can_add_user
-        assert_tenant_can_add_user(self.request.user.tenant)
-        serializer.save(tenant=self.request.user.tenant)
+        assert_tenant_can_add_user(tenant)
+        user = serializer.save(tenant=tenant)
+        role = user.role or 'viewer'
+        UserTenantMembership.objects.update_or_create(
+            user=user,
+            tenant=tenant,
+            defaults={'role': role, 'is_active': True},
+        )
+        audit_log(
+            self.request,
+            'create',
+            'settings',
+            f'Created user {user.email} with role {role}',
+            metadata={'user_id': user.id, 'role': role},
+            tenant=tenant,
+        )
 
     def perform_update(self, serializer):
         """Protect Super Admin; prevent self-disable; otherwise apply updates."""
@@ -195,12 +217,24 @@ class UserViewSet(viewsets.ModelViewSet):
         ):
             raise ValidationError({'detail': 'You cannot disable your own access to this organization.'})
         serializer.save()
+        from users.audit_utils import audit_log
+
+        if tenant and (next_active is not None or next_role is not None):
+            audit_log(
+                self.request,
+                'update',
+                'settings',
+                f'Updated user {instance.email}',
+                metadata={'user_id': instance.id, 'role': next_role, 'is_active': next_active},
+                tenant=tenant,
+            )
     
     def perform_destroy(self, instance):
         """Remove user from the current organization without deleting their account."""
         from rest_framework.exceptions import ValidationError
         from tenants.membership_models import UserTenantMembership
         from tenants.utils import get_request_tenant, is_tenant_super_admin
+        from users.audit_utils import audit_log
 
         tenant = get_request_tenant(self.request.user)
         if not tenant:
@@ -229,9 +263,20 @@ class UserViewSet(viewsets.ModelViewSet):
                 instance.tenant = None
                 instance.role = 'viewer'
             instance.save(update_fields=['tenant', 'role'])
+
+        audit_log(
+            self.request,
+            'delete',
+            'settings',
+            f'Removed user {instance.email} from organization',
+            metadata={'user_id': instance.id},
+            tenant=tenant,
+        )
     
     def get_permissions(self):
-        """Settings edit permission required to create/update/remove users"""
+        """Settings permissions for user management"""
+        if self.action in ['list', 'retrieve']:
+            return [permissions.IsAuthenticated(), CanViewTenantSettings()]
         if self.action in ['create', 'update', 'partial_update', 'destroy']:
             return [permissions.IsAuthenticated(), CanEditTenantSettings()]
         return super().get_permissions()
@@ -297,7 +342,7 @@ class AuditLogViewSet(viewsets.ReadOnlyModelViewSet):
     Only admins and managers can view audit logs
     """
     serializer_class = AuditLogSerializer
-    permission_classes = [permissions.IsAuthenticated, IsAdminOrManager]
+    permission_classes = [permissions.IsAuthenticated, CanViewAuditLogs]
     filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
     filterset_fields = ['action', 'module', 'user']
     search_fields = ['description', 'user__username', 'user__first_name', 'user__last_name']
@@ -306,9 +351,12 @@ class AuditLogViewSet(viewsets.ReadOnlyModelViewSet):
     
     def get_queryset(self):
         """Filter by current tenant"""
-        if not self.request.user.tenant:
+        from tenants.utils import get_request_tenant
+
+        tenant = get_request_tenant(self.request.user)
+        if not tenant:
             return AuditLog.objects.none()
-        return AuditLog.objects.filter(tenant=self.request.user.tenant).select_related('user')
+        return AuditLog.objects.filter(tenant=tenant).select_related('user')
 
 
 
@@ -316,7 +364,6 @@ from rest_framework.decorators import api_view, permission_classes
 from rest_framework import permissions as drf_permissions
 from .permission_models import RolePermission, get_default_permissions, initialize_tenant_permissions, sync_tenant_permissions
 from .serializers import PermissionsMatrixSerializer, UpdatePermissionsSerializer
-from .permissions import IsAdminOrManager, CanEditTenantSettings, CanConfigurePermissions
 from tenants.utils import get_request_tenant
 
 ROLE_DISPLAY_MAP = {
@@ -894,6 +941,17 @@ def update_permissions(request):
     else:
         if last_error:
             raise last_error
+
+    from users.audit_utils import audit_log
+
+    audit_log(
+        request,
+        'update',
+        'settings',
+        'Updated role permissions matrix',
+        metadata={'updated_count': total_updated},
+        tenant=tenant,
+    )
 
     return Response(
         {
