@@ -28,7 +28,24 @@
     box-shadow: 0 1px 3px rgba(0,0,0,.04);
   }
   .chart-card h3 { font-size: 0.95rem; font-weight: 700; color: #0f172a; margin: 0 0 1rem; }
-  .chart-wrap { position: relative; height: 260px; }
+  /* Bootstrap/Jazzmin set canvas { height: auto }, which collapses Chart.js */
+  .chart-wrap {
+    position: relative;
+    width: 100%;
+    height: 260px;
+    min-height: 260px;
+  }
+  .chart-wrap canvas {
+    display: block !important;
+    width: 100% !important;
+    height: 100% !important;
+    max-width: none !important;
+    max-height: none !important;
+  }
+  .chart-empty {
+    height: 260px; display: flex; align-items: center; justify-content: center;
+    color: #94a3b8; font-size: 0.85rem; text-align: center; padding: 1rem;
+  }
   .tables-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
   @media (max-width: 900px) { .tables-grid { grid-template-columns: 1fr; } }
   .data-table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
@@ -182,92 +199,168 @@
   </div>
 </div>
 
-{{ charts_json|json_script:"platform-charts" }}
+{{ charts|json_script:"platform-charts" }}
 {% endblock %}
 
 {% block extrajs %}
 {{ block.super }}
-<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<script src="{% static 'vendor/chartjs/chart.umd.min.js' %}"></script>
 <script>
 (function () {
-  const charts = JSON.parse(document.getElementById('platform-charts').textContent);
-  const green = '#22c55e';
-  const greenLight = 'rgba(34, 197, 94, 0.15)';
-  const palette = ['#22c55e', '#3b82f6', '#8b5cf6', '#f59e0b', '#ef4444', '#06b6d4', '#ec4899', '#64748b'];
-
-  Chart.defaults.font.family = "'Inter', system-ui, sans-serif";
-  Chart.defaults.color = '#64748b';
-
-  function lineChart(id, labels, values, label) {
-    new Chart(document.getElementById(id), {
-      type: 'line',
-      data: {
-        labels,
-        datasets: [{
-          label,
-          data: values,
-          borderColor: green,
-          backgroundColor: greenLight,
-          fill: true,
-          tension: 0.35,
-          pointRadius: 2,
-          pointHoverRadius: 5,
-        }],
-      },
-      options: {
-        responsive: true,
-        maintainAspectRatio: false,
-        plugins: { legend: { display: false } },
-        scales: {
-          x: { grid: { display: false }, ticks: { maxTicksLimit: 8, font: { size: 10 } } },
-          y: { beginAtZero: true, grid: { color: '#f1f5f9' } },
-        },
-      },
-    });
+  function showEmpty(id, message) {
+    var canvas = document.getElementById(id);
+    if (!canvas || !canvas.parentNode) return;
+    canvas.parentNode.innerHTML = '<div class="chart-empty">' + message + '</div>';
   }
 
-  function doughnut(id, labels, values) {
-    new Chart(document.getElementById(id), {
-      type: 'doughnut',
-      data: {
-        labels,
-        datasets: [{ data: values, backgroundColor: palette.slice(0, labels.length), borderWidth: 0 }],
-      },
-      options: {
-        responsive: true,
-        maintainAspectRatio: false,
-        cutout: '62%',
-        plugins: { legend: { position: 'bottom', labels: { boxWidth: 10, padding: 12, font: { size: 11 } } } },
-      },
-    });
+  function getCanvas(id) {
+    var canvas = document.getElementById(id);
+    if (!canvas) return null;
+    var wrap = canvas.parentNode;
+    if (wrap) {
+      wrap.style.height = '260px';
+      wrap.style.minHeight = '260px';
+      wrap.style.position = 'relative';
+    }
+    canvas.style.display = 'block';
+    canvas.style.width = '100%';
+    canvas.style.height = '100%';
+    canvas.removeAttribute('height');
+    canvas.removeAttribute('width');
+    return canvas;
   }
 
-  function barH(id, labels, values) {
-    new Chart(document.getElementById(id), {
-      type: 'bar',
-      data: {
-        labels,
-        datasets: [{ data: values, backgroundColor: green, borderRadius: 6, barThickness: 18 }],
-      },
-      options: {
-        indexAxis: 'y',
-        responsive: true,
-        maintainAspectRatio: false,
-        plugins: { legend: { display: false } },
-        scales: {
-          x: { beginAtZero: true, grid: { color: '#f1f5f9' } },
-          y: { grid: { display: false } },
-        },
-      },
-    });
+  function initCharts() {
+    if (typeof Chart === 'undefined') {
+      ['chartSignups', 'chartRevenue', 'chartSubStatus', 'chartSubPlan', 'chartModules', 'chartBiz']
+        .forEach(function (id) { showEmpty(id, 'Chart library failed to load. Hard-refresh the page.'); });
+      return;
+    }
+
+    var el = document.getElementById('platform-charts');
+    if (!el) return;
+
+    var charts;
+    try {
+      charts = JSON.parse(el.textContent);
+    } catch (err) {
+      console.error('Platform charts JSON failed', err);
+      return;
+    }
+
+    var green = '#22c55e';
+    var greenLight = 'rgba(34, 197, 94, 0.15)';
+    var palette = ['#22c55e', '#3b82f6', '#8b5cf6', '#f59e0b', '#ef4444', '#06b6d4', '#ec4899', '#64748b'];
+
+    Chart.defaults.font.family = "system-ui, sans-serif";
+    Chart.defaults.color = '#64748b';
+
+    function lineChart(id, labels, values, label) {
+      var canvas = getCanvas(id);
+      if (!canvas) return;
+      try {
+        new Chart(canvas, {
+          type: 'line',
+          data: {
+            labels: labels,
+            datasets: [{
+              label: label,
+              data: values,
+              borderColor: green,
+              backgroundColor: greenLight,
+              fill: true,
+              tension: 0.35,
+              pointRadius: 2,
+              pointHoverRadius: 5,
+            }],
+          },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: { legend: { display: false } },
+            scales: {
+              x: { grid: { display: false }, ticks: { maxTicksLimit: 8, font: { size: 10 } } },
+              y: { beginAtZero: true, grid: { color: '#f1f5f9' } },
+            },
+          },
+        });
+      } catch (err) {
+        console.error(id, err);
+        showEmpty(id, 'Could not render chart');
+      }
+    }
+
+    function doughnut(id, labels, values, emptyMessage) {
+      if (!labels || !labels.length) {
+        showEmpty(id, emptyMessage || 'No data yet');
+        return;
+      }
+      var canvas = getCanvas(id);
+      if (!canvas) return;
+      try {
+        new Chart(canvas, {
+          type: 'doughnut',
+          data: {
+            labels: labels,
+            datasets: [{ data: values, backgroundColor: palette.slice(0, labels.length), borderWidth: 0 }],
+          },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            cutout: '62%',
+            plugins: { legend: { position: 'bottom', labels: { boxWidth: 10, padding: 12, font: { size: 11 } } } },
+          },
+        });
+      } catch (err) {
+        console.error(id, err);
+        showEmpty(id, 'Could not render chart');
+      }
+    }
+
+    function barH(id, labels, values, emptyMessage) {
+      if (!labels || !labels.length) {
+        showEmpty(id, emptyMessage || 'No data yet');
+        return;
+      }
+      var canvas = getCanvas(id);
+      if (!canvas) return;
+      try {
+        new Chart(canvas, {
+          type: 'bar',
+          data: {
+            labels: labels,
+            datasets: [{ data: values, backgroundColor: green, borderRadius: 6, barThickness: 18 }],
+          },
+          options: {
+            indexAxis: 'y',
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: { legend: { display: false } },
+            scales: {
+              x: { beginAtZero: true, grid: { color: '#f1f5f9' } },
+              y: { grid: { display: false } },
+            },
+          },
+        });
+      } catch (err) {
+        console.error(id, err);
+        showEmpty(id, 'Could not render chart');
+      }
+    }
+
+    lineChart('chartSignups', charts.signups.labels, charts.signups.values, 'Signups');
+    lineChart('chartRevenue', charts.revenue.labels, charts.revenue.values, 'Revenue (NPR)');
+    doughnut('chartSubStatus', charts.subscriptions_status.labels, charts.subscriptions_status.values, 'No subscriptions yet');
+    doughnut('chartSubPlan', charts.subscriptions_plan.labels, charts.subscriptions_plan.values, 'No plan data yet');
+    barH('chartModules', charts.modules.labels, charts.modules.values, 'No module adoption yet');
+    doughnut('chartBiz', charts.business_types.labels, charts.business_types.values, 'No business types yet');
   }
 
-  lineChart('chartSignups', charts.signups.labels, charts.signups.values, 'Signups');
-  lineChart('chartRevenue', charts.revenue.labels, charts.revenue.values, 'Revenue (NPR)');
-  doughnut('chartSubStatus', charts.subscriptions_status.labels, charts.subscriptions_status.values);
-  doughnut('chartSubPlan', charts.subscriptions_plan.labels, charts.subscriptions_plan.values);
-  if (charts.modules.labels.length) barH('chartModules', charts.modules.labels, charts.modules.values);
-  if (charts.business_types.labels.length) doughnut('chartBiz', charts.business_types.labels, charts.business_types.values);
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', initCharts);
+  } else {
+    initCharts();
+  }
 })();
 </script>
 {% endblock %}

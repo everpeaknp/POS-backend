@@ -1,5 +1,3 @@
-import json
-
 from django.contrib import messages
 from django.shortcuts import redirect
 
@@ -24,5 +22,5 @@ def platform_dashboard(request):
         'title': 'Platform Analytics',
         'subtitle': 'Organizations, billing, users, and email delivery',
         'stats': stats,
-        'charts_json': json.dumps(stats['charts']),
+        'charts': stats['charts'],
     })
