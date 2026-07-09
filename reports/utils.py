@@ -13,7 +13,7 @@ from accounting.models import Account, JournalLine, TaxRule, VATReturn
 from accounting.utils import calculate_vat_for_period
 from construction.models import Attendance, MaterialConsumption, Site
 from inventory.models import Product, Stock
-from purchase.models import PurchaseInvoice, Supplier
+from purchase.models import PurchaseInvoice
 from sales.models import Customer, Invoice, SalesOrder
 
 
@@ -61,14 +61,25 @@ def _iter_months(from_date: date, to_date: date):
             current = current.replace(month=current.month + 1, day=1)
 
 
+def _sum_purchase_payables(tenant) -> Decimal:
+    """Outstanding supplier balances from unpaid purchase invoices."""
+    return PurchaseInvoice.objects.filter(
+        tenant=tenant,
+        status__in=['Received', 'Partially Paid', 'Overdue'],
+    ).aggregate(
+        total=Coalesce(
+            Sum(F('amount') - F('paid_amount'), output_field=DecimalField()),
+            Value(Decimal('0.00')),
+        )
+    )['total']
+
+
 def build_dashboard_financials(tenant, from_date: date, to_date: date, *, include_construction: bool):
     total_receivables = Customer.objects.filter(tenant=tenant).aggregate(
         total=Coalesce(Sum('current_balance'), Value(Decimal('0.00')))
     )['total']
 
-    total_payables = Supplier.objects.filter(tenant=tenant).aggregate(
-        total=Coalesce(Sum('current_balance'), Value(Decimal('0.00')))
-    )['total']
+    total_payables = _sum_purchase_payables(tenant)
 
     invoice_qs = Invoice.objects.filter(
         tenant=tenant,

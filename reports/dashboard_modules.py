@@ -3,7 +3,7 @@ Build unified main-dashboard payloads keyed by enabled tenant modules.
 """
 from decimal import Decimal
 
-from django.db.models import Avg, Count, F, Q, Sum, Value
+from django.db.models import Avg, Count, DecimalField, F, Q, Sum, Value
 from django.db.models.functions import Coalesce
 from django.utils import timezone
 
@@ -340,10 +340,16 @@ def _build_accounting_module(tenant):
     )['total'] or Decimal('0')
 
     try:
-        from purchase.models import Supplier
+        from purchase.models import PurchaseInvoice
 
-        payables = Supplier.objects.filter(tenant=tenant).aggregate(
-            total=Coalesce(Sum('current_balance'), Value(Decimal('0.00')))
+        payables = PurchaseInvoice.objects.filter(
+            tenant=tenant,
+            status__in=['Received', 'Partially Paid', 'Overdue'],
+        ).aggregate(
+            total=Coalesce(
+                Sum(F('amount') - F('paid_amount'), output_field=DecimalField()),
+                Value(Decimal('0.00')),
+            )
         )['total'] or Decimal('0')
     except Exception:
         payables = Decimal('0')

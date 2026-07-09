@@ -1,8 +1,32 @@
 from datetime import date
 from rest_framework import serializers
+from tenants.utils import get_request_tenant
 from .models import Department, Employee, Attendance, LeaveType, LeaveRequest, Payroll
 
 MIN_EMPLOYEE_AGE = 18
+
+
+def tenant_filtered_queryset(model, request):
+    """Scope FK querysets to the request tenant (bypasses thread-local TenantManager)."""
+    if not request or not getattr(request, 'user', None) or not request.user.is_authenticated:
+        return model._base_manager.none()
+    tenant = get_request_tenant(request.user)
+    if not tenant:
+        return model._base_manager.none()
+    return model._base_manager.filter(tenant=tenant)
+
+
+class TenantScopedFkSerializerMixin:
+    """Bind tenant-scoped FK fields for create/update serializers."""
+
+    tenant_scoped_fk_fields = ()
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        request = self.context.get('request')
+        for field_name, model in self.tenant_scoped_fk_fields:
+            if field_name in self.fields:
+                self.fields[field_name].queryset = tenant_filtered_queryset(model, request)
 
 
 def validate_minimum_employee_age(dob: date, min_age: int = MIN_EMPLOYEE_AGE) -> None:
@@ -14,10 +38,11 @@ def validate_minimum_employee_age(dob: date, min_age: int = MIN_EMPLOYEE_AGE) ->
         )
 
 
-class DepartmentSerializer(serializers.ModelSerializer):
+class DepartmentSerializer(TenantScopedFkSerializerMixin, serializers.ModelSerializer):
     employee_count = serializers.ReadOnlyField()
     head_name = serializers.CharField(source='head.name', read_only=True)
-    
+    tenant_scoped_fk_fields = (('head', Employee),)
+
     class Meta:
         model = Department
         fields = [
@@ -50,7 +75,9 @@ class EmployeeSerializer(serializers.ModelSerializer):
         read_only_fields = ['id', 'created_at', 'updated_at']
 
 
-class EmployeeCreateSerializer(serializers.ModelSerializer):
+class EmployeeCreateSerializer(TenantScopedFkSerializerMixin, serializers.ModelSerializer):
+    tenant_scoped_fk_fields = (('department', Department),)
+
     def validate_dob(self, value):
         validate_minimum_employee_age(value)
         return value

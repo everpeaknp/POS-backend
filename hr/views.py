@@ -29,6 +29,14 @@ def _current_bs_year() -> int:
     return current_bs_year()
 
 
+def _tenant_queryset(model, user):
+    """Return a queryset scoped to the user's active organization."""
+    tenant = get_request_tenant(user)
+    if not tenant:
+        return model._base_manager.none()
+    return model._base_manager.filter(tenant=tenant)
+
+
 @extend_schema_view(
     list=extend_schema(description="List all departments for the current tenant", tags=["HR - Departments"]),
     retrieve=extend_schema(description="Get department details", tags=["HR - Departments"]),
@@ -48,11 +56,11 @@ class DepartmentViewSet(viewsets.ModelViewSet):
     
     def get_queryset(self):
         """Filter by current tenant"""
-        return Department.objects.filter(tenant=self.request.user.tenant)
+        return _tenant_queryset(Department, self.request.user)
     
     def perform_create(self, serializer):
         """Set tenant when creating department"""
-        serializer.save(tenant=self.request.user.tenant)
+        serializer.save(tenant=get_request_tenant(self.request.user))
 
     def destroy(self, request, *args, **kwargs):
         department = self.get_object()
@@ -96,7 +104,7 @@ class EmployeeViewSet(viewsets.ModelViewSet):
     
     def get_queryset(self):
         """Filter by current tenant"""
-        return Employee.objects.filter(tenant=self.request.user.tenant).select_related('department', 'user')
+        return _tenant_queryset(Employee, self.request.user).select_related('department', 'user')
     
     def get_serializer_class(self):
         if self.action in ['create', 'update', 'partial_update']:
@@ -105,7 +113,7 @@ class EmployeeViewSet(viewsets.ModelViewSet):
     
     def perform_create(self, serializer):
         """Set tenant when creating employee"""
-        serializer.save(tenant=self.request.user.tenant)
+        serializer.save(tenant=get_request_tenant(self.request.user))
 
     def destroy(self, request, *args, **kwargs):
         """Deactivate employee instead of hard delete to preserve payroll history."""
@@ -401,6 +409,43 @@ class LeaveTypeViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST,
             )
         return super().destroy(request, *args, **kwargs)
+
+    @extend_schema(
+        description='Create default leave types for the tenant if missing',
+        tags=['HR - Leave'],
+    )
+    @action(detail=False, methods=['post'], url_path='setup-defaults')
+    def setup_defaults(self, request):
+        tenant = request.user.tenant
+        defaults = [
+            {
+                'name': 'Annual Leave',
+                'days_allowed': 18,
+                'is_paid': True,
+                'description': 'Paid annual leave',
+            },
+            {
+                'name': 'Sick Leave',
+                'days_allowed': 12,
+                'is_paid': True,
+                'description': 'Medical or sick leave',
+            },
+            {
+                'name': 'Casual Leave',
+                'days_allowed': 6,
+                'is_paid': True,
+                'description': 'Short personal leave',
+            },
+        ]
+        for item in defaults:
+            LeaveType.objects.get_or_create(
+                tenant=tenant,
+                name=item['name'],
+                defaults=item,
+            )
+        queryset = LeaveType.objects.filter(tenant=tenant).order_by('name')
+        serializer = self.get_serializer(queryset, many=True)
+        return Response(serializer.data)
 
 
 @extend_schema_view(

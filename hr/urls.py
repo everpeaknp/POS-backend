@@ -23,6 +23,7 @@ urlpatterns = [
     
     # Leave Types
     path('leave-types/', LeaveTypeViewSet.as_view({'get': 'list', 'post': 'create'}), name='leavetype-list'),
+    path('leave-types/setup-defaults/', LeaveTypeViewSet.as_view({'post': 'setup_defaults'}), name='leavetype-setup-defaults'),
     path('leave-types/<int:pk>/', LeaveTypeViewSet.as_view({'get': 'retrieve', 'put': 'update', 'patch': 'partial_update', 'delete': 'destroy'}), name='leavetype-detail'),
     
     # Leave Requests
