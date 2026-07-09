@@ -26,6 +26,7 @@ urlpatterns = [
     path('bank-accounts/', BankAccountViewSet.as_view({'get': 'list', 'post': 'create'}), name='bank-account-list'),
     path('bank-accounts/<int:pk>/', BankAccountViewSet.as_view({'get': 'retrieve', 'put': 'update', 'patch': 'partial_update', 'delete': 'destroy'}), name='bank-account-detail'),
     path('bank-accounts/<int:pk>/statement/', BankAccountViewSet.as_view({'get': 'statement'}), name='bank-account-statement'),
+    path('bank-accounts/<int:pk>/complete-reconciliation/', BankAccountViewSet.as_view({'post': 'complete_reconciliation_action'}), name='bank-account-complete-reconciliation'),
     
     # Bank Transactions
     path('bank-transactions/', BankTransactionViewSet.as_view({'get': 'list', 'post': 'create'}), name='bank-transaction-list'),
@@ -38,6 +39,7 @@ urlpatterns = [
     
     # VAT Returns
     path('vat-returns/', VATReturnViewSet.as_view({'get': 'list', 'post': 'create'}), name='vat-return-list'),
+    path('vat-returns/calculate/', VATReturnViewSet.as_view({'get': 'calculate'}), name='vat-return-calculate'),
     path('vat-returns/<int:pk>/', VATReturnViewSet.as_view({'get': 'retrieve', 'put': 'update', 'patch': 'partial_update', 'delete': 'destroy'}), name='vat-return-detail'),
     path('vat-returns/<int:pk>/file/', VATReturnViewSet.as_view({'post': 'file'}), name='vat-return-file'),
     path('vat-returns/<int:pk>/mark_paid/', VATReturnViewSet.as_view({'post': 'mark_paid'}), name='vat-return-mark-paid'),

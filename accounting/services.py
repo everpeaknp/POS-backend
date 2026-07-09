@@ -55,9 +55,8 @@ def create_journal_entry(tenant, description, entries, reference=None, date=None
                 f"Double-entry bookkeeping violation."
             )
         
-        # Generate entry number
-        import time
-        entry_number = f"JE-{int(time.time() * 1000)}"
+        from accounting.utils import generate_entry_number
+        entry_number = generate_entry_number(tenant)
         
         # Create journal entry
         journal_entry = JournalEntry.objects.create(
@@ -804,12 +803,10 @@ def create_account_opening_balance(account, amount, date, balance_side, tenant):
             {'account': equity, 'debit': amount, 'credit': Decimal('0')},
         ]
 
-    entry = create_journal_entry(
+    return create_journal_entry(
         tenant=tenant,
         description=f"Opening balance for {account.code} - {account.name}",
         entries=entries,
         reference=f"OB-{account.code}",
         date=date,
     )
-    apply_entry_balances(entry)
-    return entry

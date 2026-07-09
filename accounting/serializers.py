@@ -1,6 +1,7 @@
 from rest_framework import serializers
-from .models import Account, JournalEntry, JournalLine, BankAccount, BankTransaction, TaxRule, VATReturn
 from decimal import Decimal
+from .models import Account, JournalEntry, JournalLine, BankAccount, BankTransaction, TaxRule, VATReturn
+from accounting.utils import generate_entry_number
 
 
 class AccountSerializer(serializers.ModelSerializer):
@@ -148,17 +149,7 @@ class JournalEntrySerializer(serializers.ModelSerializer):
         
         # Generate entry number
         tenant = validated_data['tenant']
-        last_entry = JournalEntry.objects.filter(tenant=tenant).order_by('-id').first()
-        if last_entry and last_entry.entry_number.startswith('JE-'):
-            try:
-                last_num = int(last_entry.entry_number.split('-')[1])
-                entry_number = f"JE-{last_num + 1:04d}"
-            except:
-                entry_number = f"JE-0001"
-        else:
-            entry_number = f"JE-0001"
-        
-        validated_data['entry_number'] = entry_number
+        validated_data['entry_number'] = generate_entry_number(tenant)
         validated_data['total_debit'] = total_debit
         validated_data['total_credit'] = total_credit
         

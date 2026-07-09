@@ -8,8 +8,17 @@ from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework.filters import SearchFilter, OrderingFilter
 from drf_spectacular.utils import extend_schema, extend_schema_view, OpenApiParameter
 from django.utils import timezone
+from django.db import transaction
 from django.db.models import Sum, Q, Count
 from decimal import Decimal
+
+from .services import apply_entry_balances
+from .utils import (
+    calculate_vat_for_period,
+    complete_bank_reconciliation,
+    generate_entry_number,
+    record_vat_payment,
+)
 
 from .models import Account, JournalEntry, JournalLine, BankAccount, BankTransaction, TaxRule, VATReturn
 from tenants.utils import get_request_tenant
@@ -555,34 +564,31 @@ class JournalEntryViewSet(viewsets.ModelViewSet):
     def post_entry(self, request, pk=None):
         """Post a journal entry"""
         entry = self.get_object()
-        
+
         if entry.status != 'draft':
             return Response(
                 {'error': 'Only draft entries can be posted'},
-                status=status.HTTP_400_BAD_REQUEST
+                status=status.HTTP_400_BAD_REQUEST,
             )
-        
+
         if entry.total_debit != entry.total_credit:
             return Response(
-                {'error': f'Debits ({entry.total_debit}) must equal credits ({entry.total_credit}) before posting'},
-                status=status.HTTP_400_BAD_REQUEST
+                {
+                    'error': (
+                        f'Debits ({entry.total_debit}) must equal credits '
+                        f'({entry.total_credit}) before posting'
+                    ),
+                },
+                status=status.HTTP_400_BAD_REQUEST,
             )
-        
-        # Update account balances
-        for line in entry.lines.all():
-            account = line.account
-            if account.type in ['Assets', 'Expense']:
-                account.balance += line.debit - line.credit
-            else:  # Liabilities, Equity, Income
-                account.balance += line.credit - line.debit
-            account.save()
-        
-        # Mark as posted
-        entry.status = 'posted'
-        entry.posted_by = request.user
-        entry.posted_date = timezone.now()
-        entry.save()
-        
+
+        with transaction.atomic():
+            apply_entry_balances(entry)
+            entry.status = 'posted'
+            entry.posted_by = request.user
+            entry.posted_date = timezone.now()
+            entry.save(update_fields=['status', 'posted_by', 'posted_date', 'updated_at'])
+
         serializer = self.get_serializer(entry)
         return Response(serializer.data)
     
@@ -595,73 +601,56 @@ class JournalEntryViewSet(viewsets.ModelViewSet):
     def reverse(self, request, pk=None):
         """Reverse a posted journal entry"""
         entry = self.get_object()
-        
+
         if entry.status != 'posted':
             return Response(
                 {'error': 'Only posted entries can be reversed'},
-                status=status.HTTP_400_BAD_REQUEST
+                status=status.HTTP_400_BAD_REQUEST,
             )
-        
-        # Create reversal entry
-        reversal_data = {
-            'date': request.data.get('date', timezone.now().date()),
-            'description': f"Reversal of {entry.entry_number}: {entry.description}",
-            'type': 'Adjustment',
-            'tenant': get_request_tenant(request.user),
-        }
-        
-        reversal_entry = JournalEntry.objects.create(**reversal_data)
-        
-        # Generate entry number
-        last_entry = JournalEntry.objects.filter(tenant=get_request_tenant(request.user)).order_by('-id').first()
-        if last_entry and last_entry.entry_number.startswith('JE-'):
-            try:
-                last_num = int(last_entry.entry_number.split('-')[1])
-                reversal_entry.entry_number = f"JE-{last_num + 1:04d}"
-            except:
-                reversal_entry.entry_number = f"JE-0001"
-        else:
-            reversal_entry.entry_number = f"JE-0001"
-        
-        # Create reversed lines (swap debit/credit)
-        total_debit = Decimal('0.00')
-        total_credit = Decimal('0.00')
-        
-        for line in entry.lines.all():
-            JournalLine.objects.create(
-                journal_entry=reversal_entry,
-                tenant=get_request_tenant(request.user),
-                account=line.account,
-                description=line.description,
-                debit=line.credit,  # Swap
-                credit=line.debit,  # Swap
+
+        tenant = get_request_tenant(request.user)
+
+        with transaction.atomic():
+            reversal_entry = JournalEntry.objects.create(
+                tenant=tenant,
+                entry_number=generate_entry_number(tenant),
+                date=request.data.get('date', timezone.now().date()),
+                description=f"Reversal of {entry.entry_number}: {entry.description}",
+                type='Adjustment',
+                status='posted',
+                posted_by=request.user,
+                posted_date=timezone.now(),
             )
-            total_debit += line.credit
-            total_credit += line.debit
-        
-        reversal_entry.total_debit = total_debit
-        reversal_entry.total_credit = total_credit
-        reversal_entry.status = 'posted'
-        reversal_entry.posted_by = request.user
-        reversal_entry.posted_date = timezone.now()
-        reversal_entry.save()
-        
-        # Update original entry
-        entry.status = 'reversed'
-        entry.reversed_by = request.user
-        entry.reversed_date = timezone.now()
-        entry.reversal_entry = reversal_entry
-        entry.save()
-        
-        # Update account balances
-        for line in reversal_entry.lines.all():
-            account = line.account
-            if account.type in ['Assets', 'Expense']:
-                account.balance += line.debit - line.credit
-            else:
-                account.balance += line.credit - line.debit
-            account.save()
-        
+
+            total_debit = Decimal('0.00')
+            total_credit = Decimal('0.00')
+
+            for line in entry.lines.all():
+                JournalLine.objects.create(
+                    journal_entry=reversal_entry,
+                    tenant=tenant,
+                    account=line.account,
+                    description=line.description,
+                    debit=line.credit,
+                    credit=line.debit,
+                )
+                total_debit += line.credit
+                total_credit += line.debit
+
+            reversal_entry.total_debit = total_debit
+            reversal_entry.total_credit = total_credit
+            reversal_entry.save(update_fields=['total_debit', 'total_credit', 'updated_at'])
+
+            apply_entry_balances(reversal_entry)
+
+            entry.status = 'reversed'
+            entry.reversed_by = request.user
+            entry.reversed_date = timezone.now()
+            entry.reversal_entry = reversal_entry
+            entry.save(update_fields=[
+                'status', 'reversed_by', 'reversed_date', 'reversal_entry', 'updated_at',
+            ])
+
         serializer = self.get_serializer(reversal_entry)
         return Response(serializer.data)
 
@@ -770,6 +759,55 @@ class BankAccountViewSet(viewsets.ModelViewSet):
         
         serializer = BankTransactionSerializer(transactions, many=True)
         return Response(serializer.data)
+
+    def destroy(self, request, *args, **kwargs):
+        """Close bank account when it has transactions; hard-delete only when empty."""
+        bank_account = self.get_object()
+        if bank_account.transactions.exists():
+            bank_account.status = 'closed'
+            bank_account.save(update_fields=['status', 'updated_at'])
+            return Response(status=status.HTTP_204_NO_CONTENT)
+        return super().destroy(request, *args, **kwargs)
+
+    @extend_schema(
+        tags=['Accounting - Bank Accounts'],
+        summary='Complete bank reconciliation',
+        description='Reconcile transactions and post an adjusting journal entry when needed',
+    )
+    @action(detail=True, methods=['post'], url_path='complete-reconciliation')
+    def complete_reconciliation_action(self, request, pk=None):
+        bank_account = self.get_object()
+        tenant = get_request_tenant(request.user)
+        if not tenant:
+            return Response({'detail': 'No active organization.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        statement_balance = request.data.get('statement_balance')
+        if statement_balance is None:
+            return Response(
+                {'error': 'statement_balance is required'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        transaction_ids = request.data.get('transaction_ids', [])
+        if not isinstance(transaction_ids, list):
+            return Response(
+                {'error': 'transaction_ids must be a list'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        result = complete_bank_reconciliation(
+            bank_account,
+            tenant,
+            transaction_ids,
+            Decimal(str(statement_balance)),
+            user=request.user,
+        )
+        bank_account.refresh_from_db()
+        serializer = self.get_serializer(bank_account)
+        return Response({
+            **result,
+            'bank_account': serializer.data,
+        })
 
 
 @extend_schema_view(
@@ -882,6 +920,38 @@ class VATReturnViewSet(viewsets.ModelViewSet):
         if not tenant:
             raise PermissionDenied("No active organization. Please select an organization first.")
         serializer.save(tenant=tenant)
+
+    @extend_schema(
+        tags=['Accounting - VAT Returns'],
+        summary='Calculate VAT from general ledger',
+        description='Returns output tax, input tax, and net payable for a date range from posted journals',
+        parameters=[
+            OpenApiParameter('from_date', type=str, required=True),
+            OpenApiParameter('to_date', type=str, required=True),
+        ],
+    )
+    @action(detail=False, methods=['get'], url_path='calculate')
+    def calculate(self, request):
+        tenant = get_request_tenant(self.request.user)
+        if not tenant:
+            return Response({'detail': 'No active organization.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        from_date = request.query_params.get('from_date')
+        to_date = request.query_params.get('to_date')
+        if not from_date or not to_date:
+            return Response(
+                {'error': 'from_date and to_date are required'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        amounts = calculate_vat_for_period(tenant, from_date, to_date)
+        return Response({
+            'from_date': from_date,
+            'to_date': to_date,
+            'output_tax': float(amounts['output_tax']),
+            'input_tax': float(amounts['input_tax']),
+            'net_payable': float(amounts['net_payable']),
+        })
     
     @extend_schema(
         tags=['Accounting - VAT Returns'],
@@ -925,6 +995,14 @@ class VATReturnViewSet(viewsets.ModelViewSet):
         vat_return.status = 'paid'
         vat_return.paid_date = timezone.now().date()
         vat_return.save()
-        
+
+        try:
+            record_vat_payment(vat_return, get_request_tenant(request.user))
+        except Exception as exc:
+            import logging
+            logging.getLogger(__name__).error(
+                'Failed to post VAT payment GL for %s: %s', vat_return.id, exc
+            )
+
         serializer = self.get_serializer(vat_return)
         return Response(serializer.data)
