@@ -97,10 +97,22 @@ class Site(TenantModel):
             total=Sum('other_expenses')
         )['total']
         return total or Decimal('0.00')
+
+    def get_equipment_cost(self):
+        """Calculate total equipment usage cost"""
+        total = self.equipment_usage_logs.aggregate(
+            total=Sum('cost')
+        )['total']
+        return total or Decimal('0.00')
     
     def get_actual_spend(self):
         """Calculate total actual spend"""
-        return self.get_material_cost() + self.get_labor_cost() + self.get_other_expenses()
+        return (
+            self.get_material_cost()
+            + self.get_labor_cost()
+            + self.get_equipment_cost()
+            + self.get_other_expenses()
+        )
     
     def get_remaining_budget(self):
         """Calculate remaining budget"""
@@ -433,17 +445,78 @@ class MaterialConsumption(TenantModel):
         """
         Auto-calculate total cost and update inventory stock
         """
+        from django.core.exceptions import ValidationError
+        from inventory.models import Stock
+
         # Calculate total cost
         self.total_cost = self.quantity * self.unit_cost
-        
+
         # Check if this is a new record (not an update)
         is_new = self.pk is None
-        
+
+        if is_new:
+            stock = Stock.objects.filter(
+                tenant=self.tenant,
+                product=self.product,
+                warehouse=self.site.warehouse,
+            ).first()
+            available = stock.quantity if stock else Decimal('0.00')
+            if available < self.quantity:
+                raise ValidationError(
+                    f'Insufficient stock for {self.product.name}. '
+                    f'Available: {available}, requested: {self.quantity}'
+                )
+
         super().save(*args, **kwargs)
-        
+
         # Update inventory stock (only for new records)
         if is_new:
             self._update_inventory_stock()
+
+    def delete(self, *args, **kwargs):
+        """Restore inventory and reverse GL when consumption is removed."""
+        from inventory.models import Stock, StockMovement
+        from accounting.services import reverse_material_consumption
+        from django.db import transaction as db_transaction
+
+        with db_transaction.atomic():
+            stock = Stock.objects.filter(
+                tenant=self.tenant,
+                product=self.product,
+                warehouse=self.site.warehouse,
+            ).first()
+            if stock:
+                stock.quantity += self.quantity
+                stock.save()
+
+            StockMovement.objects.create(
+                tenant=self.tenant,
+                product=self.product,
+                warehouse=self.site.warehouse,
+                movement_type='in',
+                quantity=self.quantity,
+                reference_type='construction_consumption_reversal',
+                reference_id=self.id,
+                reason=f'Reversal: material consumption at {self.site.name}',
+                notes=self.notes or '',
+            )
+
+            try:
+                reverse_material_consumption(
+                    site=self.site,
+                    product=self.product,
+                    quantity=self.quantity,
+                    unit_cost=self.unit_cost,
+                    reference=f'MC-{self.id}',
+                    tenant=self.tenant,
+                )
+            except Exception as e:
+                import logging
+                logging.getLogger(__name__).error(
+                    f"Failed to reverse journal entry for material consumption {self.id}: {e}"
+                )
+
+            super().delete(*args, **kwargs)
     
     def _update_inventory_stock(self):
         """

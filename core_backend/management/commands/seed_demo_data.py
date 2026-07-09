@@ -430,7 +430,7 @@ class Command(BaseCommand):
             phone='01-4223344',
             email='info@cityhardware.com.np',
             plan_type='premium',
-            active_modules=['sales', 'inventory', 'accounting']
+            active_modules=['sales', 'inventory', 'accounting', 'hardware']
         )
         self.stdout.write(f'Created tenant: {tenant.name}')
         

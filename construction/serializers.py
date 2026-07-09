@@ -12,6 +12,7 @@ class SiteSerializer(serializers.ModelSerializer):
     # Calculated fields
     material_cost = serializers.SerializerMethodField()
     labor_cost = serializers.SerializerMethodField()
+    equipment_cost = serializers.SerializerMethodField()
     other_expenses = serializers.SerializerMethodField()
     actual_spend = serializers.SerializerMethodField()
     remaining_budget = serializers.SerializerMethodField()
@@ -25,12 +26,12 @@ class SiteSerializer(serializers.ModelSerializer):
             'manager', 'manager_name', 'manager_designation', 'status', 'warehouse', 'warehouse_name',
             'description', 'created_at', 'updated_at',
             # Calculated fields
-            'material_cost', 'labor_cost', 'other_expenses', 'actual_spend',
+            'material_cost', 'labor_cost', 'equipment_cost', 'other_expenses', 'actual_spend',
             'remaining_budget', 'budget_percentage'
         ]
         read_only_fields = [
             'id', 'created_at', 'updated_at', 'manager_name', 'manager_designation', 'warehouse_name',
-            'material_cost', 'labor_cost', 'other_expenses', 'actual_spend',
+            'material_cost', 'labor_cost', 'equipment_cost', 'other_expenses', 'actual_spend',
             'remaining_budget', 'budget_percentage'
         ]
     
@@ -39,6 +40,9 @@ class SiteSerializer(serializers.ModelSerializer):
     
     def get_labor_cost(self, obj):
         return float(obj.get_labor_cost())
+
+    def get_equipment_cost(self, obj):
+        return float(obj.get_equipment_cost())
     
     def get_other_expenses(self, obj):
         return float(obj.get_other_expenses())

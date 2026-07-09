@@ -36,6 +36,32 @@ def _effective_role(user, tenant):
     return role
 
 
+def _hardware_proxy_allowed(tenant, role, module, action):
+    """Hardware vertical uses sales/inventory APIs with hardware role permissions."""
+    if module not in ('sales', 'inventory'):
+        return False
+    if not tenant_has_active_module(tenant, 'hardware'):
+        return False
+    try:
+        permission = RolePermission._base_manager.get(
+            tenant=tenant,
+            role=role,
+            module='hardware',
+            action=action,
+        )
+        return permission.allowed
+    except RolePermission.DoesNotExist:
+        return False
+
+
+def _module_active_for_request(tenant, module):
+    if tenant_has_active_module(tenant, module):
+        return True
+    if module in ('sales', 'inventory') and tenant_has_active_module(tenant, 'hardware'):
+        return True
+    return False
+
+
 class DynamicModulePermission(permissions.BasePermission):
     """
     Dynamic permission class that checks permissions from the database.
@@ -53,7 +79,7 @@ class DynamicModulePermission(permissions.BasePermission):
         if not module:
             return True
 
-        if not tenant_has_active_module(tenant, module):
+        if not _module_active_for_request(tenant, module):
             return False
 
         action_map = {
@@ -96,7 +122,7 @@ class DynamicModulePermission(permissions.BasePermission):
                 )
                 return permission.allowed
             except RolePermission.DoesNotExist:
-                return False
+                return _hardware_proxy_allowed(tenant, role, module, action)
 
 
 class DynamicActionPermission(permissions.BasePermission):
@@ -153,7 +179,7 @@ def has_permission(user, module, action):
     if not tenant:
         return False
 
-    if not tenant_has_active_module(tenant, module):
+    if not _module_active_for_request(tenant, module):
         return False
 
     role = _effective_role(user, tenant)
@@ -179,7 +205,7 @@ def has_permission(user, module, action):
             )
             return permission.allowed
         except RolePermission.DoesNotExist:
-            return False
+            return _hardware_proxy_allowed(tenant, role, module, action)
 
 
 def get_user_permissions(user):

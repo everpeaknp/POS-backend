@@ -238,6 +238,45 @@ def record_material_consumption(site, product, quantity, unit_cost, reference, t
     )
 
 
+def reverse_material_consumption(site, product, quantity, unit_cost, reference, tenant=None):
+    """
+    Reverse material consumption journal entry (e.g. on consumption delete).
+    """
+    if tenant is None:
+        tenant = get_current_tenant()
+
+    if not tenant:
+        raise ValueError("Tenant is required for accounting entry")
+
+    rev_ref = f"{reference}-REV"
+    if has_posted_journal(tenant, rev_ref, 'Construction'):
+        return None
+
+    total_cost = Decimal(str(quantity)) * Decimal(str(unit_cost))
+    cost_center = getattr(site, 'cost_center_account', None) or get_construction_expense_account(tenant)
+
+    return create_journal_entry(
+        tenant=tenant,
+        description=f"Reversal: {product.name} at {site.name}",
+        reference=rev_ref,
+        entry_type='Construction',
+        entries=[
+            {
+                'account': get_inventory_asset_account(tenant),
+                'debit': total_cost,
+                'credit': 0,
+                'description': f"Stock restored: {product.name} ({quantity} units)",
+            },
+            {
+                'account': cost_center,
+                'debit': 0,
+                'credit': total_cost,
+                'description': f"Expense reversal: {product.name}",
+            },
+        ],
+    )
+
+
 def record_labor_wage(site, worker, wage_amount, date, reference, tenant=None):
     """
     Record labor wage expense for construction site.

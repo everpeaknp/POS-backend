@@ -207,11 +207,15 @@ class ReportViewSet(viewsets.ViewSet):
                 total=Coalesce(Sum('wage_amount'), Value(Decimal('0.00')))
             )['total']
             
-            other_expenses = site.dailylog_set.aggregate(
+            other_expenses = site.daily_logs.aggregate(
                 total=Coalesce(Sum('other_expenses'), Value(Decimal('0.00')))
             )['total']
+
+            equipment_cost = site.equipment_usage_logs.aggregate(
+                total=Coalesce(Sum('cost'), Value(Decimal('0.00')))
+            )['total']
             
-            actual_spend = material_cost + labor_cost + other_expenses
+            actual_spend = material_cost + labor_cost + equipment_cost + other_expenses
             budget_utilization = (actual_spend / site.allocated_budget * 100) if site.allocated_budget > 0 else Decimal('0.00')
             
             # Only include sites with >80% budget utilization
@@ -238,6 +242,7 @@ class ReportViewSet(viewsets.ViewSet):
                     'breakdown': {
                         'material_cost': float(material_cost),
                         'labor_cost': float(labor_cost),
+                        'equipment_cost': float(equipment_cost),
                         'other_expenses': float(other_expenses),
                     }
                 })
@@ -604,11 +609,15 @@ class ReportViewSet(viewsets.ViewSet):
             )['total']
             
             # Other expenses from daily logs
-            other_expenses = site.dailylog_set.aggregate(
+            other_expenses = site.daily_logs.aggregate(
                 total=Coalesce(Sum('other_expenses'), Value(Decimal('0.00')))
             )['total']
+
+            equipment_cost = site.equipment_usage_logs.aggregate(
+                total=Coalesce(Sum('cost'), Value(Decimal('0.00')))
+            )['total']
             
-            total_cost = material_cost + labor_cost + other_expenses
+            total_cost = material_cost + labor_cost + equipment_cost + other_expenses
             budget_utilized = (total_cost / site.allocated_budget * 100) if site.allocated_budget > 0 else Decimal('0.00')
             remaining_budget = site.allocated_budget - total_cost
             
@@ -628,6 +637,7 @@ class ReportViewSet(viewsets.ViewSet):
                 'allocated_budget': site.allocated_budget,
                 'material_cost': material_cost,
                 'labor_cost': labor_cost,
+                'equipment_cost': equipment_cost,
                 'other_expenses': other_expenses,
                 'total_cost': total_cost,
                 'budget_utilized_percentage': round(budget_utilized, 2),

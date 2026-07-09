@@ -2,7 +2,7 @@ from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
-from users.dynamic_permissions import DynamicModulePermission
+from users.dynamic_permissions import DynamicModulePermission, _effective_role
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework.filters import SearchFilter, OrderingFilter
 from drf_spectacular.utils import extend_schema, extend_schema_view, OpenApiParameter
@@ -46,7 +46,8 @@ class SiteViewSet(viewsets.ModelViewSet):
         queryset = Site.objects.filter(tenant=user.tenant).select_related('manager', 'warehouse')
         
         # Managers only see their assigned sites
-        if hasattr(user, 'role') and user.role == 'manager':
+        role = _effective_role(user, user.tenant)
+        if role == 'manager':
             from hr.models import Employee
             employee = Employee.objects.filter(tenant=user.tenant, user=user).first()
             if employee:
@@ -92,13 +93,8 @@ class SiteViewSet(viewsets.ModelViewSet):
         material_cost = site.get_material_cost()
         labor_cost = site.get_labor_cost()
         other_expenses = site.get_other_expenses()
-        
-        # Calculate equipment cost
-        equipment_cost = site.equipment_usage_logs.aggregate(
-            total=Sum('cost')
-        )['total'] or Decimal('0.00')
-        
-        total_actual_spend = material_cost + labor_cost + equipment_cost + other_expenses
+        equipment_cost = site.get_equipment_cost()
+        total_actual_spend = site.get_actual_spend()
         remaining_budget = site.allocated_budget - total_actual_spend
         budget_percentage = (total_actual_spend / site.allocated_budget * 100) if site.allocated_budget > 0 else Decimal('0.00')
         
@@ -217,6 +213,13 @@ class WorkerViewSet(viewsets.ModelViewSet):
     def perform_create(self, serializer):
         serializer.save(tenant=self.request.user.tenant)
 
+    def destroy(self, request, *args, **kwargs):
+        """Deactivate worker instead of hard delete to preserve payroll history."""
+        worker = self.get_object()
+        worker.status = 'inactive'
+        worker.save(update_fields=['status', 'updated_at'])
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
 
 @extend_schema_view(
     list=extend_schema(tags=['Construction - Attendance'], summary='List all attendance records'),
@@ -283,24 +286,44 @@ class AttendanceViewSet(viewsets.ModelViewSet):
             )
         
         created_attendances = []
+        updated_attendances = []
         errors = []
-        
+        tenant = request.user.tenant
+
         for attendance_data in attendances_data:
             attendance_data['site'] = site_id
             attendance_data['date'] = date
-            
-            serializer = self.get_serializer(data=attendance_data)
+            worker_id = attendance_data.get('worker')
+
+            existing = None
+            if worker_id:
+                existing = Attendance.objects.filter(
+                    tenant=tenant,
+                    worker_id=worker_id,
+                    site_id=site_id,
+                    date=date,
+                ).first()
+
+            if existing:
+                serializer = self.get_serializer(existing, data=attendance_data, partial=True)
+            else:
+                serializer = self.get_serializer(data=attendance_data)
+
             if serializer.is_valid():
-                serializer.save(tenant=request.user.tenant)
-                created_attendances.append(serializer.data)
+                instance = serializer.save(tenant=tenant, marked_by=request.user)
+                if existing:
+                    updated_attendances.append(serializer.data)
+                else:
+                    created_attendances.append(serializer.data)
             else:
                 errors.append({
                     'worker': attendance_data.get('worker'),
                     'errors': serializer.errors
                 })
-        
+
         return Response({
             'created': created_attendances,
+            'updated': updated_attendances,
             'errors': errors
         })
     
