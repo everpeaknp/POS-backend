@@ -2,6 +2,7 @@
 Custom permissions for Inventory module RBAC.
 """
 from rest_framework import permissions
+from users.dynamic_permissions import _effective_role
 
 
 class IsAdminOrReadOnly(permissions.BasePermission):
@@ -30,10 +31,10 @@ class IsSupervisorOrAdmin(permissions.BasePermission):
         
         # Only SUPERVISOR or ADMIN can create stock movements
         if request.method == 'POST':
-            return (
-                request.user and 
-                request.user.is_authenticated and 
-                request.user.role in ['supervisor', 'admin']
-            )
+            if not (request.user and request.user.is_authenticated):
+                return False
+            tenant = getattr(request.user, 'tenant', None)
+            role = _effective_role(request.user, tenant) if tenant else getattr(request.user, 'role', '')
+            return role in ('supervisor', 'admin', 'super_admin')
         
         return False

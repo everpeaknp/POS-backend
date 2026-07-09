@@ -43,15 +43,13 @@ class SalesOrderLineSerializer(serializers.ModelSerializer):
         quantity = data.get('quantity')
         
         if product and quantity:
-            total_stock = product.get_total_stock()
-            if total_stock <= 0:
-                raise serializers.ValidationError({
-                    'product': f'{product.name} is out of stock. Cannot create sales order.'
-                })
-            if total_stock < quantity:
-                raise serializers.ValidationError({
-                    'quantity': f'Insufficient stock for {product.name}. Available: {total_stock}, Requested: {quantity}'
-                })
+            from inventory.services import validate_product_stock
+            tenant = product.tenant
+            warehouse_id = self.context.get('warehouse_id')
+            try:
+                validate_product_stock(product, quantity, tenant, warehouse_id=warehouse_id)
+            except ValueError as exc:
+                raise serializers.ValidationError({'quantity': str(exc)})
         
         return data
 
@@ -101,22 +99,16 @@ class SalesOrderCreateSerializer(serializers.ModelSerializer):
         if self._status_from_initial() not in ('Confirmed', 'Delivered'):
             return lines_data
 
-        from inventory.models import Product
-        
-        for line_data in lines_data:
-            product = line_data.get('product')
-            quantity = line_data.get('quantity')
-            
-            if product and quantity:
-                total_stock = product.get_total_stock()
-                if total_stock <= 0:
-                    raise serializers.ValidationError(
-                        f'{product.name} is out of stock. Cannot create sales order.'
-                    )
-                if total_stock < quantity:
-                    raise serializers.ValidationError(
-                        f'Insufficient stock for {product.name}. Available: {total_stock}, Requested: {quantity}'
-                    )
+        request = self.context.get('request')
+        tenant = getattr(getattr(request, 'user', None), 'tenant', None) if request else None
+        warehouse_id = self.context.get('warehouse_id')
+
+        if tenant:
+            from inventory.services import validate_order_line_stock
+            try:
+                validate_order_line_stock(lines_data, tenant, warehouse_id=warehouse_id)
+            except ValueError as exc:
+                raise serializers.ValidationError(str(exc))
         
         return lines_data
 

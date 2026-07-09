@@ -5,7 +5,7 @@ Views for Pricing Management (SRS 5.4)
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
-from rest_framework.permissions import IsAuthenticated
+from users.dynamic_permissions import DynamicModulePermission
 from django.utils import timezone
 from decimal import Decimal
 
@@ -35,7 +35,8 @@ class CustomerSpecificPriceViewSet(viewsets.ModelViewSet):
     """
     
     serializer_class = CustomerSpecificPriceSerializer
-    permission_classes = [IsAuthenticated]
+    permission_classes = [DynamicModulePermission]
+    permission_module = 'inventory'
     
     def get_queryset(self):
         """Filter by tenant"""
@@ -83,7 +84,8 @@ class PriceHistoryViewSet(viewsets.ReadOnlyModelViewSet):
     """
     
     serializer_class = PriceHistorySerializer
-    permission_classes = [IsAuthenticated]
+    permission_classes = [DynamicModulePermission]
+    permission_module = 'inventory'
     
     def get_queryset(self):
         """Filter by tenant"""
@@ -132,7 +134,8 @@ class ProductPricingViewSet(viewsets.GenericViewSet):
     - POST /api/inventory/product-pricing/bulk_calculate/ - Calculate prices for multiple items
     """
     
-    permission_classes = [IsAuthenticated]
+    permission_classes = [DynamicModulePermission]
+    permission_module = 'inventory'
     
     def get_queryset(self):
         """Filter products by tenant"""

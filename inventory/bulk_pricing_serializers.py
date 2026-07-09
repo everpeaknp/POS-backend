@@ -1,5 +1,6 @@
 from rest_framework import serializers
-from .models import BulkPricing
+from decimal import Decimal
+from .bulk_pricing_models import BulkPricing
 
 
 class BulkPricingSerializer(serializers.ModelSerializer):

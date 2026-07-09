@@ -5,7 +5,7 @@ Provides inventory operations used by all industry modules.
 
 from decimal import Decimal
 from django.db import transaction
-from inventory.models import Stock, StockMovement, Warehouse
+from inventory.models import Stock, StockMovement, Warehouse, Product
 from tenants.middleware import get_current_tenant
 
 
@@ -44,6 +44,55 @@ def resolve_warehouse_for_product(product, tenant, warehouse_id=None):
     return Warehouse.objects.filter(tenant=tenant, is_active=True).order_by('id').first()
 
 
+def _get_or_create_stock_locked(tenant, product, warehouse):
+    stock = (
+        Stock.objects.select_for_update()
+        .filter(tenant=tenant, product=product, warehouse=warehouse)
+        .first()
+    )
+    if stock:
+        return stock
+    return Stock.objects.create(
+        tenant=tenant,
+        product=product,
+        warehouse=warehouse,
+        quantity=Decimal('0'),
+    )
+
+
+def validate_product_stock(product, quantity, tenant, warehouse_id=None):
+    """Ensure enough stock exists in the warehouse that would be used for deduction."""
+    warehouse = resolve_warehouse_for_product(product, tenant, warehouse_id=warehouse_id)
+    if not warehouse:
+        raise ValueError(f'No active warehouse available for {product.name}')
+    available = get_stock_level(product, warehouse)
+    required = Decimal(str(quantity))
+    if available < required:
+        raise ValueError(
+            f'Insufficient stock for {product.name} in {warehouse.name}. '
+            f'Available: {available}, Required: {required}'
+        )
+    return warehouse
+
+
+def validate_order_line_stock(lines_data, tenant, warehouse_id=None):
+    """Aggregate duplicate products and validate per-warehouse availability."""
+    from collections import defaultdict
+
+    totals = defaultdict(lambda: Decimal('0'))
+    products = {}
+    for line_data in lines_data:
+        product = line_data.get('product')
+        quantity = line_data.get('quantity')
+        if not product or not quantity:
+            continue
+        totals[product.id] += Decimal(str(quantity))
+        products[product.id] = product
+
+    for product_id, quantity in totals.items():
+        validate_product_stock(products[product_id], quantity, tenant, warehouse_id=warehouse_id)
+
+
 def stock_in(
     product,
     warehouse,
@@ -68,12 +117,7 @@ def stock_in(
         raise ValueError(f"Quantity must be positive. Got: {quantity}")
 
     with transaction.atomic():
-        stock, _created = Stock.objects.get_or_create(
-            tenant=tenant,
-            product=product,
-            warehouse=warehouse,
-            defaults={'quantity': Decimal('0')},
-        )
+        stock = _get_or_create_stock_locked(tenant, product, warehouse)
 
         stock.quantity += quantity
         stock.save()
@@ -118,13 +162,12 @@ def stock_out(
         raise ValueError(f"Quantity must be positive. Got: {quantity}")
 
     with transaction.atomic():
-        try:
-            stock = Stock.objects.get(
-                tenant=tenant,
-                product=product,
-                warehouse=warehouse,
-            )
-        except Stock.DoesNotExist:
+        stock = (
+            Stock.objects.select_for_update()
+            .filter(tenant=tenant, product=product, warehouse=warehouse)
+            .first()
+        )
+        if not stock:
             raise ValueError(
                 f"No stock record found for {product.name} in {warehouse.name}. "
                 f"Cannot remove stock that doesn't exist."
@@ -204,39 +247,41 @@ def stock_transfer(product, from_warehouse, to_warehouse, quantity, reference_ty
 
 def stock_adjustment(product, warehouse, quantity, reference_type='', reference_id=None, notes='', reason='', performed_by=None, tenant=None):
     """Adjust stock quantity (positive adds, negative removes)."""
-    if not notes or not str(notes).strip():
-        raise ValueError("Notes are required for stock adjustments. Must provide reason.")
+    note_text = (notes or reason or '').strip()
+    if not note_text:
+        raise ValueError("Notes or reason are required for stock adjustments.")
 
     quantity = Decimal(str(quantity))
     if quantity == 0:
         raise ValueError("Adjustment quantity cannot be zero.")
 
     tenant = _resolve_tenant(tenant=tenant, product=product, warehouse=warehouse)
+    if not tenant:
+        raise ValueError("No tenant in context. Cannot perform stock operation.")
 
-    if quantity > 0:
-        return stock_in(
+    with transaction.atomic():
+        stock = _get_or_create_stock_locked(tenant, product, warehouse)
+        new_quantity = stock.quantity + quantity
+        if new_quantity < 0:
+            raise ValueError('Adjustment would result in negative stock')
+
+        stock.quantity = new_quantity
+        stock.save()
+
+        movement = StockMovement.objects.create(
+            tenant=tenant,
             product=product,
             warehouse=warehouse,
+            movement_type='adjustment',
             quantity=quantity,
             reference_type=reference_type or 'Adjustment',
             reference_id=reference_id,
             reason=reason or 'Stock adjustment',
-            notes=notes,
+            notes=note_text,
             performed_by=performed_by,
-            tenant=tenant,
         )
 
-    return stock_out(
-        product=product,
-        warehouse=warehouse,
-        quantity=abs(quantity),
-        reference_type=reference_type or 'Adjustment',
-        reference_id=reference_id,
-        reason=reason or 'Stock adjustment',
-        notes=notes,
-        performed_by=performed_by,
-        tenant=tenant,
-    )
+        return movement, stock.quantity
 
 
 def get_stock_level(product, warehouse=None):
@@ -350,7 +395,9 @@ def apply_purchase_receive_stock(purchase_order, line, quantity, performed_by=No
     if not warehouse:
         raise ValueError(f"No active warehouse available for {line.product.name}")
 
-    return stock_in(
+    unit_price = Decimal(str(getattr(line, 'unit_price', 0) or 0))
+    quantity_dec = Decimal(str(quantity))
+    movement, _qty = stock_in(
         product=line.product,
         warehouse=warehouse,
         quantity=quantity,
@@ -361,6 +408,18 @@ def apply_purchase_receive_stock(purchase_order, line, quantity, performed_by=No
         performed_by=performed_by,
         tenant=purchase_order.tenant,
     )
+
+    if unit_price > 0:
+        product = line.product
+        current_total = get_stock_level(product)
+        old_qty = current_total - quantity_dec
+        old_cost = product.cost_price or Decimal('0')
+        receipt_cost = quantity_dec * unit_price
+        if current_total > 0:
+            new_cost = (max(Decimal('0'), old_qty) * old_cost + receipt_cost) / current_total
+            Product.objects.filter(pk=product.pk).update(cost_price=new_cost)
+
+    return movement
 
 
 def check_low_stock(product, warehouse=None):

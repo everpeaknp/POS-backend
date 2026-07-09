@@ -18,6 +18,42 @@ from .serializers import (
     BulkPricingSerializer, BulkPricingCreateSerializer
 )
 from .permissions import IsSupervisorOrAdmin
+from . import services as inventory_services
+
+
+INVENTORY_FILTER_BACKENDS = [DjangoFilterBackend, SearchFilter, OrderingFilter]
+
+
+def _tenant_objects(model, user, **filters):
+    tenant = getattr(user, 'tenant', None)
+    if not tenant:
+        return model.objects.none()
+    return model.objects.filter(tenant=tenant, **filters)
+
+
+def _assert_active_product(product):
+    if product.status != 'active':
+        raise ValueError(f'Product {product.name} is {product.status} and cannot be used in stock operations.')
+
+
+def _resolve_operation_entities(request, product_id, warehouse_id):
+    tenant = getattr(request.user, 'tenant', None)
+    if not tenant:
+        raise ValueError('User is not associated with a tenant')
+    try:
+        product = Product.objects.get(pk=product_id, tenant=tenant)
+    except Product.DoesNotExist:
+        raise ValueError('Product not found')
+    try:
+        warehouse = Warehouse.objects.get(pk=warehouse_id, tenant=tenant, is_active=True)
+    except Warehouse.DoesNotExist:
+        raise ValueError('Warehouse not found')
+    _assert_active_product(product)
+    return tenant, product, warehouse
+
+
+def _operation_error_response(exc, status_code=status.HTTP_400_BAD_REQUEST):
+    return Response({'error': str(exc)}, status=status_code)
 
 
 @extend_schema_view(
@@ -60,6 +96,7 @@ class CategoryViewSet(viewsets.ModelViewSet):
     serializer_class = CategorySerializer
     permission_classes = [DynamicModulePermission]
     permission_module = 'inventory'
+    filter_backends = INVENTORY_FILTER_BACKENDS
     filterset_fields = ['parent']
     search_fields = ['name', 'description']
     ordering_fields = ['name', 'created_at']
@@ -76,6 +113,15 @@ class CategoryViewSet(viewsets.ModelViewSet):
     def perform_create(self, serializer):
         """Ensure tenant is set when creating category"""
         serializer.save(tenant=self.request.user.tenant)
+
+    def perform_destroy(self, instance):
+        if instance.children.exists():
+            from rest_framework.exceptions import ValidationError
+            raise ValidationError({'detail': 'Cannot delete a category that has subcategories.'})
+        if instance.products.exists():
+            from rest_framework.exceptions import ValidationError
+            raise ValidationError({'detail': 'Cannot delete a category that has products.'})
+        instance.delete()
     
     @extend_schema(
         tags=['Inventory - Categories'],
@@ -119,6 +165,7 @@ class UnitOfMeasureViewSet(viewsets.ModelViewSet):
     serializer_class = UnitOfMeasureSerializer
     permission_classes = [DynamicModulePermission]
     permission_module = 'inventory'
+    filter_backends = INVENTORY_FILTER_BACKENDS
     filterset_fields = ['type']
     search_fields = ['name', 'abbreviation']
     ordering_fields = ['name', 'type']
@@ -166,6 +213,7 @@ class WarehouseViewSet(viewsets.ModelViewSet):
     serializer_class = WarehouseSerializer
     permission_classes = [DynamicModulePermission]
     permission_module = 'inventory'
+    filter_backends = INVENTORY_FILTER_BACKENDS
     filterset_fields = ['is_active', 'manager']
     search_fields = ['name', 'location']
     ordering_fields = ['name', 'created_at']
@@ -228,6 +276,7 @@ class ProductViewSet(viewsets.ModelViewSet):
     """
     permission_classes = [DynamicModulePermission]
     permission_module = 'inventory'
+    filter_backends = INVENTORY_FILTER_BACKENDS
     filterset_fields = ['category', 'status']
     search_fields = ['name', 'sku', 'description']
     ordering_fields = ['name', 'sku', 'created_at']
@@ -314,7 +363,7 @@ class ProductViewSet(viewsets.ModelViewSet):
         products = self.get_queryset().annotate(
             total_stock=Sum('stocks__quantity')
         ).filter(
-            Q(total_stock__lt=F('reorder_level')) | Q(total_stock__isnull=True)
+            Q(total_stock__lte=F('reorder_level')) | Q(total_stock__isnull=True)
         )
         serializer = ProductListSerializer(products, many=True)
         return Response(serializer.data)
@@ -408,6 +457,7 @@ class StockViewSet(viewsets.ModelViewSet):
     serializer_class = StockSerializer
     permission_classes = [DynamicModulePermission]
     permission_module = 'inventory'
+    filter_backends = INVENTORY_FILTER_BACKENDS
     filterset_fields = ['product', 'warehouse']
     search_fields = ['product__name', 'product__sku', 'warehouse__name']
     ordering_fields = ['quantity', 'created_at']
@@ -444,6 +494,7 @@ class StockMovementViewSet(viewsets.ReadOnlyModelViewSet):
     serializer_class = StockMovementSerializer
     permission_classes = [DynamicModulePermission]
     permission_module = 'inventory'
+    filter_backends = INVENTORY_FILTER_BACKENDS
     filterset_fields = ['product', 'warehouse', 'movement_type']
     search_fields = ['product__name', 'product__sku', 'reason']
     ordering_fields = ['created_at']
@@ -479,41 +530,27 @@ class StockOperationsViewSet(viewsets.ViewSet):
         """Add stock to warehouse"""
         serializer = StockAdjustmentSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        
-        with transaction.atomic():
-            product = Product.objects.get(id=serializer.validated_data['product'])
-            warehouse = Warehouse.objects.get(id=serializer.validated_data['warehouse'])
-            quantity = serializer.validated_data['quantity']
-            
-            # Get tenant from request user
-            tenant = request.user.tenant if hasattr(request.user, 'tenant') else None
-            
-            # Update or create stock with tenant
-            stock, created = Stock.objects.get_or_create(
-                product=product,
-                warehouse=warehouse,
-                tenant=tenant,
-                defaults={'quantity': 0}
+        data = serializer.validated_data
+
+        try:
+            tenant, product, warehouse = _resolve_operation_entities(
+                request, data['product'], data['warehouse']
             )
-            stock.quantity += quantity
-            stock.save()
-            
-            # Get tenant from request user
-            tenant = request.user.tenant if hasattr(request.user, 'tenant') else None
-            
-            # Create movement record with tenant
-            StockMovement.objects.create(
+            if data['quantity'] <= 0:
+                return _operation_error_response(ValueError('Quantity must be greater than 0'))
+
+            inventory_services.stock_in(
                 product=product,
                 warehouse=warehouse,
-                movement_type='in',
-                quantity=quantity,
-                reason=serializer.validated_data['reason'],
-                notes=serializer.validated_data.get('notes', ''),
+                quantity=data['quantity'],
+                reason=data['reason'],
+                notes=data.get('notes', ''),
                 performed_by=request.user,
-                tenant=tenant
+                tenant=tenant,
             )
-        
-        return Response({'message': 'Stock added successfully'}, status=status.HTTP_201_CREATED)
+            return Response({'message': 'Stock added successfully'}, status=status.HTTP_201_CREATED)
+        except ValueError as exc:
+            return _operation_error_response(exc)
     
     @extend_schema(
         summary='Remove stock from warehouse',
@@ -529,46 +566,27 @@ class StockOperationsViewSet(viewsets.ViewSet):
         """Remove stock from warehouse"""
         serializer = StockAdjustmentSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        
-        with transaction.atomic():
-            product = Product.objects.get(id=serializer.validated_data['product'])
-            warehouse = Warehouse.objects.get(id=serializer.validated_data['warehouse'])
-            quantity = serializer.validated_data['quantity']
-            
-            # Get stock
-            try:
-                stock = Stock.objects.get(product=product, warehouse=warehouse)
-            except Stock.DoesNotExist:
-                return Response(
-                    {'error': 'No stock available for this product in this warehouse'},
-                    status=status.HTTP_400_BAD_REQUEST
-                )
-            
-            if stock.quantity < quantity:
-                return Response(
-                    {'error': f'Insufficient stock. Available: {stock.quantity}'},
-                    status=status.HTTP_400_BAD_REQUEST
-                )
-            
-            stock.quantity -= quantity
-            stock.save()
-            
-            # Get tenant from request user
-            tenant = request.user.tenant if hasattr(request.user, 'tenant') else None
-            
-            # Create movement record with tenant
-            StockMovement.objects.create(
+        data = serializer.validated_data
+
+        try:
+            tenant, product, warehouse = _resolve_operation_entities(
+                request, data['product'], data['warehouse']
+            )
+            if data['quantity'] <= 0:
+                return _operation_error_response(ValueError('Quantity must be greater than 0'))
+
+            inventory_services.stock_out(
                 product=product,
                 warehouse=warehouse,
-                movement_type='out',
-                quantity=quantity,
-                reason=serializer.validated_data['reason'],
-                notes=serializer.validated_data.get('notes', ''),
+                quantity=data['quantity'],
+                reason=data['reason'],
+                notes=data.get('notes', ''),
                 performed_by=request.user,
-                tenant=tenant
+                tenant=tenant,
             )
-        
-        return Response({'message': 'Stock removed successfully'})
+            return Response({'message': 'Stock removed successfully'})
+        except ValueError as exc:
+            return _operation_error_response(exc)
 
     @extend_schema(
         summary='Transfer stock between warehouses',
@@ -584,59 +602,34 @@ class StockOperationsViewSet(viewsets.ViewSet):
         """Transfer stock between warehouses"""
         serializer = StockTransferSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        
-        with transaction.atomic():
-            product = Product.objects.get(id=serializer.validated_data['product'])
-            from_warehouse = Warehouse.objects.get(id=serializer.validated_data['from_warehouse'])
-            to_warehouse = Warehouse.objects.get(id=serializer.validated_data['to_warehouse'])
-            quantity = serializer.validated_data['quantity']
-            
-            # Check source stock
-            try:
-                from_stock = Stock.objects.get(product=product, warehouse=from_warehouse)
-            except Stock.DoesNotExist:
-                return Response(
-                    {'error': 'No stock available in source warehouse'},
-                    status=status.HTTP_400_BAD_REQUEST
-                )
-            
-            if from_stock.quantity < quantity:
-                return Response(
-                    {'error': f'Insufficient stock. Available: {from_stock.quantity}'},
-                    status=status.HTTP_400_BAD_REQUEST
-                )
-            
-            # Deduct from source
-            from_stock.quantity -= quantity
-            from_stock.save()
-            
-            # Get tenant from request user
-            tenant = request.user.tenant if hasattr(request.user, 'tenant') else None
-            
-            # Add to destination with tenant
-            to_stock, created = Stock.objects.get_or_create(
-                product=product,
-                warehouse=to_warehouse,
-                tenant=tenant,
-                defaults={'quantity': 0}
+        data = serializer.validated_data
+
+        try:
+            tenant, product, from_warehouse = _resolve_operation_entities(
+                request, data['product'], data['from_warehouse']
             )
-            to_stock.quantity += quantity
-            to_stock.save()
-            
-            # Create movement record with tenant
-            StockMovement.objects.create(
+            try:
+                to_warehouse = Warehouse.objects.get(
+                    pk=data['to_warehouse'], tenant=tenant, is_active=True
+                )
+            except Warehouse.DoesNotExist:
+                return _operation_error_response(ValueError('Destination warehouse not found'))
+
+            if data['quantity'] <= 0:
+                return _operation_error_response(ValueError('Quantity must be greater than 0'))
+
+            inventory_services.stock_transfer(
                 product=product,
-                warehouse=from_warehouse,
-                movement_type='transfer',
-                quantity=quantity,
                 from_warehouse=from_warehouse,
                 to_warehouse=to_warehouse,
-                notes=serializer.validated_data.get('notes', ''),
+                quantity=data['quantity'],
+                notes=data.get('notes', ''),
                 performed_by=request.user,
-                tenant=tenant
+                tenant=tenant,
             )
-        
-        return Response({'message': 'Stock transferred successfully'})
+            return Response({'message': 'Stock transferred successfully'})
+        except ValueError as exc:
+            return _operation_error_response(exc)
     
     @extend_schema(
         summary='Adjust stock (correction)',
@@ -650,85 +643,28 @@ class StockOperationsViewSet(viewsets.ViewSet):
     @action(detail=False, methods=['post'])
     def adjustment(self, request):
         """Adjust stock (correction entry)"""
-        import logging
-        logger = logging.getLogger(__name__)
-        
         serializer = StockAdjustmentSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        
+        data = serializer.validated_data
+
         try:
-            with transaction.atomic():
-                product = Product.objects.get(id=serializer.validated_data['product'])
-                warehouse = Warehouse.objects.get(id=serializer.validated_data['warehouse'])
-                quantity = serializer.validated_data['quantity']
-                
-                # Get tenant from request user
-                tenant = request.user.tenant if hasattr(request.user, 'tenant') else None
-                
-                if not tenant:
-                    logger.error(f"No tenant found for user: {request.user.username}")
-                    return Response(
-                        {'error': 'User is not associated with a tenant'},
-                        status=status.HTTP_400_BAD_REQUEST
-                    )
-                
-                logger.info(f"Adjusting stock - Product: {product.id}, Warehouse: {warehouse.id}, Tenant: {tenant.id}, Quantity: {quantity}")
-                
-                # Get or create stock with tenant
-                stock, created = Stock.objects.get_or_create(
-                    product=product,
-                    warehouse=warehouse,
-                    tenant=tenant,
-                    defaults={'quantity': 0}
-                )
-                
-                logger.info(f"Stock {'created' if created else 'found'}: {stock.id}, Current quantity: {stock.quantity}")
-                
-                # Adjustment can be positive or negative
-                stock.quantity += quantity
-                if stock.quantity < 0:
-                    return Response(
-                        {'error': 'Adjustment would result in negative stock'},
-                        status=status.HTTP_400_BAD_REQUEST
-                    )
-                stock.save()
-                
-                logger.info(f"Stock updated to: {stock.quantity}")
-                
-                # Create movement record with tenant
-                StockMovement.objects.create(
-                    product=product,
-                    warehouse=warehouse,
-                    movement_type='adjustment',
-                    quantity=quantity,
-                    reason=serializer.validated_data['reason'],
-                    notes=serializer.validated_data.get('notes', ''),
-                    performed_by=request.user,
-                    tenant=tenant
-                )
-                
-                logger.info("Stock adjustment completed successfully")
-            
+            tenant, product, warehouse = _resolve_operation_entities(
+                request, data['product'], data['warehouse']
+            )
+            notes = (data.get('notes') or '').strip() or data['reason']
+
+            inventory_services.stock_adjustment(
+                product=product,
+                warehouse=warehouse,
+                quantity=data['quantity'],
+                reason=data['reason'],
+                notes=notes,
+                performed_by=request.user,
+                tenant=tenant,
+            )
             return Response({'message': 'Stock adjusted successfully'})
-            
-        except Product.DoesNotExist:
-            logger.error(f"Product not found: {serializer.validated_data['product']}")
-            return Response(
-                {'error': 'Product not found'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        except Warehouse.DoesNotExist:
-            logger.error(f"Warehouse not found: {serializer.validated_data['warehouse']}")
-            return Response(
-                {'error': 'Warehouse not found'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        except Exception as e:
-            logger.error(f"Error adjusting stock: {str(e)}", exc_info=True)
-            return Response(
-                {'error': str(e)},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
+        except ValueError as exc:
+            return _operation_error_response(exc)
 
 
 
@@ -772,8 +708,8 @@ class InventoryReportsViewSet(viewsets.ViewSet):
         
         # Calculate summary stats
         total_products = products.count()
-        total_units = products.aggregate(
-            total=Coalesce(Sum('stocks__quantity'), Value(Decimal('0.00')))
+        total_units = Stock.objects.filter(tenant=tenant).aggregate(
+            total=Coalesce(Sum('quantity'), Value(Decimal('0.00')))
         )['total']
         
         low_stock_count = products.filter(
@@ -951,9 +887,9 @@ class InventoryReportsViewSet(viewsets.ViewSet):
             )
             
             if start_date:
-                movements_qs = movements_qs.filter(date__gte=start_date)
+                movements_qs = movements_qs.filter(created_at__date__gte=start_date)
             if end_date:
-                movements_qs = movements_qs.filter(date__lte=end_date)
+                movements_qs = movements_qs.filter(created_at__date__lte=end_date)
             
             # Calculate in and out quantities
             in_qty = movements_qs.filter(
