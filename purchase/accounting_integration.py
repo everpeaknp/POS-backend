@@ -10,23 +10,25 @@ from accounting.services import (
 
 
 def post_purchase_invoice(invoice):
-    """Post purchase bill to GL when invoice is recorded."""
-    if not invoice.amount or Decimal(str(invoice.amount)) <= 0:
+    """Post purchase bill to GL when invoice is recorded (net AP only)."""
+    ap_amount = invoice._ap_amount()
+    if ap_amount <= 0:
         return None
     return record_purchase(
         invoice.supplier,
-        invoice.amount,
+        ap_amount,
         invoice.invoice_number,
         tenant=invoice.tenant,
     )
 
 
-def post_purchase_invoice_payment(invoice, payment_amount):
+def post_purchase_invoice_payment(invoice, payment_amount, payment_id=None):
     """Post supplier payment to GL."""
     payment_amount = Decimal(str(payment_amount))
     if payment_amount <= 0:
         return None
-    reference = f"PI-PAY-{invoice.invoice_number}-{invoice.paid_amount}"
+    suffix = payment_id or invoice.paid_amount
+    reference = f"PI-PAY-{invoice.invoice_number}-{suffix}"
     return record_payment_to_supplier(
         invoice.supplier,
         payment_amount,

@@ -128,6 +128,7 @@ class CustomerViewSet(viewsets.ModelViewSet):
             # Add to overdue list if past due date
             if days_overdue > 0:
                 overdue_invoices.append({
+                    'invoice_id': invoice.id,
                     'invoice_number': invoice.invoice_number,
                     'date': invoice.date.isoformat(),
                     'due_date': invoice.due_date.isoformat(),
@@ -386,6 +387,13 @@ class SalesOrderViewSet(viewsets.ModelViewSet):
                 sales_order.save(update_fields=['status'])
         except ValueError as e:
             return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+        if new_status == 'Delivered':
+            from sales.credit_utils import ensure_credit_order_on_ledger
+            try:
+                ensure_credit_order_on_ledger(sales_order)
+            except ValueError as e:
+                return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
         
         serializer = self.get_serializer(sales_order)
         return Response(serializer.data)
@@ -888,6 +896,16 @@ class InvoiceViewSet(viewsets.ModelViewSet):
         from django.db import transaction
 
         invoice = self.get_object()
+        if invoice.status == 'Draft':
+            return Response(
+                {'error': 'Cannot record payment on a draft invoice'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if invoice.status == 'Paid' or invoice.balance <= 0:
+            return Response(
+                {'error': 'This invoice has no balance due'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
         payment_amount = request.data.get('amount')
 
         if not payment_amount:
@@ -999,6 +1017,15 @@ class CreditNoteViewSet(viewsets.ModelViewSet):
                     continue
         else:
             serializer.save(tenant=self.request.user.tenant, created_by=self.request.user)
+
+    def destroy(self, request, *args, **kwargs):
+        credit_note = self.get_object()
+        if credit_note.status in ('Issued', 'Applied'):
+            return Response(
+                {'error': 'Cannot delete an issued credit note'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        return super().destroy(request, *args, **kwargs)
 
 
 

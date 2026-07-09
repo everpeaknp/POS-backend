@@ -32,6 +32,34 @@ def order_already_on_ledger(sales_order) -> bool:
     ).exists()
 
 
+def ensure_credit_order_on_ledger(sales_order) -> None:
+    """Post credit order to customer ledger if not already recorded."""
+    if sales_order.payment_type != 'credit' or order_already_on_ledger(sales_order):
+        return
+    from django.db import transaction
+    from .models import Customer, CustomerLedger
+
+    check_credit_available(sales_order.customer, sales_order.total)
+    with transaction.atomic():
+        customer = Customer.objects.select_for_update().get(pk=sales_order.customer_id)
+        new_balance = customer.current_balance + sales_order.total
+        CustomerLedger.objects.create(
+            tenant=sales_order.tenant,
+            customer=customer,
+            date=sales_order.date,
+            transaction_type='sale',
+            reference_type='SalesOrder',
+            reference_number=sales_order.order_number,
+            reference_id=sales_order.id,
+            debit_amount=sales_order.total,
+            credit_amount=Decimal('0.00'),
+            running_balance=new_balance,
+            description=f"Credit sale - Order {sales_order.order_number}",
+        )
+        customer.current_balance = new_balance
+        customer.save(update_fields=['current_balance', 'updated_at'])
+
+
 def mark_overdue_invoices(queryset):
     """Mark sent/partial invoices past due_date as Overdue."""
     today = timezone.now().date()

@@ -95,7 +95,7 @@ class PurchaseRequest(TenantModel):
         ('High', 'High'),
     ]
     
-    request_number = models.CharField(max_length=50, unique=True)
+    request_number = models.CharField(max_length=50)
     date = models.DateField()
     requested_by = models.ForeignKey(
         User,
@@ -129,6 +129,7 @@ class PurchaseRequest(TenantModel):
         ordering = ['-date', '-created_at']
         verbose_name = 'Purchase Request'
         verbose_name_plural = 'Purchase Requests'
+        unique_together = [['tenant', 'request_number']]
     
     def __str__(self):
         return f"{self.request_number} - {self.department}"
@@ -185,7 +186,7 @@ class PurchaseOrder(TenantModel):
         ('Cancelled', 'Cancelled'),
     ]
     
-    po_number = models.CharField(max_length=50, unique=True)
+    po_number = models.CharField(max_length=50)
     date = models.DateField()
     supplier = models.ForeignKey(
         Supplier,
@@ -223,6 +224,7 @@ class PurchaseOrder(TenantModel):
         ordering = ['-date', '-created_at']
         verbose_name = 'Purchase Order'
         verbose_name_plural = 'Purchase Orders'
+        unique_together = [['tenant', 'po_number']]
     
     def __str__(self):
         return f"{self.po_number} - {self.supplier.name}"
@@ -311,7 +313,7 @@ class PurchaseInvoice(TenantModel):
         ('Overdue', 'Overdue'),
     ]
     
-    invoice_number = models.CharField(max_length=50, unique=True)
+    invoice_number = models.CharField(max_length=50)
     date = models.DateField()
     due_date = models.DateField()
     supplier = models.ForeignKey(
@@ -350,6 +352,7 @@ class PurchaseInvoice(TenantModel):
         ordering = ['-date', '-created_at']
         verbose_name = 'Purchase Invoice'
         verbose_name_plural = 'Purchase Invoices'
+        unique_together = [['tenant', 'invoice_number']]
     
     def __str__(self):
         return f"{self.invoice_number} - {self.supplier.name}"
@@ -359,15 +362,28 @@ class PurchaseInvoice(TenantModel):
         """Remaining balance to be paid"""
         return self.amount - self.paid_amount
 
+    def _ap_amount(self):
+        """Outstanding amount to post to accounts payable."""
+        return max(Decimal('0.00'), self.amount - self.paid_amount)
+
     def save(self, *args, **kwargs):
         from django.db import transaction
 
         is_new = self.pk is None
+        upfront_paid = Decimal('0.00')
+        if is_new:
+            upfront_paid = Decimal(str(self.paid_amount or 0))
+
         with transaction.atomic():
             super().save(*args, **kwargs)
             if is_new and self.amount and self.amount > 0:
-                from purchase.accounting_integration import post_purchase_invoice
+                from purchase.accounting_integration import (
+                    post_purchase_invoice,
+                    post_purchase_invoice_payment,
+                )
                 post_purchase_invoice(self)
+                if upfront_paid > 0:
+                    post_purchase_invoice_payment(self, upfront_paid)
 
 
 class DebitNote(TenantModel):
@@ -385,7 +401,7 @@ class DebitNote(TenantModel):
         ('Other', 'Other'),
     ]
     
-    debit_note_number = models.CharField(max_length=50, unique=True)
+    debit_note_number = models.CharField(max_length=50)
     date = models.DateField()
     supplier = models.ForeignKey(
         Supplier,
@@ -416,18 +432,43 @@ class DebitNote(TenantModel):
         ordering = ['-date', '-created_at']
         verbose_name = 'Debit Note'
         verbose_name_plural = 'Debit Notes'
+        unique_together = [['tenant', 'debit_note_number']]
     
     def __str__(self):
         return f"{self.debit_note_number} - {self.supplier.name}"
 
     def save(self, *args, **kwargs):
+        from django.db import transaction
+
         is_new = self.pk is None
         old_status = None
         if not is_new:
             old_status = DebitNote.objects.filter(pk=self.pk).values_list('status', flat=True).first()
 
-        super().save(*args, **kwargs)
+        with transaction.atomic():
+            super().save(*args, **kwargs)
 
-        if self.status == 'Issued' and (is_new or old_status == 'Draft'):
-            from purchase.accounting_integration import post_purchase_debit_note
-            post_purchase_debit_note(self)
+            if self.status == 'Issued' and (is_new or old_status == 'Draft'):
+                from purchase.accounting_integration import post_purchase_debit_note
+                post_purchase_debit_note(self)
+                self._apply_to_invoice()
+
+    def _apply_to_invoice(self):
+        """Reduce payable on the linked invoice when debit note is issued."""
+        invoice = PurchaseInvoice.objects.select_for_update().get(pk=self.invoice_id)
+        if self.supplier_id != invoice.supplier_id:
+            return
+        if self.amount > invoice.balance:
+            raise ValueError('Debit note amount exceeds invoice balance')
+        new_paid = min(invoice.amount, invoice.paid_amount + self.amount)
+        new_status = invoice.status
+        if new_paid >= invoice.amount:
+            new_status = 'Paid'
+        elif new_paid > 0:
+            new_status = 'Partially Paid'
+        PurchaseInvoice.objects.filter(pk=invoice.pk).update(
+            paid_amount=new_paid,
+            status=new_status,
+        )
+        DebitNote.objects.filter(pk=self.pk).update(status='Applied')
+        self.status = 'Applied'

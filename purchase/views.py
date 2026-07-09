@@ -2,6 +2,8 @@ from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
+from decimal import Decimal
+from django.db import transaction
 from users.dynamic_permissions import DynamicModulePermission
 from users.permissions import CanApprovePurchases
 from drf_spectacular.utils import extend_schema, extend_schema_view
@@ -113,6 +115,25 @@ class PurchaseRequestViewSet(viewsets.ModelViewSet):
     def perform_create(self, serializer):
         # Set requested_by to current user and tenant
         serializer.save(requested_by=self.request.user, tenant=self.request.user.tenant)
+
+    @extend_schema(
+        description="Submit a purchase request for approval",
+        tags=["Purchase - Requests"],
+        request=None,
+        responses={200: PurchaseRequestSerializer},
+    )
+    @action(detail=True, methods=['post'])
+    def submit(self, request, pk=None):
+        purchase_request = self.get_object()
+        if purchase_request.status != 'Draft':
+            return Response(
+                {'error': 'Only draft requests can be submitted'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        purchase_request.status = 'Pending Approval'
+        purchase_request.save(update_fields=['status', 'updated_at'])
+        serializer = self.get_serializer(purchase_request)
+        return Response(serializer.data)
     
     @extend_schema(
         description="Approve a purchase request (Step 2 of 3-step workflow)",
@@ -210,18 +231,14 @@ class PurchaseRequestViewSet(viewsets.ModelViewSet):
             )
         
         # Generate PO number
-        last_po = PurchaseOrder.objects.filter(
-            tenant=request.user.tenant
-        ).order_by('-id').first()
-        if last_po:
-            last_num = int(last_po.po_number.split('-')[1])
-            po_number = f"PO-{str(last_num + 1).zfill(4)}"
-        else:
-            po_number = "PO-0001"
+        from purchase.numbering import next_document_number
+        po_number = next_document_number(
+            request.user.tenant, PurchaseOrder, 'po_number', 'PO'
+        )
         
         # Get supplier
         try:
-            supplier = Supplier.objects.get(id=supplier_id)
+            supplier = Supplier.objects.get(id=supplier_id, tenant=request.user.tenant)
         except Supplier.DoesNotExist:
             return Response(
                 {'error': 'Supplier not found'},
@@ -343,20 +360,10 @@ class PurchaseOrderViewSet(viewsets.ModelViewSet):
             )
     
     def perform_create(self, serializer):
-        from django.utils import timezone
         tenant = self.request.user.tenant
-        
-        # Generate po_number
-        count = PurchaseOrder.objects.filter(tenant=tenant).count() + 1
-        po_number = f"PO-{timezone.now().year}-{count:05d}"
-        
-        try:
-            serializer.save(created_by=self.request.user, tenant=tenant, po_number=po_number)
-        except Exception as e:
-            import traceback
-            print(f"[PO Create Error] {str(e)}")
-            print(traceback.format_exc())
-            raise
+        from purchase.numbering import next_document_number
+        po_number = next_document_number(tenant, PurchaseOrder, 'po_number', 'PO')
+        serializer.save(created_by=self.request.user, tenant=tenant, po_number=po_number)
     
     @extend_schema(
         description="Update purchase order status",
@@ -377,6 +384,25 @@ class PurchaseOrderViewSet(viewsets.ModelViewSet):
             return Response(
                 {'error': 'Invalid status'},
                 status=status.HTTP_400_BAD_REQUEST
+            )
+
+        if purchase_order.status == 'Cancelled':
+            return Response(
+                {'error': 'Cancelled purchase orders cannot be updated'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        allowed = {
+            'Draft': {'Sent', 'Cancelled'},
+            'Sent': {'Partially Received', 'Received', 'Cancelled'},
+            'Partially Received': {'Received', 'Cancelled'},
+            'Received': set(),
+            'Cancelled': set(),
+        }
+        if new_status not in allowed.get(purchase_order.status, set()):
+            return Response(
+                {'error': f'Cannot change status from {purchase_order.status} to {new_status}'},
+                status=status.HTTP_400_BAD_REQUEST,
             )
         
         purchase_order.status = new_status
@@ -420,17 +446,20 @@ class PurchaseOrderViewSet(viewsets.ModelViewSet):
         
         from .models import PurchaseOrderLine
         from inventory.services import apply_purchase_receive_stock
-        from django.db import transaction as db_transaction
         
+        received_any = False
         try:
-            with db_transaction.atomic():
+            with transaction.atomic():
                 for item in items:
                     line_id = item.get('line_id')
                     quantity = item.get('quantity')
                     warehouse_id = item.get('warehouse_id') or default_warehouse_id
                     
-                    if not line_id or not quantity:
-                        continue
+                    if not line_id or quantity is None:
+                        return Response(
+                            {'error': 'Each item requires line_id and quantity'},
+                            status=status.HTTP_400_BAD_REQUEST,
+                        )
                     
                     try:
                         line = PurchaseOrderLine.objects.get(
@@ -443,12 +472,15 @@ class PurchaseOrderViewSet(viewsets.ModelViewSet):
                             status=status.HTTP_400_BAD_REQUEST
                         )
                     
-                    receive_qty = float(quantity)
+                    receive_qty = Decimal(str(quantity))
                     if receive_qty <= 0:
-                        continue
+                        return Response(
+                            {'error': 'Receive quantity must be positive'},
+                            status=status.HTTP_400_BAD_REQUEST,
+                        )
                     
-                    new_received = float(line.received_quantity) + receive_qty
-                    if new_received > float(line.quantity):
+                    new_received = Decimal(str(line.received_quantity)) + receive_qty
+                    if new_received > line.quantity:
                         return Response(
                             {'error': f'Received quantity exceeds ordered quantity for {line.product.name}'},
                             status=status.HTTP_400_BAD_REQUEST
@@ -457,15 +489,22 @@ class PurchaseOrderViewSet(viewsets.ModelViewSet):
                     apply_purchase_receive_stock(
                         purchase_order,
                         line,
-                        receive_qty,
+                        float(receive_qty),
                         performed_by=request.user,
                         warehouse_id=warehouse_id,
                     )
                     
                     line.received_quantity = new_received
                     line.save(update_fields=['received_quantity'])
+                    received_any = True
         except ValueError as e:
             return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+        if not received_any:
+            return Response(
+                {'error': 'No items were received'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
         
         all_lines = purchase_order.lines.all()
         fully_received = all(
@@ -516,10 +555,14 @@ class PurchaseOrderViewSet(viewsets.ModelViewSet):
 class PurchaseInvoiceViewSet(viewsets.ModelViewSet):
     """ViewSet for Purchase Invoice CRUD operations"""
     def get_queryset(self):
-        """Filter by current tenant"""
-        return PurchaseInvoice.objects.filter(tenant=self.request.user.tenant).select_related(
-        'supplier', 'purchase_order', 'created_by'
-    )
+        """Filter by current tenant and refresh overdue statuses."""
+        from purchase.payables_utils import mark_overdue_purchase_invoices
+
+        qs = PurchaseInvoice.objects.filter(tenant=self.request.user.tenant).select_related(
+            'supplier', 'purchase_order', 'created_by'
+        )
+        mark_overdue_purchase_invoices(qs)
+        return qs
     serializer_class = PurchaseInvoiceSerializer
     permission_classes = [DynamicModulePermission]
     permission_module = 'purchase'
@@ -529,8 +572,16 @@ class PurchaseInvoiceViewSet(viewsets.ModelViewSet):
     ordering = ['-date', '-created_at']
     
     def perform_create(self, serializer):
-        # Pass tenant to serializer for invoice_number generation
         serializer.save(created_by=self.request.user, tenant=self.request.user.tenant)
+
+    def destroy(self, request, *args, **kwargs):
+        invoice = self.get_object()
+        if invoice.paid_amount > 0:
+            return Response(
+                {'error': 'Cannot delete an invoice with recorded payments'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        return super().destroy(request, *args, **kwargs)
     
     @extend_schema(
         description="Record payment for a purchase invoice",
@@ -554,8 +605,8 @@ class PurchaseInvoiceViewSet(viewsets.ModelViewSet):
             )
         
         try:
-            payment_amount = float(payment_amount)
-        except ValueError:
+            payment_amount = Decimal(str(payment_amount))
+        except (ValueError, TypeError):
             return Response(
                 {'error': 'Invalid payment amount'},
                 status=status.HTTP_400_BAD_REQUEST
@@ -572,19 +623,16 @@ class PurchaseInvoiceViewSet(viewsets.ModelViewSet):
                 {'error': 'Payment amount exceeds invoice balance'},
                 status=status.HTTP_400_BAD_REQUEST
             )
-        
-        invoice.paid_amount += payment_amount
-        
-        # Update status based on payment
-        if invoice.paid_amount >= invoice.amount:
-            invoice.status = 'Paid'
-        elif invoice.paid_amount > 0:
-            invoice.status = 'Partially Paid'
-        
-        invoice.save()
 
-        from purchase.accounting_integration import post_purchase_invoice_payment
-        post_purchase_invoice_payment(invoice, payment_amount)
+        with transaction.atomic():
+            invoice.paid_amount += payment_amount
+            if invoice.paid_amount >= invoice.amount:
+                invoice.status = 'Paid'
+            elif invoice.paid_amount > 0:
+                invoice.status = 'Partially Paid'
+            invoice.save()
+            from purchase.accounting_integration import post_purchase_invoice_payment
+            post_purchase_invoice_payment(invoice, payment_amount, payment_id=invoice.paid_amount)
         
         serializer = self.get_serializer(invoice)
         return Response(serializer.data)
@@ -633,3 +681,12 @@ class DebitNoteViewSet(viewsets.ModelViewSet):
     
     def perform_create(self, serializer):
         serializer.save(created_by=self.request.user, tenant=self.request.user.tenant)
+
+    def destroy(self, request, *args, **kwargs):
+        debit_note = self.get_object()
+        if debit_note.status in ('Issued', 'Applied'):
+            return Response(
+                {'error': 'Cannot delete an issued debit note'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        return super().destroy(request, *args, **kwargs)

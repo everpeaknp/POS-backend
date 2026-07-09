@@ -318,6 +318,30 @@ class CreditNoteSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = ['id', 'credit_note_number', 'created_at', 'updated_at']
 
+    def validate(self, data):
+        status = data.get('status', getattr(self.instance, 'status', 'Draft'))
+        if status == 'Applied' and (not self.instance or self.instance.status == 'Draft'):
+            raise serializers.ValidationError({
+                'status': 'Credit notes must be issued before they can be applied.'
+            })
+        invoice = data.get('invoice') or getattr(self.instance, 'invoice', None)
+        customer = data.get('customer') or getattr(self.instance, 'customer', None)
+        amount = data.get('amount') or getattr(self.instance, 'amount', None)
+        if invoice and customer and invoice.customer_id != customer.id:
+            raise serializers.ValidationError({
+                'customer': 'Customer must match the linked invoice customer.'
+            })
+        if invoice and amount and amount > invoice.balance:
+            raise serializers.ValidationError({
+                'amount': 'Credit note amount cannot exceed invoice balance.'
+            })
+        return data
+
+    def create(self, validated_data):
+        if validated_data.get('status') == 'Applied':
+            validated_data['status'] = 'Issued'
+        return super().create(validated_data)
+
 
 
 class CustomerLedgerSerializer(serializers.ModelSerializer):

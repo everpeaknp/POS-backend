@@ -56,7 +56,7 @@ DEFAULT_SUBSCRIPTION_PLANS = {
         ],
         'modules': [
             'sales', 'purchase', 'inventory', 'accounting',
-            'reports', 'pos', 'hr',
+            'reports', 'pos', 'hr', 'construction', 'hardware',
         ],
         'is_popular': True,
     },
@@ -78,7 +78,7 @@ DEFAULT_SUBSCRIPTION_PLANS = {
         ],
         'modules': [
             'sales', 'purchase', 'inventory', 'accounting',
-            'reports', 'pos', 'hr', 'construction',
+            'reports', 'pos', 'hr', 'construction', 'hardware',
         ],
         'is_popular': False,
     },
