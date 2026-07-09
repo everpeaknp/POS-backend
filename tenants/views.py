@@ -31,33 +31,27 @@ class TenantViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         """
-        Filter tenants - authenticated users see all tenants they are members of
-        
-        Users can see tenants where they:
-        1. Have membership (any role)
-        2. Are the creator
-        
-        Note: We now include tenants created from registration if user is creator/member
+        Return tenants the user can access via active membership or creator ownership.
         """
         if self.request.user.is_authenticated:
-            # Import here to avoid circular import
             from .membership_models import UserTenantMembership
-            
-            # Get all tenant IDs where user has an active membership (enabled business access)
-            membership_tenant_ids = list(UserTenantMembership.objects.filter(
-                user=self.request.user,
-                is_active=True,
-            ).values_list('tenant_id', flat=True))
-            
-            # Return tenants where user has membership OR is the creator
-            from django.db.models import Q
-            
-            # Build query: has membership OR is creator
-            # We now allow registration tenants if user is creator/member
+            from .utils import user_has_tenant_access
+
+            membership_tenant_ids = list(
+                UserTenantMembership.objects.filter(
+                    user=self.request.user,
+                    is_active=True,
+                ).values_list('tenant_id', flat=True)
+            )
+
             query = Q(id__in=membership_tenant_ids) | Q(created_by=self.request.user)
-            
-            return Tenant.objects.filter(query).distinct()
-        # For unauthenticated users (for create action), return none
+            candidates = Tenant.objects.filter(query).distinct()
+            accessible_ids = [
+                tenant.id
+                for tenant in candidates
+                if user_has_tenant_access(self.request.user, tenant)
+            ]
+            return Tenant.objects.filter(id__in=accessible_ids).order_by('-created_at')
         return Tenant.objects.none()
     serializer_class = TenantSerializer
     permission_classes = [IsAuthenticated]
@@ -223,9 +217,9 @@ class TenantViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=['post'])
     def switch(self, request, slug=None):
         """Switch the user's active tenant context."""
-        from tenants.utils import user_has_tenant_access
         from django.contrib.auth import get_user_model
         from .membership_models import UserTenantMembership
+        from .utils import is_tenant_super_admin, user_has_tenant_access
 
         tenant = self.get_object()
         user = request.user
@@ -233,6 +227,12 @@ class TenantViewSet(viewsets.ModelViewSet):
         if not user_has_tenant_access(user, tenant):
             return Response(
                 {'error': 'You do not have access to this organization'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        if not tenant.is_active and not is_tenant_super_admin(user, tenant):
+            return Response(
+                {'error': 'This workspace has been deactivated'},
                 status=status.HTTP_403_FORBIDDEN,
             )
 
