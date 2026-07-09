@@ -1,6 +1,7 @@
 from rest_framework import serializers
 from rest_framework.fields import empty
 from django.db import transaction
+from decimal import Decimal
 from .models import (
     Customer, SalesOrder, SalesOrderLine, Quotation, QuotationLine, Invoice, CreditNote,
     CustomerLedger, PaymentReceived
@@ -118,6 +119,24 @@ class SalesOrderCreateSerializer(serializers.ModelSerializer):
                     )
         
         return lines_data
+
+    def validate(self, data):
+        payment_type = data.get('payment_type', 'cash')
+        status_value = data.get('status', 'Draft')
+        customer = data.get('customer')
+
+        if payment_type == 'credit' and status_value in ('Confirmed', 'Delivered') and customer:
+            total = data.get('total')
+            if total is None and self.instance:
+                total = self.instance.total
+            if total and total > 0:
+                from sales.credit_utils import check_credit_available
+                try:
+                    check_credit_available(customer, total)
+                except ValueError as exc:
+                    raise serializers.ValidationError({'payment_type': str(exc)})
+
+        return data
     
     def create(self, validated_data):
         lines_data = validated_data.pop('lines')
@@ -262,6 +281,27 @@ class InvoiceSerializer(serializers.ModelSerializer):
             'notes', 'created_by', 'created_by_name', 'created_at', 'updated_at'
         ]
         read_only_fields = ['id', 'invoice_number', 'balance', 'created_at', 'updated_at']
+
+    def validate(self, data):
+        payment_type = data.get('payment_type', getattr(self.instance, 'payment_type', 'cash'))
+        status_value = data.get('status', getattr(self.instance, 'status', 'Draft'))
+        amount = data.get('amount', getattr(self.instance, 'amount', Decimal('0')))
+        paid_amount = data.get('paid_amount', getattr(self.instance, 'paid_amount', Decimal('0')))
+        customer = data.get('customer', getattr(self.instance, 'customer', None))
+
+        if payment_type == 'credit' and status_value not in ('Draft',) and customer:
+            ar_amount = max(Decimal('0.00'), amount - paid_amount)
+            if ar_amount > 0:
+                from sales.credit_utils import check_credit_available
+                try:
+                    check_credit_available(customer, ar_amount)
+                except ValueError as exc:
+                    raise serializers.ValidationError({'customer': str(exc)})
+
+        if data.get('paid_amount', Decimal('0')) >= data.get('amount', Decimal('0')) and payment_type == 'credit':
+            data['payment_type'] = 'cash'
+
+        return data
 
 
 class CreditNoteSerializer(serializers.ModelSerializer):

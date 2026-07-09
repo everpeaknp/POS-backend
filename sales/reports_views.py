@@ -14,7 +14,7 @@ from django.utils import timezone
 from datetime import timedelta, datetime
 from decimal import Decimal
 
-from .models import SalesOrder, Invoice, Customer, SalesOrderLine
+from .models import SalesOrder, Invoice, Customer, SalesOrderLine, PaymentReceived
 from inventory.models import Product
 
 
@@ -85,10 +85,18 @@ class SalesReportsViewSet(viewsets.ViewSet):
         
         total_orders = orders_qs.count()
         avg_order_value = (total_sales / total_orders) if total_orders > 0 else Decimal('0.00')
-        
-        # Calculate cash collected (85% assumption for demo)
-        cash_collected = total_sales * Decimal('0.85')
-        collection_rate = 85.0
+
+        payments_qs = PaymentReceived.objects.filter(
+            tenant=tenant,
+            date__gte=start_date,
+            date__lte=end_date,
+        )
+        cash_collected = payments_qs.aggregate(
+            total=Coalesce(Sum('amount'), Decimal('0.00'))
+        )['total']
+        collection_rate = (
+            float(cash_collected / total_sales * 100) if total_sales > 0 else 0.0
+        )
         
         # Monthly sales trend (last 6 months)
         monthly_data = []
@@ -112,8 +120,12 @@ class SalesReportsViewSet(viewsets.ViewSet):
             )['total']
             
             month_count = month_orders.count()
-            month_collected = month_sales * Decimal('0.85')
-            month_outstanding = month_sales * Decimal('0.15')
+            month_collected = PaymentReceived.objects.filter(
+                tenant=tenant,
+                date__gte=current_month,
+                date__lt=next_month,
+            ).aggregate(total=Coalesce(Sum('amount'), Decimal('0.00')))['total']
+            month_outstanding = max(Decimal('0.00'), month_sales - month_collected)
             
             monthly_data.append({
                 'month': current_month.strftime('%b'),

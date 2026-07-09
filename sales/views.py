@@ -9,7 +9,7 @@ from drf_spectacular.types import OpenApiTypes
 from django.db.models import Sum, Q, F
 from django.db import models
 from django.utils import timezone
-from datetime import timedelta
+from datetime import timedelta, datetime as dt
 from decimal import Decimal
 from users.dynamic_permissions import DynamicModulePermission
 
@@ -17,6 +17,7 @@ from .models import (
     Customer, SalesOrder, SalesOrderLine, Quotation, Invoice, CreditNote,
     CustomerLedger, PaymentReceived
 )
+from .filters import SalesOrderFilterSet, QuotationFilterSet, InvoiceFilterSet
 from .serializers import (
     CustomerSerializer, CustomerDetailSerializer, SalesOrderSerializer, SalesOrderCreateSerializer,
     QuotationSerializer, QuotationCreateSerializer, InvoiceSerializer, CreditNoteSerializer,
@@ -294,7 +295,7 @@ class SalesOrderViewSet(viewsets.ModelViewSet):
     """ViewSet for Sales Order CRUD operations"""
     permission_classes = [DynamicModulePermission]
     permission_module = 'sales'
-    filterset_fields = ['status', 'customer']
+    filterset_class = SalesOrderFilterSet
     search_fields = ['order_number', 'reference', 'customer__name']
     ordering_fields = ['date', 'created_at', 'total']
     ordering = ['-date', '-created_at']
@@ -448,23 +449,23 @@ class SalesOrderViewSet(viewsets.ModelViewSet):
         
         period = request.query_params.get('period', 'month')
         tenant = request.user.tenant
+        today = timezone.now().date()
         
-        # Calculate date ranges
-        now = timezone.now()
+        # Calculate date ranges (SalesOrder.date is a DateField)
         if period == 'today':
-            start_date = now.replace(hour=0, minute=0, second=0, microsecond=0)
-            prev_start = start_date - timedelta(days=1)
-            prev_end = start_date
+            start_date = today
+            prev_start = today - timedelta(days=1)
+            prev_end = today
         elif period == 'week':
-            start_date = now - timedelta(days=7)
+            start_date = today - timedelta(days=6)
             prev_start = start_date - timedelta(days=7)
             prev_end = start_date
         elif period == 'year':
-            start_date = now - timedelta(days=365)
-            prev_start = start_date - timedelta(days=365)
+            start_date = today.replace(month=1, day=1)
+            prev_start = start_date.replace(year=start_date.year - 1)
             prev_end = start_date
         else:  # month
-            start_date = now - timedelta(days=30)
+            start_date = today - timedelta(days=29)
             prev_start = start_date - timedelta(days=30)
             prev_end = start_date
         
@@ -491,10 +492,15 @@ class SalesOrderViewSet(viewsets.ModelViewSet):
         previous_order_count = previous_orders.count()
         orders_change = ((current_order_count - previous_order_count) / previous_order_count * 100) if previous_order_count > 0 else 0
         
-        # Customer stats
-        current_customers = Customer.objects.filter(tenant=tenant, created_at__gte=start_date).count()
-        previous_customers = Customer.objects.filter(tenant=tenant, created_at__gte=prev_start, created_at__lt=prev_end).count()
-        customers_change = ((current_customers - previous_customers) / previous_customers * 100) if previous_customers > 0 else 0
+        # Customer stats — new customers in period vs previous period
+        new_customers_period = Customer.objects.filter(tenant=tenant, created_at__date__gte=start_date).count()
+        new_customers_prev = Customer.objects.filter(
+            tenant=tenant, created_at__date__gte=prev_start, created_at__date__lt=prev_end
+        ).count()
+        customers_change = (
+            ((new_customers_period - new_customers_prev) / new_customers_prev * 100)
+            if new_customers_prev > 0 else 0
+        )
         total_customers = Customer.objects.filter(tenant=tenant).count()
         
         # Product stats
@@ -503,73 +509,62 @@ class SalesOrderViewSet(viewsets.ModelViewSet):
         products_change = ((current_products - previous_products) / previous_products * 100) if previous_products > 0 else 0
         total_products = Product.objects.filter(tenant=tenant).count()
         
-        # Revenue data for chart
         revenue_data = []
         if period == 'today':
-            # Hourly data for today
-            for hour in range(24):
-                hour_start = start_date + timedelta(hours=hour)
-                hour_end = hour_start + timedelta(hours=1)
-                revenue = SalesOrder.objects.filter(
-                    tenant=tenant,
-                    date__gte=hour_start,
-                    date__lt=hour_end,
-                    status__in=['Confirmed', 'Delivered']
-                ).aggregate(total=Sum('total'))['total'] or 0
-                revenue_data.append({
-                    'time': f"{hour:02d}:00",
-                    'value': float(revenue)
-                })
+            revenue_data.append({
+                'time': 'Today',
+                'value': float(current_revenue),
+            })
         elif period == 'week':
-            # Daily data for week
-            for day in range(7):
-                day_start = start_date + timedelta(days=day)
-                day_end = day_start + timedelta(days=1)
+            for day_offset in range(7):
+                day = start_date + timedelta(days=day_offset)
                 revenue = SalesOrder.objects.filter(
                     tenant=tenant,
-                    date__gte=day_start,
-                    date__lt=day_end,
-                    status__in=['Confirmed', 'Delivered']
+                    date=day,
+                    status__in=['Confirmed', 'Delivered'],
                 ).aggregate(total=Sum('total'))['total'] or 0
                 revenue_data.append({
-                    'time': day_start.strftime('%a'),
-                    'value': float(revenue)
+                    'time': day.strftime('%a'),
+                    'value': float(revenue),
                 })
         elif period == 'year':
-            # Monthly data for year
-            for month in range(12):
-                month_start = start_date + timedelta(days=month*30)
-                month_end = month_start + timedelta(days=30)
+            month_cursor = start_date.replace(day=1)
+            while month_cursor <= today:
+                if month_cursor.month == 12:
+                    next_month = month_cursor.replace(year=month_cursor.year + 1, month=1)
+                else:
+                    next_month = month_cursor.replace(month=month_cursor.month + 1)
                 revenue = SalesOrder.objects.filter(
                     tenant=tenant,
-                    date__gte=month_start,
-                    date__lt=month_end,
-                    status__in=['Confirmed', 'Delivered']
+                    date__gte=month_cursor,
+                    date__lt=next_month,
+                    status__in=['Confirmed', 'Delivered'],
                 ).aggregate(total=Sum('total'))['total'] or 0
                 revenue_data.append({
-                    'time': month_start.strftime('%b'),
-                    'value': float(revenue)
+                    'time': month_cursor.strftime('%b'),
+                    'value': float(revenue),
                 })
+                month_cursor = next_month
         else:  # month
-            # Daily data for month (show every 3 days)
-            for day in range(0, 30, 3):
-                day_start = start_date + timedelta(days=day)
-                day_end = day_start + timedelta(days=3)
+            for day_offset in range(0, 30, 3):
+                bucket_start = start_date + timedelta(days=day_offset)
+                bucket_end = min(bucket_start + timedelta(days=3), today + timedelta(days=1))
                 revenue = SalesOrder.objects.filter(
                     tenant=tenant,
-                    date__gte=day_start,
-                    date__lt=day_end,
-                    status__in=['Confirmed', 'Delivered']
+                    date__gte=bucket_start,
+                    date__lt=bucket_end,
+                    status__in=['Confirmed', 'Delivered'],
                 ).aggregate(total=Sum('total'))['total'] or 0
                 revenue_data.append({
-                    'time': day_start.strftime('%d %b'),
-                    'value': float(revenue)
+                    'time': bucket_start.strftime('%d %b'),
+                    'value': float(revenue),
                 })
         
         # Recent orders
         recent_orders_qs = SalesOrder.objects.filter(tenant=tenant).select_related('customer').order_by('-created_at')[:5]
         recent_orders = [{
-            'id': order.order_number,
+            'id': str(order.id),
+            'order_number': order.order_number,
             'customer': order.customer.name if order.customer else 'N/A',
             'amount': f"Rs. {order.total:,.0f}",
             'status': order.status
@@ -635,6 +630,7 @@ class SalesOrderViewSet(viewsets.ModelViewSet):
                 'ordersChange': round(orders_change, 1),
                 'customers': total_customers,
                 'customersChange': round(customers_change, 1),
+                'newCustomers': new_customers_period,
                 'products': total_products,
                 'productsChange': round(products_change, 1),
             },
@@ -663,7 +659,7 @@ class QuotationViewSet(viewsets.ModelViewSet):
     """ViewSet for Quotation CRUD operations"""
     permission_classes = [DynamicModulePermission]
     permission_module = 'sales'
-    filterset_fields = ['status', 'customer']
+    filterset_class = QuotationFilterSet
     search_fields = ['quotation_number', 'customer__name']
     ordering_fields = ['date', 'created_at', 'valid_until']
     ordering = ['-date', '-created_at']
@@ -742,6 +738,9 @@ class QuotationViewSet(viewsets.ModelViewSet):
             order_number = "SO-0001"
         
         # Create sales order with line items
+        # Infer payment type from customer terms
+        payment_type = 'credit' if quotation.customer.payment_terms != 'Immediate' else 'cash'
+
         sales_order = SalesOrder.objects.create(
             tenant=request.user.tenant,
             order_number=order_number,
@@ -749,6 +748,7 @@ class QuotationViewSet(viewsets.ModelViewSet):
             customer=quotation.customer,
             reference=f"From {quotation.quotation_number}",
             status='Draft',
+            payment_type=payment_type,
             subtotal=quotation.subtotal,
             discount=quotation.discount,
             tax=quotation.tax,
@@ -791,20 +791,31 @@ class InvoiceViewSet(viewsets.ModelViewSet):
     permission_classes = [DynamicModulePermission]
     permission_module = 'sales'
     serializer_class = InvoiceSerializer
-    filterset_fields = ['status', 'customer']
+    filterset_class = InvoiceFilterSet
     search_fields = ['invoice_number', 'customer__name']
     ordering_fields = ['date', 'due_date', 'created_at', 'amount']
     ordering = ['-date', '-created_at']
     
     def get_queryset(self):
-        """Filter by current tenant"""
-        return Invoice.objects.filter(tenant=self.request.user.tenant).select_related('customer', 'sales_order', 'created_by')
+        """Filter by current tenant and refresh overdue statuses."""
+        from sales.credit_utils import mark_overdue_invoices
+
+        qs = Invoice.objects.filter(tenant=self.request.user.tenant).select_related(
+            'customer', 'sales_order', 'created_by'
+        )
+        mark_overdue_invoices(qs)
+        return qs
     
     def perform_create(self, serializer):
         from django.db import transaction
         from django.db.utils import IntegrityError
+        from rest_framework.exceptions import ValidationError
         import random
         
+        tenant = get_request_tenant(self.request.user)
+        if not tenant:
+            raise ValidationError({'detail': 'No tenant in context'})
+
         # Auto-generate invoice number if not provided
         if 'invoice_number' not in serializer.validated_data or not serializer.validated_data.get('invoice_number'):
             max_retries = 10
@@ -873,18 +884,18 @@ class InvoiceViewSet(viewsets.ModelViewSet):
     )
     @action(detail=True, methods=['post'])
     def record_payment(self, request, pk=None):
-        """Record a payment for an invoice"""
-        from decimal import Decimal
-        
+        """Record a payment for an invoice via PaymentReceived (updates ledger + balance)."""
+        from django.db import transaction
+
         invoice = self.get_object()
         payment_amount = request.data.get('amount')
-        
+
         if not payment_amount:
             return Response(
                 {'error': 'Payment amount is required'},
                 status=status.HTTP_400_BAD_REQUEST
             )
-        
+
         try:
             payment_amount = Decimal(str(payment_amount))
         except (ValueError, TypeError):
@@ -892,32 +903,41 @@ class InvoiceViewSet(viewsets.ModelViewSet):
                 {'error': 'Invalid payment amount'},
                 status=status.HTTP_400_BAD_REQUEST
             )
-        
+
         if payment_amount <= 0:
             return Response(
                 {'error': 'Payment amount must be positive'},
                 status=status.HTTP_400_BAD_REQUEST
             )
-        
+
         if invoice.paid_amount + payment_amount > invoice.amount:
             return Response(
                 {'error': 'Payment amount exceeds invoice balance'},
                 status=status.HTTP_400_BAD_REQUEST
             )
-        
-        invoice.paid_amount += payment_amount
-        
-        # Update status based on payment
-        if invoice.paid_amount >= invoice.amount:
-            invoice.status = 'Paid'
-        elif invoice.paid_amount > 0:
-            invoice.status = 'Partially Paid'
-        
-        invoice.save()
 
-        from sales.accounting_integration import post_invoice_payment
-        post_invoice_payment(invoice, payment_amount)
-        
+        payment_date = request.data.get('date') or timezone.now().date()
+        if isinstance(payment_date, str):
+            try:
+                payment_date = dt.strptime(payment_date, '%Y-%m-%d').date()
+            except ValueError:
+                payment_date = timezone.now().date()
+
+        with transaction.atomic():
+            PaymentReceived.objects.create(
+                tenant=invoice.tenant,
+                date=payment_date,
+                customer=invoice.customer,
+                amount=payment_amount,
+                payment_method=request.data.get('payment_method', 'cash'),
+                reference_number=request.data.get('reference_number', '') or '',
+                bank_name=request.data.get('bank_name', '') or '',
+                invoice=invoice,
+                notes=request.data.get('notes', '') or '',
+                received_by=request.user,
+            )
+            invoice.refresh_from_db()
+
         serializer = self.get_serializer(invoice)
         return Response(serializer.data)
 
@@ -1030,6 +1050,21 @@ class PaymentReceivedViewSet(viewsets.ModelViewSet):
             return PaymentReceived.objects.none()
         return PaymentReceived.objects.filter(tenant=tenant).select_related(
             'customer', 'invoice', 'received_by'
+        )
+
+    def update(self, request, *args, **kwargs):
+        return Response(
+            {'error': 'Payments cannot be modified after recording. Create an adjustment instead.'},
+            status=status.HTTP_405_METHOD_NOT_ALLOWED,
+        )
+
+    def partial_update(self, request, *args, **kwargs):
+        return self.update(request, *args, **kwargs)
+
+    def destroy(self, request, *args, **kwargs):
+        return Response(
+            {'error': 'Payments cannot be deleted after recording.'},
+            status=status.HTTP_405_METHOD_NOT_ALLOWED,
         )
     
     def perform_create(self, serializer):

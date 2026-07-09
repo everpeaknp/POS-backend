@@ -108,9 +108,18 @@ class SalesOrder(TenantModel):
         return f"{self.order_number} - {self.customer.name}"
     
     def calculate_totals(self):
-        """Calculate order totals from line items"""
+        """Calculate subtotal, discount, tax, and total from line items."""
         lines = self.lines.all()
-        self.subtotal = sum(line.amount for line in lines)
+        self.subtotal = sum(line.quantity * line.unit_price for line in lines)
+        self.discount = sum(
+            line.quantity * line.unit_price * line.discount_percent / Decimal('100')
+            for line in lines
+        )
+        self.tax = sum(
+            (line.quantity * line.unit_price - line.quantity * line.unit_price * line.discount_percent / Decimal('100'))
+            * line.tax_percent / Decimal('100')
+            for line in lines
+        )
         self.total = self.subtotal - self.discount + self.tax
         self.save()
     
@@ -132,11 +141,8 @@ class SalesOrder(TenantModel):
         if self.status == 'Delivered':
             raise ValueError("Order is already finalized")
         
-        # Check credit limit
-        if self.customer.current_balance + self.total > self.customer.credit_limit:
-            raise ValueError(
-                f"Credit limit exceeded. Available credit: {self.customer.available_credit}"
-            )
+        from sales.credit_utils import check_credit_available
+        check_credit_available(self.customer, self.total)
         
         with transaction.atomic():
             old_status = self.status
@@ -310,7 +316,7 @@ class Invoice(TenantModel):
         ('credit', 'Credit'),
     ]
     
-    invoice_number = models.CharField(max_length=50, unique=True)
+    invoice_number = models.CharField(max_length=50)
     date = models.DateField()
     due_date = models.DateField()
     customer = models.ForeignKey(Customer, on_delete=models.PROTECT, related_name='invoices')
@@ -326,6 +332,7 @@ class Invoice(TenantModel):
         ordering = ['-date', '-created_at']
         verbose_name = 'Invoice'
         verbose_name_plural = 'Invoices'
+        unique_together = [['tenant', 'invoice_number']]
     
     def __str__(self):
         return f"{self.invoice_number} - {self.customer.name}"
@@ -333,6 +340,22 @@ class Invoice(TenantModel):
     @property
     def balance(self):
         return self.amount - self.paid_amount
+
+    def _ar_amount(self):
+        """Outstanding amount to post to customer AR."""
+        return max(Decimal('0.00'), self.amount - self.paid_amount)
+
+    def _should_post_credit_sale(self, is_new, old_status):
+        if self.payment_type != 'credit' or self.status == 'Draft':
+            return False
+        if self._ar_amount() <= 0:
+            return False
+        if not (is_new or (old_status == 'Draft' and self.status != 'Draft')):
+            return False
+        from sales.credit_utils import order_already_on_ledger
+        if self.sales_order_id and order_already_on_ledger(self.sales_order):
+            return False
+        return True
     
     def save(self, *args, **kwargs):
         """
@@ -354,12 +377,11 @@ class Invoice(TenantModel):
         with transaction.atomic():
             super().save(*args, **kwargs)
             
-            # Create ledger entry for credit sales
-            # Only for new records OR when status changes from Draft to active
-            if self.payment_type == 'credit' and self.status != 'Draft':
-                if is_new or (old_status == 'Draft' and self.status != 'Draft'):
-                    self._create_ledger_entry()
-                    self._update_customer_balance()
+            if self._should_post_credit_sale(is_new, old_status):
+                from sales.credit_utils import check_credit_available
+                check_credit_available(self.customer, self._ar_amount())
+                self._create_ledger_entry()
+                self._update_customer_balance()
 
             if self.status != 'Draft':
                 if is_new or (old_status == 'Draft' and self.status != 'Draft'):
@@ -368,9 +390,11 @@ class Invoice(TenantModel):
     
     def _create_ledger_entry(self):
         """Create customer ledger entry for credit sale"""
-        # Get current customer balance
+        ar_amount = self._ar_amount()
+        if ar_amount <= 0:
+            return
         current_balance = self.customer.current_balance
-        new_balance = current_balance + self.amount
+        new_balance = current_balance + ar_amount
         
         CustomerLedger.objects.create(
             tenant=self.tenant,
@@ -380,7 +404,7 @@ class Invoice(TenantModel):
             reference_type='Invoice',
             reference_number=self.invoice_number,
             reference_id=self.id,
-            debit_amount=self.amount,
+            debit_amount=ar_amount,
             credit_amount=Decimal('0.00'),
             running_balance=new_balance,
             description=f"Credit sale - Invoice {self.invoice_number}"
@@ -388,7 +412,10 @@ class Invoice(TenantModel):
     
     def _update_customer_balance(self):
         """Update customer's current balance for credit sale"""
-        self.customer.current_balance += self.amount
+        ar_amount = self._ar_amount()
+        if ar_amount <= 0:
+            return
+        self.customer.current_balance += ar_amount
         self.customer.save()
 
 
@@ -401,7 +428,7 @@ class CreditNote(TenantModel):
         ('Applied', 'Applied'),
     ]
     
-    credit_note_number = models.CharField(max_length=50, unique=True)
+    credit_note_number = models.CharField(max_length=50)
     date = models.DateField()
     customer = models.ForeignKey(Customer, on_delete=models.PROTECT, related_name='credit_notes')
     invoice = models.ForeignKey(Invoice, on_delete=models.PROTECT, related_name='credit_notes')
@@ -414,21 +441,69 @@ class CreditNote(TenantModel):
         ordering = ['-date', '-created_at']
         verbose_name = 'Credit Note'
         verbose_name_plural = 'Credit Notes'
+        unique_together = [['tenant', 'credit_note_number']]
     
     def __str__(self):
         return f"{self.credit_note_number} - {self.customer.name}"
 
     def save(self, *args, **kwargs):
+        from django.db import transaction
+
         is_new = self.pk is None
         old_status = None
         if not is_new:
             old_status = CreditNote.objects.filter(pk=self.pk).values_list('status', flat=True).first()
 
-        super().save(*args, **kwargs)
+        with transaction.atomic():
+            super().save(*args, **kwargs)
 
-        if self.status == 'Issued' and (is_new or old_status == 'Draft'):
-            from sales.accounting_integration import post_sales_credit_note
-            post_sales_credit_note(self)
+            if self.status == 'Issued' and (is_new or old_status == 'Draft'):
+                from sales.accounting_integration import post_sales_credit_note
+                post_sales_credit_note(self)
+                self._apply_to_customer_ledger()
+                self._apply_to_invoice()
+
+    def _apply_to_customer_ledger(self):
+        """Reduce customer balance and record return in ledger."""
+        if CustomerLedger.objects.filter(
+            tenant=self.tenant,
+            reference_type='CreditNote',
+            reference_id=self.id,
+        ).exists():
+            return
+        customer = Customer.objects.select_for_update().get(pk=self.customer_id)
+        new_balance = customer.current_balance - self.amount
+        CustomerLedger.objects.create(
+            tenant=self.tenant,
+            customer=customer,
+            date=self.date,
+            transaction_type='return',
+            reference_type='CreditNote',
+            reference_number=self.credit_note_number,
+            reference_id=self.id,
+            debit_amount=Decimal('0.00'),
+            credit_amount=self.amount,
+            running_balance=new_balance,
+            description=f"Credit note {self.credit_note_number} - {self.reason[:80]}",
+        )
+        customer.current_balance = new_balance
+        customer.save(update_fields=['current_balance', 'updated_at'])
+
+    def _apply_to_invoice(self):
+        """Apply credit note against the linked invoice."""
+        invoice = Invoice.objects.select_for_update().get(pk=self.invoice_id)
+        if invoice.paid_amount + self.amount > invoice.amount and invoice.paid_amount >= invoice.amount:
+            return
+        new_paid = min(invoice.amount, invoice.paid_amount + self.amount)
+        new_status = invoice.status
+        if new_paid >= invoice.amount:
+            new_status = 'Paid'
+        elif new_paid > 0:
+            new_status = 'Partially Paid'
+        Invoice.objects.filter(pk=invoice.pk).update(
+            paid_amount=new_paid,
+            status=new_status,
+        )
 
 
 class CustomerLedger(TenantModel):
@@ -627,13 +702,16 @@ class PaymentReceived(TenantModel):
         self.customer.save()
     
     def _update_invoice_payment(self):
-        """Update invoice paid amount if payment is linked to invoice"""
-        self.invoice.paid_amount += self.amount
-        
-        # Update invoice status
-        if self.invoice.paid_amount >= self.invoice.amount:
-            self.invoice.status = 'Paid'
-        elif self.invoice.paid_amount > 0:
-            self.invoice.status = 'Partially Paid'
-        
-        self.invoice.save()
+        """Update invoice paid amount if payment is linked to invoice."""
+        invoice = self.invoice
+        new_paid = invoice.paid_amount + self.amount
+        new_status = invoice.status
+        if new_paid >= invoice.amount:
+            new_status = 'Paid'
+        elif new_paid > 0:
+            new_status = 'Partially Paid'
+
+        Invoice.objects.filter(pk=invoice.pk).update(
+            paid_amount=new_paid,
+            status=new_status,
+        )
