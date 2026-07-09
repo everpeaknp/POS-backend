@@ -9,6 +9,8 @@ from django.utils import timezone
 
 from users.dynamic_permissions import tenant_has_active_module
 
+VALID_DASHBOARD_PERIODS = frozenset({'today', 'week', 'month', 'year'})
+
 OVERVIEW_MODULE_IDS = [
     'sales',
     'purchase',
@@ -34,18 +36,24 @@ MODULE_META = {
 }
 
 
-def _enabled_overview_modules(tenant):
+def _enabled_overview_modules(tenant, user=None):
     if not tenant:
         return []
-    active = getattr(tenant, 'active_modules', None) or []
     enabled = []
     for module_id in OVERVIEW_MODULE_IDS:
-        if tenant_has_active_module(tenant, module_id):
-            enabled.append(module_id)
-    # Fallback: if tenant has no module list, show catalog defaults
-    if not active:
-        return OVERVIEW_MODULE_IDS[:6]
+        if not tenant_has_active_module(tenant, module_id):
+            continue
+        if user is not None and not user.has_module_access(module_id):
+            continue
+        enabled.append(module_id)
     return enabled
+
+
+def normalize_dashboard_period(period):
+    normalized = (period or 'month').lower()
+    if normalized not in VALID_DASHBOARD_PERIODS:
+        return 'month'
+    return normalized
 
 
 def _period_ranges(period, now):
@@ -166,6 +174,7 @@ def _build_sales_module(tenant, period, start_date, previous_start, previous_end
             'secondary': order.customer.name if order.customer else 'Walk-in Customer',
             'meta': f"Rs. {order.total:,.0f}",
             'status': order.status,
+            'href': f'/dashboard/sales/orders/{order.id}',
         }
         for order in recent_orders
     ]
@@ -173,14 +182,17 @@ def _build_sales_module(tenant, period, start_date, previous_start, previous_end
     top_products = SalesOrderLine.objects.filter(
         sales_order__tenant=tenant,
         sales_order__date__gte=start_date,
-    ).values('product__name').annotate(total_qty=Sum('quantity')).order_by('-total_qty')[:5]
+        product__isnull=False,
+    ).values('product__id', 'product__name').annotate(total_qty=Sum('quantity')).order_by('-total_qty')[:5]
 
     top_products_data = [
         {
-            'primary': item['product__name'],
+            'primary': item['product__name'] or 'Unknown product',
             'meta': f"{int(item['total_qty'])} sold",
+            'href': f"/dashboard/inventory/products/{item['product__id']}",
         }
         for item in top_products
+        if item.get('product__id')
     ]
 
     meta = MODULE_META['sales']
@@ -244,6 +256,7 @@ def _build_purchase_module(tenant, start_date, previous_start, previous_end):
             'secondary': order.supplier.name if order.supplier else 'No supplier',
             'meta': f"Rs. {order.total:,.0f}" if order.total else '',
             'status': order.status,
+            'href': f'/dashboard/purchase/orders/{order.id}',
         }
         for order in recent_orders
     ]
@@ -290,6 +303,7 @@ def _build_inventory_module(tenant):
             'secondary': product.sku or '',
             'meta': f"{float(product.total_stock)} / {float(product.reorder_level)}",
             'status': 'critical' if product.total_stock == 0 else 'low',
+            'href': f'/dashboard/inventory/products/{product.id}',
         }
         for product in low_stock_products
     ]
@@ -341,6 +355,7 @@ def _build_accounting_module(tenant):
             'secondary': entry.description or 'Journal entry',
             'meta': entry.date.strftime('%Y-%m-%d') if entry.date else '',
             'status': entry.status if hasattr(entry, 'status') else '',
+            'href': f'/dashboard/accounting/journal-entries/{entry.id}',
         }
         for entry in recent_entries
     ]
@@ -378,6 +393,7 @@ def _build_hr_module(tenant):
             'primary': emp.name,
             'secondary': emp.designation or emp.department.name if emp.department else '',
             'meta': emp.join_date.strftime('%Y-%m-%d') if emp.join_date else '',
+            'href': f'/dashboard/hr/employees/{emp.id}',
         }
         for emp in recent_employees
     ]
@@ -414,6 +430,7 @@ def _build_pos_module(tenant, today_start):
             'secondary': tx.customer_name or 'Walk-in',
             'meta': f"Rs. {tx.total:,.0f}",
             'status': tx.status if hasattr(tx, 'status') else '',
+            'href': f'/dashboard/pos/transactions/{tx.id}',
         }
         for tx in recent_tx
     ]
@@ -449,6 +466,7 @@ def _build_construction_module(tenant):
                 'primary': site.name,
                 'secondary': site.location or '',
                 'meta': site.status,
+                'href': f'/dashboard/construction/sites/{site.id}',
             }
             for site in recent_sites
         ]
@@ -510,19 +528,20 @@ def _build_reports_module(tenant):
             {
                 'title': 'Quick links',
                 'items': [
-                    {'primary': 'Sales Report', 'secondary': '/dashboard/reports/sales'},
-                    {'primary': 'Financial Report', 'secondary': '/dashboard/reports/financial'},
-                    {'primary': 'Inventory Report', 'secondary': '/dashboard/reports/inventory'},
+                    {'primary': 'Sales Report', 'href': '/dashboard/reports/sales'},
+                    {'primary': 'Financial Report', 'href': '/dashboard/reports/financial'},
+                    {'primary': 'Inventory Report', 'href': '/dashboard/reports/inventory'},
                 ],
             }
         ],
     }
 
 
-def build_main_dashboard_response(tenant, period='month'):
+def build_main_dashboard_response(tenant, period='month', user=None):
+    period = normalize_dashboard_period(period)
     now = timezone.now()
     start_date, previous_start, previous_end, today_start = _period_ranges(period, now)
-    enabled = _enabled_overview_modules(tenant)
+    enabled = _enabled_overview_modules(tenant, user=user)
 
     if not tenant:
         return {

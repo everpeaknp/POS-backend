@@ -172,7 +172,9 @@ class ReportViewSet(viewsets.ViewSet):
                     status=status.HTTP_403_FORBIDDEN,
                 )
             period = request.query_params.get('period', 'month')
-            return Response(build_main_dashboard_response(tenant, period))
+            from reports.dashboard_modules import normalize_dashboard_period
+            period = normalize_dashboard_period(period)
+            return Response(build_main_dashboard_response(tenant, period, user=request.user))
         except Exception as e:
             import traceback
             print(f"[Main Dashboard Error] {str(e)}")
