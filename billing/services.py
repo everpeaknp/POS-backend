@@ -263,9 +263,8 @@ def billing_overview(tenant, user) -> dict:
         ],
         'payments': [_serialize_payment_record(p) for p in payments],
         'esewa_enabled': get_esewa_config().enabled,
-        'can_manage_billing': _user_owns_any_organization(user)
-        or bool(tenant and _user_can_manage_billing(user, tenant)),
-        'can_upgrade_account': _user_owns_any_organization(user),
+        'can_manage_billing': True,
+        'can_upgrade_account': True,
         'billing_scope': 'account',
         'member_organization': None,
         'allowed_modules': get_allowed_modules_for_plan(current_plan_code),

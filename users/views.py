@@ -548,13 +548,10 @@ def get_active_sessions(request):
             'location': session.location,
             'ip_address': session.ip_address or 'Unknown',
             'last_active': session.last_active,
-            'is_current': str(session.id) == current_session_id if current_session_id else False,
+            'is_current': bool(current_session_id and str(session.id) == current_session_id),
         }
         for session in sessions
     ]
-
-    if payload and not any(item['is_current'] for item in payload):
-        payload[0]['is_current'] = True
 
     serializer = SessionSerializer(payload, many=True)
     return Response(serializer.data, status=status.HTTP_200_OK)
@@ -1044,8 +1041,14 @@ class NotificationViewSet(viewsets.ReadOnlyModelViewSet):
     permission_classes = [permissions.IsAuthenticated]
 
     def get_queryset(self):
+        from tenants.utils import get_request_tenant
+
         user = self.request.user
-        qs = Notification.objects.filter(tenant=user.tenant, user=user)
+        tenant = get_request_tenant(user)
+        qs = Notification.objects.filter(user=user)
+        if tenant:
+            qs = qs.filter(tenant=tenant)
+
         is_read = self.request.query_params.get('is_read')
         if is_read is not None:
             qs = qs.filter(is_read=is_read.lower() in ('true', '1'))
@@ -1062,9 +1065,11 @@ class NotificationViewSet(viewsets.ReadOnlyModelViewSet):
     @action(detail=False, methods=['post'], url_path='mark-all-read')
     def mark_all_read(self, request):
         from django.utils import timezone
-        updated = Notification.objects.filter(
-            tenant=request.user.tenant,
-            user=request.user,
-            is_read=False,
-        ).update(is_read=True, read_at=timezone.now())
+        from tenants.utils import get_request_tenant
+
+        tenant = get_request_tenant(request.user)
+        qs = Notification.objects.filter(user=request.user, is_read=False)
+        if tenant:
+            qs = qs.filter(tenant=tenant)
+        updated = qs.update(is_read=True, read_at=timezone.now())
         return Response({'updated': updated})
