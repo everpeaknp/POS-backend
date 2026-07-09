@@ -123,7 +123,7 @@ class LeaveRequestSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = ['id', 'approved_by', 'approved_at', 'created_at', 'updated_at']
         extra_kwargs = {
-            'employee': {'required': False, 'allow_null': True}  # Make employee optional, will be set from current user
+            'employee': {'required': False},
         }
     
     def validate(self, data):

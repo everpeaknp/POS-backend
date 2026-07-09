@@ -17,10 +17,16 @@ from .serializers import (
 )
 
 
+from .utils import (
+    NEPALI_MONTHS,
+    calculate_employee_payroll_amounts,
+    current_bs_year,
+    sync_leave_to_attendance,
+)
+
+
 def _current_bs_year() -> int:
-    """Approximate Bikram Sambat year from today's Gregorian date."""
-    today = date.today()
-    return today.year + (57 if today.month >= 4 else 56)
+    return current_bs_year()
 
 
 @extend_schema_view(
@@ -47,6 +53,20 @@ class DepartmentViewSet(viewsets.ModelViewSet):
     def perform_create(self, serializer):
         """Set tenant when creating department"""
         serializer.save(tenant=self.request.user.tenant)
+
+    def destroy(self, request, *args, **kwargs):
+        department = self.get_object()
+        if department.employees.exists():
+            return Response(
+                {
+                    'error': (
+                        'Cannot delete department with assigned employees. '
+                        'Reassign or deactivate employees first.'
+                    ),
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        return super().destroy(request, *args, **kwargs)
 
 
 @extend_schema_view(
@@ -86,6 +106,13 @@ class EmployeeViewSet(viewsets.ModelViewSet):
     def perform_create(self, serializer):
         """Set tenant when creating employee"""
         serializer.save(tenant=self.request.user.tenant)
+
+    def destroy(self, request, *args, **kwargs):
+        """Deactivate employee instead of hard delete to preserve payroll history."""
+        employee = self.get_object()
+        employee.status = 'inactive'
+        employee.save(update_fields=['status', 'updated_at'])
+        return Response(status=status.HTTP_204_NO_CONTENT)
     
     @extend_schema(
         tags=['HR - Dashboard'],
@@ -156,19 +183,19 @@ class EmployeeViewSet(viewsets.ModelViewSet):
         """Get list of managers/approvers for purchase requests"""
         tenant = request.user.tenant
         
-        # Designations that can approve
-        manager_designations = [
-            'Manager', 'Senior Manager', 'Director', 
-            'Senior Director', 'CEO', 'CFO', 'CTO', 
-            'COO', 'VP', 'Vice President', 'President'
+        # Designations that can approve (case-insensitive partial match)
+        manager_keywords = [
+            'manager', 'director', 'ceo', 'cfo', 'cto',
+            'coo', 'vp', 'vice president', 'president', 'head',
         ]
-        
-        # Get active employees with manager-level designations
+        designation_filter = Q()
+        for keyword in manager_keywords:
+            designation_filter |= Q(designation__icontains=keyword)
+
         managers = Employee.objects.filter(
             tenant=tenant,
             status='active',
-            designation__in=manager_designations
-        ).select_related('department').order_by('name')
+        ).filter(designation_filter).select_related('department').order_by('name')
         
         # Serialize with basic info
         data = [{
@@ -228,6 +255,7 @@ class AttendanceViewSet(viewsets.ModelViewSet):
         
         created_records = []
         updated_records = []
+        skipped = []
         
         for record in records:
             employee_id = record.get('employee')
@@ -240,6 +268,7 @@ class AttendanceViewSet(viewsets.ModelViewSet):
             try:
                 employee = Employee.objects.get(id=employee_id, tenant=tenant)
             except Employee.DoesNotExist:
+                skipped.append({'employee': employee_id, 'error': 'Employee not found'})
                 continue
             
             # Update or create attendance record
@@ -267,6 +296,7 @@ class AttendanceViewSet(viewsets.ModelViewSet):
             'message': f'Successfully processed {len(all_records)} attendance records',
             'created': len(created_records),
             'updated': len(updated_records),
+            'skipped': skipped,
             'records': response_serializer.data
         }, status=status.HTTP_201_CREATED)
     
@@ -312,14 +342,15 @@ class AttendanceViewSet(viewsets.ModelViewSet):
         
         # Calculate stats
         total_records = attendance_records.count()
-        present_count = attendance_records.filter(status='present').count()
+        present_count = attendance_records.filter(status__in=['present', 'late']).count()
+        half_day_count = attendance_records.filter(status='half-day').count()
         absent_count = attendance_records.filter(status='absent').count()
         late_count = attendance_records.filter(status='late').count()
         
-        # Calculate average attendance percentage
         active_employees = Employee.objects.filter(tenant=tenant, status='active').count()
         expected_records = active_employees * working_days
-        avg_attendance = (present_count / expected_records * 100) if expected_records > 0 else 0
+        attended = present_count + (half_day_count * Decimal('0.5'))
+        avg_attendance = float(attended / expected_records * 100) if expected_records > 0 else 0
         
         return Response({
             'working_days': working_days,
@@ -357,6 +388,20 @@ class LeaveTypeViewSet(viewsets.ModelViewSet):
         """Set tenant when creating leave type"""
         serializer.save(tenant=self.request.user.tenant)
 
+    def destroy(self, request, *args, **kwargs):
+        leave_type = self.get_object()
+        if leave_type.leave_requests.exists():
+            return Response(
+                {
+                    'error': (
+                        'Cannot delete leave type that is used by leave requests. '
+                        'Remove or reassign requests first.'
+                    ),
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        return super().destroy(request, *args, **kwargs)
+
 
 @extend_schema_view(
     list=extend_schema(description="List all leave requests", tags=["HR - Leave"]),
@@ -382,39 +427,28 @@ class LeaveRequestViewSet(viewsets.ModelViewSet):
     
     def perform_create(self, serializer):
         """Set tenant and employee when creating leave request"""
-        # Try to get employee from current user
+        from rest_framework.exceptions import ValidationError
+
         employee = None
-        if hasattr(self.request.user, 'employee_profile'):
+        if hasattr(self.request.user, 'employee_profile') and self.request.user.employee_profile:
             employee = self.request.user.employee_profile
-        
-        # If employee is provided in data, use that (for admin/manager creating on behalf)
-        if 'employee' in self.request.data and self.request.data.get('employee'):
-            employee_id = self.request.data.get('employee')
+
+        employee_id = self.request.data.get('employee')
+        if employee_id:
             try:
                 employee = Employee.objects.get(id=employee_id, tenant=self.request.user.tenant)
             except Employee.DoesNotExist:
-                pass
-        
-        # If still no employee, try to get the first active employee for this tenant (for testing)
+                raise ValidationError({'employee': 'Employee not found for this organization.'})
+
         if not employee:
-            employee = Employee.objects.filter(tenant=self.request.user.tenant, status='active').first()
-        
-        if employee:
-            try:
-                serializer.save(tenant=self.request.user.tenant, employee=employee)
-            except Exception as e:
-                from rest_framework.exceptions import ValidationError
-                import traceback
-                print(f"Error saving leave request: {e}")
-                print(traceback.format_exc())
-                raise ValidationError({
-                    'error': f'Failed to create leave request: {str(e)}'
-                })
-        else:
-            from rest_framework.exceptions import ValidationError
             raise ValidationError({
-                'employee': 'No employee profile found. Please create an employee profile first or specify an employee ID.'
+                'employee': (
+                    'No employee profile linked to your account. '
+                    'Specify an employee or link your user to an employee record.'
+                ),
             })
+
+        serializer.save(tenant=self.request.user.tenant, employee=employee)
     
     @extend_schema(
         tags=['HR - Leave'],
@@ -438,6 +472,8 @@ class LeaveRequestViewSet(viewsets.ModelViewSet):
         leave_request.approved_by = request.user
         leave_request.approved_at = timezone.now()
         leave_request.save()
+
+        sync_leave_to_attendance(leave_request)
         
         serializer = self.get_serializer(leave_request)
         return Response(serializer.data)
@@ -508,17 +544,18 @@ class PayrollViewSet(viewsets.ModelViewSet):
         
         if not month:
             return Response({'error': 'Month is required'}, status=status.HTTP_400_BAD_REQUEST)
+        if month not in NEPALI_MONTHS:
+            return Response(
+                {'error': f'Invalid month. Use one of: {", ".join(NEPALI_MONTHS)}'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
         
         tenant = request.user.tenant
         employees = Employee.objects.filter(tenant=tenant, status='active')
         
         payroll_data = []
         for employee in employees:
-            basic_salary = employee.basic_salary
-            allowances = basic_salary * Decimal('0.15')
-            gross_salary = basic_salary + allowances
-            deductions = basic_salary * Decimal('0.15')
-            net_salary = gross_salary - deductions
+            amounts = calculate_employee_payroll_amounts(employee, year, month, tenant)
             
             payroll_data.append({
                 'employee': employee.id,
@@ -526,11 +563,11 @@ class PayrollViewSet(viewsets.ModelViewSet):
                 'department_name': employee.department.name,
                 'month': month,
                 'year': year,
-                'basic_salary': float(basic_salary),
-                'allowances': float(allowances),
-                'gross_salary': float(gross_salary),
-                'deductions': float(deductions),
-                'net_salary': float(net_salary),
+                'basic_salary': float(amounts['basic_salary']),
+                'allowances': float(amounts['allowances']),
+                'gross_salary': float(amounts['gross_salary']),
+                'deductions': float(amounts['deductions']),
+                'net_salary': float(amounts['net_salary']),
             })
         
         # Calculate totals
@@ -676,10 +713,13 @@ def hr_reports(request):
         date = today - timedelta(days=i)
         total_records = Attendance.objects.filter(tenant=tenant, date=date).count()
         present_records = Attendance.objects.filter(
-            tenant=tenant, date=date, status__in=['present', 'late']
+            tenant=tenant, date=date, status__in=['present', 'late', 'half-day', 'leave']
         ).count()
         
-        if total_records > 0:
+        active_count = active_employees.count()
+        if active_count > 0:
+            rate = round((present_records / active_count) * 100, 1)
+        elif total_records > 0:
             rate = round((present_records / total_records) * 100, 1)
         else:
             rate = 0
