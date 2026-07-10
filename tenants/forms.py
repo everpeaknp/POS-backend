@@ -2,6 +2,8 @@
 
 from django import forms
 
+from billing.account_limits import normalize_active_modules_for_plan
+from billing.plans import get_plan_type_to_code_map
 from core_backend.platform_constants import AVAILABLE_MODULES
 from tenants.models import Tenant
 
@@ -29,7 +31,11 @@ class TenantAdminForm(forms.ModelForm):
     def clean(self):
         cleaned = super().clean()
         modules = cleaned.get('active_module_choices') or []
-        cleaned['active_modules'] = list(modules)
+        plan_type = cleaned.get('plan_type') or getattr(self.instance, 'plan_type', 'free')
+        plan_code = get_plan_type_to_code_map().get(plan_type, 'free')
+        normalized = normalize_active_modules_for_plan(plan_code, modules)
+        cleaned['active_modules'] = normalized
+        cleaned['active_module_choices'] = normalized
         return cleaned
 
     def save(self, commit=True):

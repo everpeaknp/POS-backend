@@ -1,6 +1,7 @@
 from django.contrib import admin, messages
 from django.utils.html import format_html
 
+from billing.account_limits import count_tenant_members
 from billing.models import Subscription
 from billing.plans import get_plan_type_to_code_map, get_plan
 from billing.services import ensure_subscription
@@ -25,6 +26,9 @@ class SubscriptionInline(admin.StackedInline):
     can_delete = False
     readonly_fields = ['plan_code', 'status', 'current_period_start', 'current_period_end', 'auto_renew']
     fields = ['plan_code', 'status', 'current_period_start', 'current_period_end', 'auto_renew']
+
+    def get_queryset(self, request):
+        return Subscription._base_manager.all()
 
 
 @admin.register(Tenant)
@@ -117,13 +121,8 @@ class TenantAdmin(admin.ModelAdmin):
 
     @admin.display(description='Members')
     def member_count(self, obj):
-        direct = obj.users.count()
-        invited = obj.user_memberships.count()
-        total = direct + invited
-        return format_html(
-            '<span title="{} direct, {} via membership">{}</span>',
-            direct, invited, total,
-        )
+        total = count_tenant_members(obj)
+        return format_html('<span title="Active members (deduplicated)">{}</span>', total)
 
     def save_model(self, request, obj, form, change):
         super().save_model(request, obj, form, change)
@@ -133,18 +132,24 @@ class TenantAdmin(admin.ModelAdmin):
 @admin.register(OrganizationInvitation)
 class OrganizationInvitationAdmin(admin.ModelAdmin):
     list_display = [
-        'invited_user', 'tenant', 'role', 'status_display',
+        'recipient_display', 'tenant', 'role', 'status_display',
         'invited_by', 'created_at', 'expires_at', 'token',
     ]
     list_filter = ['status', 'role', 'created_at']
-    search_fields = ['invited_user__email', 'invited_user__username', 'tenant__name', 'token']
+    search_fields = [
+        'invited_user__email',
+        'invited_user__username',
+        'invited_email',
+        'tenant__name',
+        'token',
+    ]
     readonly_fields = ['token', 'created_at', 'updated_at', 'responded_at', 'is_expired']
     autocomplete_fields = ['invited_user', 'invited_by', 'tenant']
     actions = ['resend_invitation_email', 'revoke_invitations']
 
     fieldsets = (
         ('Invitation', {
-            'fields': ('tenant', 'invited_user', 'invited_by', 'role', 'message', 'token'),
+            'fields': ('tenant', 'invited_user', 'invited_email', 'invited_by', 'role', 'message', 'token'),
         }),
         ('Status', {
             'fields': ('status', 'expires_at', 'is_expired', 'responded_at'),
@@ -154,6 +159,10 @@ class OrganizationInvitationAdmin(admin.ModelAdmin):
             'classes': ('collapse',),
         }),
     )
+
+    @admin.display(description='Invitee')
+    def recipient_display(self, obj):
+        return obj.recipient_email or '—'
 
     @admin.display(description='Status', ordering='status')
     def status_display(self, obj):

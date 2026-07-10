@@ -39,7 +39,7 @@ def _restrict_admin_access():
 
     def has_permission(request):
         user = request.user
-        return bool(user.is_active and user.is_superuser)
+        return bool(user.is_active and user.is_superuser and user.is_staff)
 
     admin.site.has_permission = has_permission
     admin.site.site_header = 'KHATA Platform'

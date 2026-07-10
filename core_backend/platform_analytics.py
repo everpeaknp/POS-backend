@@ -8,7 +8,7 @@ from django.db.models import Count, Sum
 from django.db.models.functions import TruncDate
 from django.utils import timezone
 
-from billing.models import BillingPayment, Subscription, UserSubscription
+from billing.models import BillingPayment, Subscription
 from core_backend.platform_constants import AVAILABLE_MODULES
 from mail.models import EmailLog, EmailQueue
 from tenants.invitation_models import OrganizationInvitation
@@ -37,7 +37,7 @@ def platform_dashboard_stats() -> dict:
     total_users = User.objects.filter(is_active=True).count()
     new_users_month = User.objects.filter(date_joined__date__gte=month_start).count()
 
-    subs = UserSubscription.objects.select_related('user').all()
+    subs = Subscription._base_manager.select_related('tenant').all()
     subs_by_status = dict(
         subs.values('status').annotate(c=Count('id')).values_list('status', 'c')
     )

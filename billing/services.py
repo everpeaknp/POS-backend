@@ -120,15 +120,19 @@ def _add_one_month(start: date) -> date:
     return date(year, month, day)
 
 
-def ensure_subscription(tenant) -> Subscription:
-    plan_code = get_plan_type_to_code_map().get(tenant.plan_type, 'free')
+def _subscription_defaults_for_plan_code(plan_code: str) -> dict:
     today = timezone.now().date()
-    defaults = {
+    return {
         'plan_code': plan_code,
         'status': 'trialing' if plan_code == 'free' else 'active',
         'current_period_start': today,
         'current_period_end': None if plan_code == 'free' else _add_one_month(today),
     }
+
+
+def ensure_subscription(tenant) -> Subscription:
+    plan_code = get_plan_type_to_code_map().get(tenant.plan_type, 'free')
+    defaults = _subscription_defaults_for_plan_code(plan_code)
     manager = Subscription._base_manager
     try:
         subscription, created = manager.get_or_create(tenant=tenant, defaults=defaults)
@@ -136,9 +140,43 @@ def ensure_subscription(tenant) -> Subscription:
         subscription = manager.get(tenant=tenant)
         created = False
     if not created and subscription.plan_code != plan_code:
-        subscription.plan_code = plan_code
-        subscription.save(update_fields=['plan_code', 'updated_at'])
+        for field, value in _subscription_defaults_for_plan_code(plan_code).items():
+            setattr(subscription, field, value)
+        subscription.save()
     return subscription
+
+
+def apply_subscription_plan_to_tenant(subscription: Subscription) -> None:
+    """Sync tenant plan/modules from an organization subscription row."""
+    tenant = subscription.tenant
+    plan_code = subscription.plan_code
+    plan = get_plan(plan_code)
+    tenant.plan_type = plan['plan_type']
+    tenant.active_modules = normalize_active_modules_for_plan(
+        plan_code,
+        tenant.active_modules or list(plan.get('modules') or []),
+    )
+    tenant.is_active = subscription.status in ('active', 'trialing')
+    tenant.save(update_fields=['plan_type', 'active_modules', 'is_active', 'updated_at'])
+
+
+def apply_free_plan_to_tenant(tenant) -> None:
+    """Downgrade a tenant to the free plan after cancellation."""
+    plan = get_plan('free')
+    subscription = ensure_subscription(tenant)
+    subscription.plan_code = 'free'
+    subscription.status = 'trialing'
+    subscription.current_period_end = None
+    subscription.auto_renew = False
+    subscription.save(update_fields=[
+        'plan_code', 'status', 'current_period_end', 'auto_renew', 'updated_at',
+    ])
+    tenant.plan_type = 'free'
+    tenant.active_modules = normalize_active_modules_for_plan(
+        'free',
+        list(plan.get('modules') or []),
+    )
+    tenant.save(update_fields=['plan_type', 'active_modules', 'updated_at'])
 
 
 def serialize_plan(plan_code: str, current_plan_code: str | None = None) -> dict:
@@ -522,3 +560,4 @@ def admin_extend_subscription(subscription: Subscription, days: int = 30) -> Non
     subscription.current_period_end = base + timedelta(days=days)
     subscription.status = 'active'
     subscription.save(update_fields=['current_period_end', 'status', 'updated_at'])
+    apply_subscription_plan_to_tenant(subscription)

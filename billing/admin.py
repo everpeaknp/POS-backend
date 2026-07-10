@@ -172,13 +172,24 @@ class SubscriptionAdmin(admin.ModelAdmin):
 
     @admin.action(description='Set status to active')
     def activate_subscription(self, request, queryset):
-        queryset.update(status='active')
-        self.message_user(request, f'Activated {queryset.count()} subscription(s).', messages.SUCCESS)
+        updated = 0
+        for sub in queryset:
+            sub.status = 'active'
+            sub.save(update_fields=['status', 'updated_at'])
+            billing_services.apply_subscription_plan_to_tenant(sub)
+            updated += 1
+        self.message_user(request, f'Activated {updated} subscription(s).', messages.SUCCESS)
 
     @admin.action(description='Cancel subscription')
     def cancel_subscription(self, request, queryset):
-        queryset.update(status='cancelled', auto_renew=False)
-        self.message_user(request, f'Cancelled {queryset.count()} subscription(s).', messages.WARNING)
+        updated = 0
+        for sub in queryset:
+            sub.status = 'cancelled'
+            sub.auto_renew = False
+            sub.save(update_fields=['status', 'auto_renew', 'updated_at'])
+            billing_services.apply_free_plan_to_tenant(sub.tenant)
+            updated += 1
+        self.message_user(request, f'Cancelled {updated} subscription(s).', messages.WARNING)
 
 
 @admin.register(BillingPayment)

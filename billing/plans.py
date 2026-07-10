@@ -147,7 +147,8 @@ def get_plan_type_to_code_map() -> dict[str, str]:
         mapping: dict[str, str] = {}
         for plan in SubscriptionPlan.objects.filter(is_active=True).order_by('sort_order', 'code'):
             mapping[plan.plan_type] = plan.code
-        return mapping or DEFAULT_PLAN_TYPE_TO_CODE
+        # Keep defaults for plan types missing from partial DB catalogs.
+        return {**DEFAULT_PLAN_TYPE_TO_CODE, **mapping}
     return DEFAULT_PLAN_TYPE_TO_CODE
 
 

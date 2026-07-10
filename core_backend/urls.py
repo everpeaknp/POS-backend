@@ -11,7 +11,11 @@ from drf_spectacular.views import (
     SpectacularSwaggerView,
 )
 from mail.admin_views import mail_dashboard
-from core_backend.admin_views import platform_dashboard
+from core_backend.admin_views import (
+    legacy_esewa_settings_change,
+    legacy_google_oauth_settings_change,
+    platform_dashboard,
+)
 from setting.admin_views import setting_hub
 
 urlpatterns = [
@@ -21,12 +25,12 @@ urlpatterns = [
     path('admin/setting/', admin.site.admin_view(setting_hub), name='admin_setting_hub'),
     path(
         'admin/billing/googleoauthsettings/<path:object_id>/change/',
-        admin.site.admin_view(setting_hub),
+        admin.site.admin_view(legacy_google_oauth_settings_change),
         name='admin_billing_googleoauthsettings_legacy',
     ),
     path(
         'admin/billing/esewasettings/<path:object_id>/change/',
-        admin.site.admin_view(setting_hub),
+        admin.site.admin_view(legacy_esewa_settings_change),
         name='admin_billing_esewasettings_legacy',
     ),
     path('admin/', admin.site.urls),

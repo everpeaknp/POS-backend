@@ -4,6 +4,7 @@ from django.shortcuts import redirect
 from core_backend.admin_utils import admin_render
 from core_backend.platform_analytics import platform_dashboard_stats
 from mail import services as mail_services
+from setting.models import EsewaSettings, GoogleOAuthSettings
 
 
 def platform_dashboard(request):
@@ -24,3 +25,15 @@ def platform_dashboard(request):
         'stats': stats,
         'charts': stats['charts'],
     })
+
+
+def legacy_esewa_settings_change(request, object_id=None):
+    """Redirect old /admin/billing/esewasettings/... URLs to setting app."""
+    settings_obj = EsewaSettings.get_solo()
+    return redirect('admin:setting_esewasettings_change', settings_obj.pk)
+
+
+def legacy_google_oauth_settings_change(request, object_id=None):
+    """Redirect old /admin/billing/googleoauthsettings/... URLs to setting app."""
+    settings_obj = GoogleOAuthSettings.get_solo()
+    return redirect('admin:setting_googleoauthsettings_change', settings_obj.pk)

@@ -69,9 +69,9 @@ class SmtpSettingsAdmin(admin.ModelAdmin):
     def smtp_health(self, obj):
         if not obj.enabled:
             return format_html('<span style="color:#6b7280;">SMTP disabled</span>')
-        ok, msg = services.test_smtp_connection()
-        color = '#16a34a' if ok else '#dc2626'
-        return format_html('<span style="color:{};">{}</span>', color, msg)
+        return format_html(
+            '<span style="color:#6b7280;">Use <strong>Test SMTP connection</strong> below to verify.</span>'
+        )
 
     def get_urls(self):
         urls = super().get_urls()
@@ -263,7 +263,15 @@ class MarketingCampaignAdmin(admin.ModelAdmin):
 
     @admin.action(description='Send campaign now')
     def send_campaign_now(self, request, queryset):
-        for campaign in queryset:
+        sendable = queryset.filter(status__in=('draft', 'scheduled'))
+        skipped = queryset.exclude(status__in=('draft', 'scheduled')).count()
+        if skipped:
+            self.message_user(
+                request,
+                f'Skipped {skipped} campaign(s) that are already sent or not sendable.',
+                messages.WARNING,
+            )
+        for campaign in sendable:
             try:
                 count = services.launch_campaign(campaign)
                 self.message_user(request, f'Sent "{campaign.name}" to {count} recipients.', messages.SUCCESS)

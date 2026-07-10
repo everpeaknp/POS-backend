@@ -18,6 +18,9 @@ urlpatterns = [
     # Module-Specific Reports
     path('inventory/', ReportViewSet.as_view({'get': 'inventory_valuation'}), name='report-inventory'),
     path('inventory-valuation/', ReportViewSet.as_view({'get': 'inventory_valuation'}), name='report-inventory-valuation'),
+    path('inventory-stock-summary/', ReportViewSet.as_view({'get': 'inventory_stock_summary'}), name='report-inventory-stock-summary'),
+    path('inventory-low-stock/', ReportViewSet.as_view({'get': 'inventory_low_stock'}), name='report-inventory-low-stock'),
+    path('inventory-valuation-report/', ReportViewSet.as_view({'get': 'inventory_valuation_report'}), name='report-inventory-valuation-report'),
     path('sales/', ReportViewSet.as_view({'get': 'sales_performance'}), name='report-sales'),
     path('sales-performance/', ReportViewSet.as_view({'get': 'sales_performance'}), name='report-sales-performance'),
     path('purchase/', ReportViewSet.as_view({'get': 'purchase_reports'}), name='report-purchase'),
