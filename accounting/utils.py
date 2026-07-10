@@ -11,7 +11,7 @@ from accounting.models import Account, BankTransaction, JournalEntry, JournalLin
 
 def generate_entry_number(tenant) -> str:
     """Sequential JE number shared by manual and auto-posted entries."""
-    last_entry = JournalEntry.objects.filter(tenant=tenant).order_by('-id').first()
+    last_entry = JournalEntry._base_manager.filter(tenant=tenant).order_by('-id').first()
     if last_entry and last_entry.entry_number.startswith('JE-'):
         try:
             last_num = int(last_entry.entry_number.split('-')[1])

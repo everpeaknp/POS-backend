@@ -9,7 +9,7 @@ from decimal import Decimal
 from datetime import datetime, timedelta
 
 from sales.models import SalesOrder, Invoice, Customer, PaymentReceived
-from purchase.models import PurchaseInvoice
+from purchase.models import PurchaseInvoice, PurchaseOrderLine
 from construction.models import Site, MaterialConsumption, Attendance
 from inventory.models import Product, Stock
 from accounting.models import JournalEntry
@@ -792,12 +792,17 @@ class ReportViewSet(viewsets.ViewSet):
         """Comprehensive purchase reports"""
         try:
             tenant = self.get_tenant()
+            if not tenant:
+                return Response(
+                    {'detail': 'Tenant context is required'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
             date_range = request.query_params.get('date_range', 'month')
-            
-            # Calculate date range
+
             from django.utils import timezone
             now = timezone.now().date()
-            
+
             if date_range == 'week':
                 start_date = now - timedelta(days=now.weekday() + 1)
             elif date_range == 'quarter':
@@ -807,153 +812,180 @@ class ReportViewSet(viewsets.ViewSet):
                 start_date = now.replace(month=1, day=1)
             else:  # month
                 start_date = now.replace(day=1)
-            
+
             end_date = now
-            
-            # ===== PURCHASE SUMMARY =====
-            invoices_qs = PurchaseInvoice.objects.filter(
+
+            line_base_amount = F('quantity') * F('unit_price')
+            line_tax_amount = line_base_amount * F('tax_percent') / Value(Decimal('100'))
+
+            po_lines_qs = PurchaseOrderLine._base_manager.filter(
+                tenant=tenant,
+                purchase_order__date__gte=start_date,
+                purchase_order__date__lte=end_date,
+            ).exclude(
+                purchase_order__status__in=['Draft', 'Cancelled'],
+            )
+
+            invoices_qs = PurchaseInvoice._base_manager.filter(
                 tenant=tenant,
                 date__gte=start_date,
-                date__lte=end_date
+                date__lte=end_date,
             )
-            
-            total_purchases = invoices_qs.aggregate(
+
+            total_purchases = po_lines_qs.aggregate(
                 total=Coalesce(Sum('amount'), Value(Decimal('0.00')))
             )['total']
-            
-            total_orders = invoices_qs.count()
+            if not total_purchases:
+                total_purchases = po_lines_qs.aggregate(
+                    total=Coalesce(
+                        Sum(line_base_amount + line_tax_amount, output_field=DecimalField()),
+                        Value(Decimal('0.00')),
+                    )
+                )['total']
+
+            total_orders = po_lines_qs.values('purchase_order_id').distinct().count()
             avg_order_value = (total_purchases / total_orders) if total_orders > 0 else Decimal('0.00')
-            
+
             total_paid = invoices_qs.aggregate(
                 total=Coalesce(Sum('paid_amount'), Value(Decimal('0.00')))
             )['total']
-            
-            payment_rate = (total_paid / total_purchases * 100) if total_purchases > 0 else Decimal('0.00')
-            
-            # ===== BY SUPPLIER =====
+            invoice_total = invoices_qs.aggregate(
+                total=Coalesce(Sum('amount'), Value(Decimal('0.00')))
+            )['total']
+            payment_denominator = invoice_total if invoice_total > 0 else total_purchases
+            payment_rate = (
+                (total_paid / payment_denominator * 100) if payment_denominator > 0 else Decimal('0.00')
+            )
+
+            invoice_outstanding = {
+                str(row['supplier_id']): row['outstanding'] or Decimal('0.00')
+                for row in invoices_qs.values('supplier_id').annotate(
+                    outstanding=Coalesce(
+                        Sum(F('amount') - F('paid_amount'), output_field=DecimalField()),
+                        Value(Decimal('0.00')),
+                    )
+                )
+            }
+
             by_supplier = []
-            try:
-                suppliers_data = invoices_qs.values(
-                    'supplier__id', 'supplier__name'
-                ).annotate(
-                    total_orders=Count('id'),
-                    total_amount=Sum('amount'),
-                    outstanding=Sum(F('amount') - F('paid_amount'), output_field=DecimalField())
-                ).order_by('-total_amount')
-                
-                for item in suppliers_data:
-                    by_supplier.append({
-                        'supplier_id': str(item['supplier__id']),
-                        'supplier_name': item['supplier__name'] or 'Unknown',
-                        'orders': item['total_orders'] or 0,
-                        'amount': float(item['total_amount'] or 0),
-                        'outstanding': float(item['outstanding'] or 0),
-                        'status': 'active',
-                    })
-            except Exception as e:
-                print(f"[Purchase Reports - By Supplier Error] {str(e)}")
-            
-            # ===== BY PRODUCT =====
+            suppliers_data = po_lines_qs.values(
+                'purchase_order__supplier__id',
+                'purchase_order__supplier__name',
+                'purchase_order__supplier__status',
+            ).annotate(
+                total_orders=Count('purchase_order_id', distinct=True),
+                total_amount=Coalesce(Sum('amount'), Value(Decimal('0.00'))),
+            ).order_by('-total_amount')
+
+            for item in suppliers_data:
+                supplier_id = str(item['purchase_order__supplier__id'])
+                amount = item['total_amount'] or Decimal('0.00')
+                outstanding = invoice_outstanding.get(supplier_id, amount)
+                by_supplier.append({
+                    'supplier_id': supplier_id,
+                    'supplier_name': item['purchase_order__supplier__name'] or 'Unknown',
+                    'orders': item['total_orders'] or 0,
+                    'amount': float(amount),
+                    'outstanding': float(outstanding),
+                    'status': item['purchase_order__supplier__status'] or 'active',
+                })
+
             by_product = []
-            try:
-                from purchase.models import PurchaseOrderLine
-                products_data = PurchaseOrderLine.objects.filter(
-                    purchase_order__tenant=tenant,
-                    purchase_order__date__gte=start_date,
-                    purchase_order__date__lte=end_date
-                ).values(
-                    'product__id', 'product__name', 'product__unit'
-                ).annotate(
-                    total_qty=Sum('quantity'),
-                    total_amount=Sum(F('quantity') * F('unit_price'), output_field=DecimalField()),
-                    avg_price=Avg('unit_price')
-                ).order_by('-total_amount')
-                
-                for item in products_data:
-                    by_product.append({
-                        'product_id': str(item['product__id']),
-                        'product_name': item['product__name'] or 'Unknown',
-                        'unit': item['product__unit'] or 'unit',
-                        'qty': int(item['total_qty'] or 0),
-                        'amount': float(item['total_amount'] or 0),
-                        'avg_price': float(item['avg_price'] or 0),
-                    })
-            except Exception as e:
-                print(f"[Purchase Reports - By Product Error] {str(e)}")
-            
-            # ===== TAX REPORT =====
+            products_data = po_lines_qs.values(
+                'product__id',
+                'product__name',
+                'product__unit__abbreviation',
+            ).annotate(
+                total_qty=Coalesce(Sum('quantity'), Value(Decimal('0.00'))),
+                total_amount=Coalesce(
+                    Sum(line_base_amount, output_field=DecimalField()),
+                    Value(Decimal('0.00')),
+                ),
+                avg_price=Coalesce(Avg('unit_price'), Value(Decimal('0.00'))),
+            ).order_by('-total_amount')
+
+            for item in products_data:
+                by_product.append({
+                    'product_id': str(item['product__id']),
+                    'product_name': item['product__name'] or 'Unknown',
+                    'unit': item['product__unit__abbreviation'] or 'unit',
+                    'qty': float(item['total_qty'] or 0),
+                    'amount': float(item['total_amount'] or 0),
+                    'avg_price': float(item['avg_price'] or 0),
+                })
+
             tax_data = []
             current = start_date
             while current <= end_date:
-                # Calculate month end
                 if current.month == 12:
                     month_end = current.replace(year=current.year + 1, month=1, day=1) - timedelta(days=1)
                 else:
                     month_end = current.replace(month=current.month + 1, day=1) - timedelta(days=1)
                 month_end = min(month_end, end_date)
-                
-                month_invoices = invoices_qs.filter(
-                    date__gte=current,
-                    date__lte=month_end
+
+                month_lines = po_lines_qs.filter(
+                    purchase_order__date__gte=current,
+                    purchase_order__date__lte=month_end,
                 )
-                
-                taxable_purchases = month_invoices.aggregate(
-                    total=Coalesce(Sum('amount'), Value(Decimal('0.00')))
+                month_taxable = month_lines.aggregate(
+                    total=Coalesce(
+                        Sum(line_base_amount, output_field=DecimalField()),
+                        Value(Decimal('0.00')),
+                    )
                 )['total']
-                
-                # Assuming 13% VAT
-                vat_amount = taxable_purchases * Decimal('0.13')
-                
+                month_vat = month_lines.aggregate(
+                    total=Coalesce(
+                        Sum(line_tax_amount, output_field=DecimalField()),
+                        Value(Decimal('0.00')),
+                    )
+                )['total']
+
                 tax_data.append({
                     'month': current.strftime('%b'),
-                    'taxable': float(taxable_purchases),
-                    'vat': float(vat_amount),
+                    'taxable': float(month_taxable),
+                    'vat': float(month_vat),
                 })
-                
-                # Move to next month
+
                 if current.month == 12:
                     current = current.replace(year=current.year + 1, month=1, day=1)
                 else:
                     current = current.replace(month=current.month + 1, day=1)
-            
+
             total_taxable = sum(item['taxable'] for item in tax_data)
             total_vat = sum(item['vat'] for item in tax_data)
-            
-            # ===== MONTHLY TREND =====
+
             monthly_trend = []
             current = start_date
             while current <= end_date:
-                # Calculate month end
                 if current.month == 12:
                     month_end = current.replace(year=current.year + 1, month=1, day=1) - timedelta(days=1)
                 else:
                     month_end = current.replace(month=current.month + 1, day=1) - timedelta(days=1)
                 month_end = min(month_end, end_date)
-                
-                month_purchases = invoices_qs.filter(
-                    date__gte=current,
-                    date__lte=month_end
+
+                month_purchases = po_lines_qs.filter(
+                    purchase_order__date__gte=current,
+                    purchase_order__date__lte=month_end,
                 ).aggregate(
                     total=Coalesce(Sum('amount'), Value(Decimal('0.00')))
                 )['total']
-                
+
                 monthly_trend.append({
                     'month': current.strftime('%b'),
-                    'purchases': float(month_purchases),
+                    'purchases': float(month_purchases or 0),
                 })
-                
-                # Move to next month
+
                 if current.month == 12:
                     current = current.replace(year=current.year + 1, month=1, day=1)
                 else:
                     current = current.replace(month=current.month + 1, day=1)
-            
+
             return Response({
                 'summary': {
-                    'total_purchases': float(total_purchases),
+                    'total_purchases': float(total_purchases or 0),
                     'total_orders': total_orders,
                     'avg_order_value': float(avg_order_value),
-                    'total_paid': float(total_paid),
+                    'total_paid': float(total_paid or 0),
                     'payment_rate_percentage': float(round(payment_rate, 2)),
                 },
                 'by_supplier': by_supplier,

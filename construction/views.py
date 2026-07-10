@@ -241,9 +241,16 @@ class AttendanceViewSet(viewsets.ModelViewSet):
     ordering = ['-date']
     
     def get_queryset(self):
-        return Attendance.objects.filter(tenant=self.request.user.tenant).select_related(
+        qs = Attendance.objects.filter(tenant=self.request.user.tenant).select_related(
             'worker', 'site', 'marked_by'
         )
+        date_gte = self.request.query_params.get('date__gte')
+        date_lte = self.request.query_params.get('date__lte')
+        if date_gte:
+            qs = qs.filter(date__gte=date_gte)
+        if date_lte:
+            qs = qs.filter(date__lte=date_lte)
+        return qs
     
     def perform_create(self, serializer):
         serializer.save(tenant=self.request.user.tenant)

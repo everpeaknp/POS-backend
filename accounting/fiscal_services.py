@@ -13,7 +13,7 @@ def ensure_fiscal_year(tenant, bs_start_year: int | None = None) -> FiscalYear:
     start_date, end_date = bs_fiscal_year_ad_range(bs_start_year)
     label = bs_fiscal_label(bs_start_year)
 
-    fy, _ = FiscalYear.objects.get_or_create(
+    fy, _ = FiscalYear._base_manager.get_or_create(
         tenant=tenant,
         bs_start_year=bs_start_year,
         defaults={
@@ -39,4 +39,4 @@ def close_fiscal_year(fiscal_year: FiscalYear, *, user=None, notes: str = '') ->
 
 def list_fiscal_years(tenant):
     ensure_fiscal_year(tenant)
-    return FiscalYear.objects.filter(tenant=tenant).order_by('-start_date')
+    return FiscalYear._base_manager.filter(tenant=tenant).order_by('-start_date')
