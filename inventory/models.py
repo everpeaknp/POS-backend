@@ -104,6 +104,11 @@ class Product(TenantModel):
     
     # Stock Management
     reorder_level = models.DecimalField(max_digits=10, decimal_places=2, default=0)
+    expiry_date = models.DateField(
+        null=True,
+        blank=True,
+        help_text='Optional expiry date for perishable products',
+    )
     
     # Status
     status = models.CharField(

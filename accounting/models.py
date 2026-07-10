@@ -80,6 +80,11 @@ class JournalEntry(TenantModel):
         ('Payment', 'Payment'),
         ('Receipt', 'Receipt'),
         ('Adjustment', 'Adjustment'),
+        ('Construction', 'Construction'),
+        ('Payroll', 'Payroll'),
+        ('Contra', 'Contra'),
+        ('Opening', 'Opening'),
+        ('Closing', 'Closing'),
     ]
     
     STATUS_CHOICES = [
@@ -88,7 +93,7 @@ class JournalEntry(TenantModel):
         ('reversed', 'Reversed'),
     ]
     
-    entry_number = models.CharField(max_length=50, unique=True, db_index=True)
+    entry_number = models.CharField(max_length=50, db_index=True)
     date = models.DateField()
     reference = models.CharField(max_length=100, blank=True, null=True)
     description = models.TextField()
@@ -116,6 +121,7 @@ class JournalEntry(TenantModel):
             models.Index(fields=['tenant', 'status']),
             models.Index(fields=['tenant', 'type']),
         ]
+        unique_together = [['tenant', 'entry_number']]
     
     def __str__(self):
         return f"{self.entry_number} - {self.description}"
@@ -283,7 +289,7 @@ class VATReturn(TenantModel):
         ('paid', 'Paid'),
     ]
     
-    return_number = models.CharField(max_length=50, unique=True, db_index=True)
+    return_number = models.CharField(max_length=50, db_index=True)
     period = models.CharField(max_length=50)  # e.g., "Magh 2081"
     from_date = models.DateField()
     to_date = models.DateField()
@@ -305,6 +311,29 @@ class VATReturn(TenantModel):
             models.Index(fields=['tenant', 'status']),
             models.Index(fields=['tenant', 'from_date', 'to_date']),
         ]
+        unique_together = [['tenant', 'return_number']]
     
     def __str__(self):
         return f"{self.return_number} - {self.period}"
+
+
+class FiscalYear(TenantModel):
+    """Nepal fiscal year (Shrawan–Ashadh) with optional period lock."""
+
+    bs_start_year = models.PositiveIntegerField(
+        help_text='Bikram Sambat year when fiscal year starts (Shrawan)',
+    )
+    label = models.CharField(max_length=20, help_text='e.g. 2081/82')
+    start_date = models.DateField()
+    end_date = models.DateField()
+    is_closed = models.BooleanField(default=False)
+    closed_at = models.DateTimeField(null=True, blank=True)
+    notes = models.TextField(blank=True)
+
+    class Meta:
+        db_table = 'accounting_fiscal_years'
+        ordering = ['-start_date']
+        unique_together = [['tenant', 'bs_start_year']]
+
+    def __str__(self):
+        return f"FY {self.label}"

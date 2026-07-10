@@ -11,21 +11,45 @@ from django.utils import timezone
 from django.db import transaction
 from django.db.models import Sum, Q, Count
 from decimal import Decimal
+from datetime import date
 
-from .services import apply_entry_balances
+from accounting.models import Account, JournalEntry, JournalLine, BankAccount, BankTransaction, TaxRule, VATReturn, FiscalYear
+from accounting.reports import (
+    build_account_distribution,
+    build_income_expense_breakdown,
+    build_journal_register,
+    build_payable_aging,
+    build_receivable_aging,
+    build_simple_cash_flow,
+    build_vat_purchase_register,
+    build_vat_sales_register,
+)
+from accounting.fiscal_services import close_fiscal_year, ensure_fiscal_year, list_fiscal_years
+from accounting.services import apply_entry_balances, assert_period_open
+from users.audit_utils import audit_log
+from tenants.utils import get_request_tenant
+from .constants import POSTED_GL_STATUSES
+from .dashboard import build_accounting_dashboard
+from .fiscal_utils import bs_fiscal_label, bs_fiscal_year_ad_range, current_bs_fiscal_start_year
 from .utils import (
     calculate_vat_for_period,
     complete_bank_reconciliation,
     generate_entry_number,
     record_vat_payment,
 )
-
-from .models import Account, JournalEntry, JournalLine, BankAccount, BankTransaction, TaxRule, VATReturn
-from tenants.utils import get_request_tenant
 from .serializers import (
     AccountSerializer, JournalEntrySerializer, BankAccountSerializer,
-    BankTransactionSerializer, TaxRuleSerializer, VATReturnSerializer
+    BankTransactionSerializer, TaxRuleSerializer, VATReturnSerializer, FiscalYearSerializer,
 )
+
+
+def _parse_report_dates(request) -> tuple[date, date]:
+    today = timezone.now().date()
+    from_raw = request.query_params.get('from_date')
+    to_raw = request.query_params.get('to_date')
+    from_date = date.fromisoformat(from_raw) if from_raw else today.replace(day=1)
+    to_date = date.fromisoformat(to_raw) if to_raw else today
+    return from_date, to_date
 
 
 @extend_schema_view(
@@ -148,7 +172,7 @@ class AccountViewSet(viewsets.ModelViewSet):
         base_qs = JournalLine.objects.filter(
             tenant=tenant,
             account=account,
-            journal_entry__status='posted',
+            journal_entry__status__in=POSTED_GL_STATUSES,
         )
 
         balance = Decimal('0.00')
@@ -215,7 +239,7 @@ class AccountViewSet(viewsets.ModelViewSet):
             lines = JournalLine.objects.filter(
                 tenant=tenant,
                 account=account,
-                journal_entry__status='posted',
+                journal_entry__status__in=POSTED_GL_STATUSES,
             )
 
             if as_of_date:
@@ -295,14 +319,16 @@ class AccountViewSet(viewsets.ModelViewSet):
 
         income_accounts = []
         expense_accounts = []
+        cogs_accounts = []
         total_income = Decimal('0.00')
         total_expenses = Decimal('0.00')
+        total_cogs = Decimal('0.00')
 
         for account in accounts:
             lines = JournalLine.objects.filter(
                 tenant=tenant,
                 account=account,
-                journal_entry__status='posted',
+                journal_entry__status__in=POSTED_GL_STATUSES,
             )
 
             lines = lines.filter(journal_entry__date__gte=from_date, journal_entry__date__lte=to_date)
@@ -330,14 +356,21 @@ class AccountViewSet(viewsets.ModelViewSet):
                 amount = debit_sum - credit_sum
                 if amount != 0:
                     total_expenses += amount
-                    expense_accounts.append({
+                    row = {
                         'id': account.id,
                         'code': account.code,
                         'name': account.name,
                         'sub_type': account.sub_type,
                         'amount': float(amount),
-                    })
+                    }
+                    if account.sub_type == 'COGS':
+                        total_cogs += amount
+                        cogs_accounts.append(row)
+                    else:
+                        expense_accounts.append(row)
 
+        gross_profit = total_income - total_cogs
+        operating_expenses = total_expenses - total_cogs
         net_profit = total_income - total_expenses
         income_margin = (net_profit / total_income * 100) if total_income > 0 else Decimal('0.00')
 
@@ -348,10 +381,16 @@ class AccountViewSet(viewsets.ModelViewSet):
                 'accounts': income_accounts,
                 'total': float(total_income),
             },
+            'cogs': {
+                'accounts': cogs_accounts,
+                'total': float(total_cogs),
+            },
+            'gross_profit': float(gross_profit),
             'expenses': {
                 'accounts': expense_accounts,
-                'total': float(total_expenses),
+                'total': float(operating_expenses),
             },
+            'operating_expenses_total': float(operating_expenses),
             'net_profit': float(net_profit),
             'net_margin': float(income_margin),
         })
@@ -387,7 +426,7 @@ class AccountViewSet(viewsets.ModelViewSet):
             lines = JournalLine.objects.filter(
                 tenant=tenant,
                 account=account,
-                journal_entry__status='posted',
+                journal_entry__status__in=POSTED_GL_STATUSES,
                 journal_entry__date__lte=as_of_date,
             )
             aggregates = lines.aggregate(
@@ -448,7 +487,7 @@ class AccountViewSet(viewsets.ModelViewSet):
             lines = JournalLine.objects.filter(
                 tenant=tenant,
                 account=account,
-                journal_entry__status='posted',
+                journal_entry__status__in=POSTED_GL_STATUSES,
                 journal_entry__date__lte=as_of_date,
             )
             aggregates = lines.aggregate(
@@ -510,6 +549,82 @@ class AccountViewSet(viewsets.ModelViewSet):
             'total_liabilities_equity': float(total_liab_equity),
             'is_balanced': is_balanced,
         })
+
+    @extend_schema(tags=['Accounting - Reports'], summary='Accounts receivable aging')
+    @action(detail=False, methods=['get'], url_path='receivable_aging')
+    def receivable_aging(self, request):
+        tenant = get_request_tenant(request.user)
+        if not tenant:
+            return Response({'detail': 'No tenant'}, status=status.HTTP_400_BAD_REQUEST)
+        return Response(build_receivable_aging(tenant))
+
+    @extend_schema(tags=['Accounting - Reports'], summary='Accounts payable aging')
+    @action(detail=False, methods=['get'], url_path='payable_aging')
+    def payable_aging(self, request):
+        tenant = get_request_tenant(request.user)
+        if not tenant:
+            return Response({'detail': 'No tenant'}, status=status.HTTP_400_BAD_REQUEST)
+        return Response(build_payable_aging(tenant))
+
+    @extend_schema(tags=['Accounting - Reports'], summary='Journal register')
+    @action(detail=False, methods=['get'], url_path='journal_register')
+    def journal_register(self, request):
+        tenant = get_request_tenant(request.user)
+        if not tenant:
+            return Response({'detail': 'No tenant'}, status=status.HTTP_400_BAD_REQUEST)
+        from_date, to_date = _parse_report_dates(request)
+        return Response(build_journal_register(tenant, from_date, to_date))
+
+    @extend_schema(tags=['Accounting - Reports'], summary='Sales VAT register')
+    @action(detail=False, methods=['get'], url_path='vat_sales_register')
+    def vat_sales_register(self, request):
+        tenant = get_request_tenant(request.user)
+        if not tenant:
+            return Response({'detail': 'No tenant'}, status=status.HTTP_400_BAD_REQUEST)
+        from_date, to_date = _parse_report_dates(request)
+        return Response(build_vat_sales_register(tenant, from_date, to_date))
+
+    @extend_schema(tags=['Accounting - Reports'], summary='Purchase VAT register')
+    @action(detail=False, methods=['get'], url_path='vat_purchase_register')
+    def vat_purchase_register(self, request):
+        tenant = get_request_tenant(request.user)
+        if not tenant:
+            return Response({'detail': 'No tenant'}, status=status.HTTP_400_BAD_REQUEST)
+        from_date, to_date = _parse_report_dates(request)
+        return Response(build_vat_purchase_register(tenant, from_date, to_date))
+
+    @extend_schema(tags=['Accounting - Reports'], summary='Simple cash flow summary')
+    @action(detail=False, methods=['get'], url_path='cash_flow_summary')
+    def cash_flow_summary(self, request):
+        tenant = get_request_tenant(request.user)
+        if not tenant:
+            return Response({'detail': 'No tenant'}, status=status.HTTP_400_BAD_REQUEST)
+        from_date, to_date = _parse_report_dates(request)
+        return Response(build_simple_cash_flow(tenant, from_date, to_date))
+
+    @extend_schema(
+        tags=['Accounting - Reports'],
+        summary='Accounting dashboard summary',
+        description='KPIs, trends, VAT, receivables/payables for the accounting overview',
+        parameters=[
+            OpenApiParameter('from_date', type=str, description='Period start (YYYY-MM-DD)'),
+            OpenApiParameter('to_date', type=str, description='Period end (YYYY-MM-DD)'),
+            OpenApiParameter('bs_fiscal_start_year', type=int, description='Nepal BS fiscal year start (Shrawan year)'),
+        ],
+    )
+    @action(detail=False, methods=['get'], url_path='dashboard_summary')
+    def dashboard_summary(self, request):
+        tenant = get_request_tenant(request.user)
+        if not tenant:
+            return Response({'detail': 'No tenant'}, status=status.HTTP_400_BAD_REQUEST)
+
+        data = build_accounting_dashboard(
+            tenant,
+            from_date=request.query_params.get('from_date'),
+            to_date=request.query_params.get('to_date'),
+            bs_fiscal_start_year=request.query_params.get('bs_fiscal_start_year'),
+        )
+        return Response(data)
 
 
 @extend_schema_view(
@@ -582,12 +697,25 @@ class JournalEntryViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
+        try:
+            assert_period_open(get_request_tenant(request.user), entry.date)
+        except ValueError as exc:
+            return Response({'error': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
         with transaction.atomic():
             apply_entry_balances(entry)
             entry.status = 'posted'
             entry.posted_by = request.user
             entry.posted_date = timezone.now()
             entry.save(update_fields=['status', 'posted_by', 'posted_date', 'updated_at'])
+
+        audit_log(
+            request,
+            action='post',
+            module='accounting',
+            description=f'Posted journal entry {entry.entry_number}',
+            metadata={'entry_id': entry.id, 'entry_number': entry.entry_number, 'total': str(entry.total_debit)},
+        )
 
         serializer = self.get_serializer(entry)
         return Response(serializer.data)
@@ -651,8 +779,64 @@ class JournalEntryViewSet(viewsets.ModelViewSet):
                 'status', 'reversed_by', 'reversed_date', 'reversal_entry', 'updated_at',
             ])
 
+        audit_log(
+            request,
+            action='reverse',
+            module='accounting',
+            description=f'Reversed journal entry {entry.entry_number} → {reversal_entry.entry_number}',
+            metadata={
+                'original_id': entry.id,
+                'reversal_id': reversal_entry.id,
+                'entry_number': entry.entry_number,
+            },
+        )
+
         serializer = self.get_serializer(reversal_entry)
         return Response(serializer.data)
+
+    @extend_schema(
+        tags=['Accounting - Journal Entries'],
+        summary='Copy journal entry as draft',
+        description='Duplicate a journal entry as a new draft voucher',
+    )
+    @action(detail=True, methods=['post'])
+    def copy_entry(self, request, pk=None):
+        entry = self.get_object()
+        tenant = get_request_tenant(request.user)
+        if not tenant:
+            return Response({'detail': 'No tenant'}, status=status.HTTP_400_BAD_REQUEST)
+
+        with transaction.atomic():
+            copy = JournalEntry.objects.create(
+                tenant=tenant,
+                entry_number=generate_entry_number(tenant),
+                date=timezone.now().date(),
+                description=f"Copy of {entry.entry_number}: {entry.description}",
+                reference=entry.reference or '',
+                type=entry.type,
+                status='draft',
+                total_debit=entry.total_debit,
+                total_credit=entry.total_credit,
+            )
+            for line in entry.lines.all():
+                JournalLine.objects.create(
+                    journal_entry=copy,
+                    tenant=tenant,
+                    account=line.account,
+                    description=line.description,
+                    debit=line.debit,
+                    credit=line.credit,
+                )
+
+        audit_log(
+            request,
+            action='copy',
+            module='accounting',
+            description=f'Copied journal {entry.entry_number} → draft {copy.entry_number}',
+            metadata={'source_id': entry.id, 'copy_id': copy.id},
+        )
+        serializer = self.get_serializer(copy)
+        return Response(serializer.data, status=status.HTTP_201_CREATED)
 
     @extend_schema(
         tags=['Accounting - Journal Entries'],
@@ -1006,3 +1190,63 @@ class VATReturnViewSet(viewsets.ModelViewSet):
 
         serializer = self.get_serializer(vat_return)
         return Response(serializer.data)
+
+
+@extend_schema_view(
+    list=extend_schema(tags=['Accounting - Fiscal Year'], summary='List fiscal years'),
+    retrieve=extend_schema(tags=['Accounting - Fiscal Year'], summary='Get fiscal year'),
+    create=extend_schema(tags=['Accounting - Fiscal Year'], summary='Create or ensure fiscal year'),
+)
+class FiscalYearViewSet(viewsets.ModelViewSet):
+    """Nepal BS fiscal years with period close."""
+
+    serializer_class = FiscalYearSerializer
+    permission_classes = [DynamicModulePermission]
+    permission_module = 'accounting'
+    http_method_names = ['get', 'post', 'head', 'options']
+
+    def get_queryset(self):
+        tenant = get_request_tenant(self.request.user)
+        if not tenant:
+            return FiscalYear.objects.none()
+        return list_fiscal_years(tenant)
+
+    def create(self, request, *args, **kwargs):
+        tenant = get_request_tenant(request.user)
+        if not tenant:
+            return Response({'detail': 'No tenant'}, status=status.HTTP_400_BAD_REQUEST)
+        bs_start_year = request.data.get('bs_start_year') or current_bs_fiscal_start_year()
+        try:
+            bs_start_year = int(bs_start_year)
+        except (TypeError, ValueError):
+            return Response({'error': 'Invalid bs_start_year'}, status=status.HTTP_400_BAD_REQUEST)
+        fy = ensure_fiscal_year(tenant, bs_start_year)
+        return Response(FiscalYearSerializer(fy).data, status=status.HTTP_201_CREATED)
+
+    @extend_schema(tags=['Accounting - Fiscal Year'], summary='Ensure current BS fiscal year exists')
+    @action(detail=False, methods=['post'], url_path='ensure_current')
+    def ensure_current(self, request):
+        tenant = get_request_tenant(request.user)
+        if not tenant:
+            return Response({'detail': 'No tenant'}, status=status.HTTP_400_BAD_REQUEST)
+        fy = ensure_fiscal_year(tenant)
+        return Response(FiscalYearSerializer(fy).data)
+
+    @extend_schema(tags=['Accounting - Fiscal Year'], summary='Close fiscal year (period lock)')
+    @action(detail=True, methods=['post'])
+    def close(self, request, pk=None):
+        fy = self.get_object()
+        notes = request.data.get('notes', '')
+        try:
+            close_fiscal_year(fy, user=request.user, notes=notes)
+        except ValueError as exc:
+            return Response({'error': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+        audit_log(
+            request,
+            action='close',
+            module='accounting',
+            description=f'Closed fiscal year {fy.label}',
+            metadata={'fiscal_year_id': fy.id, 'label': fy.label},
+        )
+        return Response(FiscalYearSerializer(fy).data)

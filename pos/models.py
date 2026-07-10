@@ -13,6 +13,7 @@ from django.db import models
 from django.core.validators import MinValueValidator, MaxValueValidator
 from decimal import Decimal
 from utils.models import TenantModel
+from .constants import PAYMENT_METHOD_CHOICES
 
 
 class POSSession(TenantModel):
@@ -97,7 +98,19 @@ class POSSession(TenantModel):
         default=0,
         validators=[MinValueValidator(Decimal('0'))]
     )
-    upi_sales = models.DecimalField(
+    esewa_sales = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        default=0,
+        validators=[MinValueValidator(Decimal('0'))]
+    )
+    khalti_sales = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        default=0,
+        validators=[MinValueValidator(Decimal('0'))]
+    )
+    fonepay_sales = models.DecimalField(
         max_digits=12,
         decimal_places=2,
         default=0,
@@ -244,12 +257,7 @@ class POSTransaction(TenantModel):
         ('refunded', 'Refunded'),
     ]
     
-    PAYMENT_METHOD_CHOICES = [
-        ('cash', 'Cash'),
-        ('card', 'Card'),
-        ('upi', 'UPI/Digital'),
-        ('credit', 'Credit'),
-    ]
+    PAYMENT_METHOD_CHOICES = PAYMENT_METHOD_CHOICES
     
     # Transaction details
     transaction_number = models.CharField(max_length=50)
@@ -470,7 +478,9 @@ class POSDailySalesReport(TenantModel):
     # Payment method breakdown
     cash_sales = models.DecimalField(max_digits=12, decimal_places=2, default=0)
     card_sales = models.DecimalField(max_digits=12, decimal_places=2, default=0)
-    upi_sales = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    esewa_sales = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    khalti_sales = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    fonepay_sales = models.DecimalField(max_digits=12, decimal_places=2, default=0)
     credit_sales = models.DecimalField(max_digits=12, decimal_places=2, default=0)
     
     # Cancelled/Refunded

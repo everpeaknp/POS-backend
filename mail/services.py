@@ -290,6 +290,7 @@ def render_system_email(slug: str, context: dict) -> tuple[str, str, str]:
         'billing-plan-activated': 'mail/emails/billing_plan_activated.html',
         'billing-payment-success': 'mail/emails/billing_payment_success.html',
         'billing-payment-failed': 'mail/emails/billing_payment_failed.html',
+        'business-alert': 'mail/emails/business_alert.html',
     }
     path = file_map.get(slug, 'mail/emails/welcome.html')
     subject_defaults = {
@@ -428,6 +429,30 @@ def dispatch_billing_payment_success_email(
         user=user,
         metadata={'billing_event': 'payment_success', 'transaction_uuid': transaction_uuid},
         skip_queue=True,
+    )
+
+
+def dispatch_business_alert_email(user, *, subject: str, message: str, action_url: str = ''):
+    """Send a simple transactional alert email (inventory, payments, etc.)."""
+    frontend = get_frontend_url()
+    full_action_url = f'{frontend}{action_url}' if action_url.startswith('/') else action_url
+    ctx = build_message_context(user, extra={
+        'alert_subject': subject,
+        'alert_message': message,
+        'action_url': full_action_url or f'{frontend}/dashboard',
+        'action_label': 'View in Khata',
+    })
+    subject_line = subject if subject.startswith('[KHATA]') else f'[KHATA] {subject}'
+    html = render_to_string('mail/emails/business_alert.html', ctx)
+    text = f"{message}\n\nOpen Khata: {full_action_url or ctx['dashboard_url']}"
+    return queue_or_send(
+        user.email,
+        subject_line,
+        html,
+        text,
+        user=user,
+        metadata={'alert_type': 'business'},
+        skip_queue=False,
     )
 
 

@@ -132,6 +132,11 @@ class PurchaseRequestViewSet(viewsets.ModelViewSet):
             )
         purchase_request.status = 'Pending Approval'
         purchase_request.save(update_fields=['status', 'updated_at'])
+        try:
+            from users.business_alerts import notify_purchase_request_submitted
+            notify_purchase_request_submitted(purchase_request)
+        except Exception:
+            pass
         serializer = self.get_serializer(purchase_request)
         return Response(serializer.data)
     
@@ -158,6 +163,11 @@ class PurchaseRequestViewSet(viewsets.ModelViewSet):
         purchase_request.approved_by = request.user
         purchase_request.approved_at = timezone.now()
         purchase_request.save()
+        try:
+            from users.business_alerts import notify_purchase_request_decision
+            notify_purchase_request_decision(purchase_request, approved=True)
+        except Exception:
+            pass
         
         serializer = self.get_serializer(purchase_request)
         return Response(serializer.data)
@@ -194,6 +204,11 @@ class PurchaseRequestViewSet(viewsets.ModelViewSet):
         purchase_request.status = 'Rejected'
         purchase_request.rejection_reason = reason
         purchase_request.save()
+        try:
+            from users.business_alerts import notify_purchase_request_decision
+            notify_purchase_request_decision(purchase_request, approved=False)
+        except Exception:
+            pass
         
         serializer = self.get_serializer(purchase_request)
         return Response(serializer.data)

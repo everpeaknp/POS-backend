@@ -9,6 +9,8 @@ DEFAULT_CHART_OF_ACCOUNTS = [
     # Assets
     {'code': '1000', 'name': 'Cash', 'type': 'Assets', 'sub_type': 'Cash',
      'description': 'Petty cash and cash on hand'},
+    {'code': '1005', 'name': 'Petty Cash', 'type': 'Assets', 'sub_type': 'Cash',
+     'description': 'Small expenses and cash drawer float'},
     {'code': '1010', 'name': 'Bank', 'type': 'Assets', 'sub_type': 'Bank',
      'description': 'Bank accounts — link when creating bank accounts'},
     {'code': '1100', 'name': 'Accounts Receivable', 'type': 'Assets', 'sub_type': 'Receivable',

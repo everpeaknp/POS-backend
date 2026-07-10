@@ -20,12 +20,12 @@ class POSSessionSerializer(serializers.ModelSerializer):
             'id', 'session_number', 'cashier', 'cashier_name', 'warehouse', 'warehouse_name',
             'opened_at', 'closed_at', 'opening_cash', 'closing_cash', 'expected_cash',
             'cash_variance', 'total_transactions', 'total_sales', 'cash_sales',
-            'card_sales', 'upi_sales', 'credit_sales', 'status', 'notes', 'created_at'
+            'card_sales', 'esewa_sales', 'khalti_sales', 'fonepay_sales', 'credit_sales', 'status', 'notes', 'created_at'
         ]
         read_only_fields = [
             'session_number', 'cashier', 'opened_at', 'closed_at', 'expected_cash', 'cash_variance',
             'total_transactions', 'total_sales', 'cash_sales', 'card_sales',
-            'upi_sales', 'credit_sales', 'status', 'created_at'
+            'esewa_sales', 'khalti_sales', 'fonepay_sales', 'credit_sales', 'status', 'created_at'
         ]
 
 
@@ -275,7 +275,7 @@ class POSDailySalesReportSerializer(serializers.ModelSerializer):
             'id', 'date', 'cashier', 'cashier_name', 'warehouse', 'warehouse_name',
             'total_transactions', 'total_items_sold', 'gross_sales',
             'total_discounts', 'total_tax', 'net_sales', 'cash_sales',
-            'card_sales', 'upi_sales', 'credit_sales', 'cancelled_transactions',
+            'card_sales', 'esewa_sales', 'khalti_sales', 'fonepay_sales', 'credit_sales', 'cancelled_transactions',
             'refunded_amount', 'generated_at', 'generated_by'
         ]
         read_only_fields = ['generated_at', 'generated_by']

@@ -743,7 +743,7 @@ Manage point-of-sale sessions with opening and closing cash.
 Process point-of-sale transactions and sales.
 
 **Payment Methods:**
-- Cash, Card, UPI, Credit
+- Cash, Card, eSewa, Khalti, Fonepay, Credit
             '''
         },
         {

@@ -65,7 +65,7 @@ class ProductListSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'name', 'sku', 'category_name', 'unit_name',
             'cost_price', 'selling_price', 'total_stock',
-            'reorder_level', 'status'
+            'reorder_level', 'expiry_date', 'status'
         ]
     
     def get_total_stock(self, obj):
@@ -84,7 +84,7 @@ class ProductDetailSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'name', 'sku', 'description', 'category', 'category_name',
             'unit', 'unit_name', 'cost_price', 'selling_price',
-            'reorder_level', 'status', 'total_stock', 'stock_by_warehouse',
+            'reorder_level', 'expiry_date', 'status', 'total_stock', 'stock_by_warehouse',
             'created_at', 'updated_at'
         ]
         read_only_fields = ['id', 'created_at', 'updated_at']

@@ -14,11 +14,15 @@ def post_purchase_invoice(invoice):
     ap_amount = invoice._ap_amount()
     if ap_amount <= 0:
         return None
+    tax_amount = None
+    if invoice.purchase_order_id:
+        tax_amount = invoice.purchase_order.tax
     return record_purchase(
         invoice.supplier,
         ap_amount,
         invoice.invoice_number,
         tenant=invoice.tenant,
+        tax_amount=tax_amount,
     )
 
 

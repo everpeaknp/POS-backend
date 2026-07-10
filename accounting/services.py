@@ -6,8 +6,23 @@ Provides accounting operations used by all industry modules.
 from decimal import Decimal
 from django.db import transaction
 from django.utils import timezone
-from accounting.models import JournalEntry, JournalLine, Account
+from accounting.models import JournalEntry, JournalLine, Account, FiscalYear
+from accounting.vat_helpers import split_tax_inclusive_amount
+from accounting.utils import get_vat_payable_account
 from tenants.middleware import get_current_tenant
+
+
+def assert_period_open(tenant, entry_date) -> None:
+    """Block posting into a closed fiscal year."""
+    if not tenant or not entry_date:
+        return
+    if FiscalYear.objects.filter(
+        tenant=tenant,
+        is_closed=True,
+        start_date__lte=entry_date,
+        end_date__gte=entry_date,
+    ).exists():
+        raise ValueError('Cannot post transactions into a closed fiscal year.')
 
 
 def has_posted_journal(tenant, reference, entry_type=None):
@@ -54,6 +69,9 @@ def create_journal_entry(tenant, description, entries, reference=None, date=None
                 f"Debits ({total_debit}) must equal credits ({total_credit}). "
                 f"Double-entry bookkeeping violation."
             )
+
+        entry_date = date or timezone.now().date()
+        assert_period_open(tenant, entry_date)
         
         from accounting.utils import generate_entry_number
         entry_number = generate_entry_number(tenant)
@@ -62,7 +80,7 @@ def create_journal_entry(tenant, description, entries, reference=None, date=None
         journal_entry = JournalEntry.objects.create(
             tenant=tenant,
             entry_number=entry_number,
-            date=date or timezone.now().date(),
+            date=entry_date,
             description=description,
             reference=reference or '',
             type=entry_type,
@@ -431,7 +449,55 @@ def record_payroll_expense(employee, net_salary, reference, date, tenant=None):
     )
 
 
-def record_credit_sale(customer, total_amount, reference, tenant=None):
+def _sale_gl_entries(*, debit_account, gross_amount, tax_amount, tenant, description):
+    """Build balanced sale lines with optional VAT split."""
+    net_amount, vat_amount = split_tax_inclusive_amount(
+        gross_amount, tax_amount=tax_amount, tenant=tenant, applicable_on='Sales'
+    )
+    revenue_account = get_sales_revenue_account(tenant)
+    lines = [
+        {'account': debit_account, 'debit': net_amount + vat_amount, 'credit': 0, 'description': description},
+        {'account': revenue_account, 'debit': 0, 'credit': net_amount, 'description': description},
+    ]
+    if vat_amount > 0:
+        lines.append({
+            'account': get_vat_payable_account(tenant),
+            'debit': 0,
+            'credit': vat_amount,
+            'description': f'Output VAT — {description}',
+        })
+    return lines
+
+
+def _purchase_gl_entries(*, gross_amount, tax_amount, tenant, description, supplier_name):
+    net_amount, vat_amount = split_tax_inclusive_amount(
+        gross_amount, tax_amount=tax_amount, tenant=tenant, applicable_on='Purchase'
+    )
+    lines = [
+        {
+            'account': get_inventory_asset_account(tenant),
+            'debit': net_amount,
+            'credit': 0,
+            'description': f'Supplier: {supplier_name}',
+        },
+    ]
+    if vat_amount > 0:
+        lines.append({
+            'account': get_vat_payable_account(tenant),
+            'debit': vat_amount,
+            'credit': 0,
+            'description': f'Input VAT — {supplier_name}',
+        })
+    lines.append({
+        'account': get_accounts_payable_account(tenant),
+        'debit': 0,
+        'credit': net_amount + vat_amount,
+        'description': f'Payable to {supplier_name}',
+    })
+    return lines
+
+
+def record_credit_sale(customer, total_amount, reference, tenant=None, tax_amount=None):
     """
     Record credit sale to customer.
     Called by Sales module.
@@ -452,24 +518,17 @@ def record_credit_sale(customer, total_amount, reference, tenant=None):
         description=f"Credit sale to {customer.name}",
         reference=reference,
         entry_type='Sales',
-        entries=[
-            {
-                'account': get_accounts_receivable_account(tenant),
-                'debit': total_amount,
-                'credit': 0,
-                'description': f"Customer: {customer.name}"
-            },
-            {
-                'account': get_sales_revenue_account(tenant),
-                'debit': 0,
-                'credit': total_amount,
-                'description': f"Sale to {customer.name}"
-            }
-        ]
+        entries=_sale_gl_entries(
+            debit_account=get_accounts_receivable_account(tenant),
+            gross_amount=total_amount,
+            tax_amount=tax_amount,
+            tenant=tenant,
+            description=f"Customer: {customer.name}",
+        ),
     )
 
 
-def record_cash_sale(total_amount, reference, customer_name=None, tenant=None):
+def record_cash_sale(total_amount, reference, customer_name=None, tenant=None, tax_amount=None):
     """
     Record cash sale.
     Called by Sales / POS module.
@@ -494,24 +553,17 @@ def record_cash_sale(total_amount, reference, customer_name=None, tenant=None):
         description=description,
         reference=reference,
         entry_type='Sales',
-        entries=[
-            {
-                'account': get_cash_account(tenant),
-                'debit': total_amount,
-                'credit': 0,
-                'description': description
-            },
-            {
-                'account': get_sales_revenue_account(tenant),
-                'debit': 0,
-                'credit': total_amount,
-                'description': description
-            }
-        ]
+        entries=_sale_gl_entries(
+            debit_account=get_cash_account(tenant),
+            gross_amount=total_amount,
+            tax_amount=tax_amount,
+            tenant=tenant,
+            description=description,
+        ),
     )
 
 
-def record_purchase(supplier, total_amount, reference, tenant=None):
+def record_purchase(supplier, total_amount, reference, tenant=None, tax_amount=None):
     """
     Record purchase from supplier.
     Called by Purchase module.
@@ -532,20 +584,13 @@ def record_purchase(supplier, total_amount, reference, tenant=None):
         description=f"Purchase from {supplier.name}",
         reference=reference,
         entry_type='Purchase',
-        entries=[
-            {
-                'account': get_inventory_asset_account(tenant),
-                'debit': total_amount,
-                'credit': 0,
-                'description': f"Supplier: {supplier.name}"
-            },
-            {
-                'account': get_accounts_payable_account(tenant),
-                'debit': 0,
-                'credit': total_amount,
-                'description': f"Payable to {supplier.name}"
-            }
-        ]
+        entries=_purchase_gl_entries(
+            gross_amount=total_amount,
+            tax_amount=tax_amount,
+            tenant=tenant,
+            description=f"Purchase from {supplier.name}",
+            supplier_name=supplier.name,
+        ),
     )
 
 

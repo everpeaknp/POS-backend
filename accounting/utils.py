@@ -5,6 +5,7 @@ from django.db import transaction
 from django.db.models import Sum
 from django.utils import timezone
 
+from accounting.constants import POSTED_GL_STATUSES
 from accounting.models import Account, BankTransaction, JournalEntry, JournalLine, TaxRule
 
 
@@ -57,7 +58,7 @@ def calculate_vat_for_period(tenant, from_date, to_date) -> dict:
     lines = JournalLine.objects.filter(
         tenant=tenant,
         account_id__in=account_ids,
-        journal_entry__status='posted',
+        journal_entry__status__in=POSTED_GL_STATUSES,
         journal_entry__date__gte=from_date,
         journal_entry__date__lte=to_date,
     ).exclude(journal_entry__reference__startswith='VAT-PAY-')

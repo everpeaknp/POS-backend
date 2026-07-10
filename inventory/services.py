@@ -5,8 +5,11 @@ Provides inventory operations used by all industry modules.
 
 from decimal import Decimal
 from django.db import transaction
+import logging
 from inventory.models import Stock, StockMovement, Warehouse, Product
 from tenants.middleware import get_current_tenant
+
+logger = logging.getLogger(__name__)
 
 
 def _resolve_tenant(tenant=None, product=None, warehouse=None):
@@ -25,6 +28,14 @@ def _resolve_tenant(tenant=None, product=None, warehouse=None):
         return product.tenant
 
     return None
+
+
+def _maybe_notify_low_stock(product, tenant) -> None:
+    try:
+        from users.business_alerts import notify_low_stock_for_product
+        notify_low_stock_for_product(product, tenant)
+    except Exception:
+        logger.exception('Low stock notification failed for product %s', product.id)
 
 
 def resolve_warehouse_for_product(product, tenant, warehouse_id=None):
@@ -195,6 +206,8 @@ def stock_out(
             performed_by=performed_by,
         )
 
+        _maybe_notify_low_stock(product, tenant)
+
         return movement, stock.quantity
 
 
@@ -280,6 +293,9 @@ def stock_adjustment(product, warehouse, quantity, reference_type='', reference_
             notes=note_text,
             performed_by=performed_by,
         )
+
+        if quantity < 0:
+            _maybe_notify_low_stock(product, tenant)
 
         return movement, stock.quantity
 

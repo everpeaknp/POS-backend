@@ -140,7 +140,9 @@ class POSSessionViewSet(viewsets.ModelViewSet):
             total_sales=Sum('total'),
             cash_sales=Sum('total', filter=Q(payment_method='cash')),
             card_sales=Sum('total', filter=Q(payment_method='card')),
-            upi_sales=Sum('total', filter=Q(payment_method='upi')),
+            esewa_sales=Sum('total', filter=Q(payment_method='esewa')),
+            khalti_sales=Sum('total', filter=Q(payment_method='khalti')),
+            fonepay_sales=Sum('total', filter=Q(payment_method='fonepay')),
             credit_sales=Sum('total', filter=Q(payment_method='credit')),
         )
         
@@ -149,7 +151,9 @@ class POSSessionViewSet(viewsets.ModelViewSet):
         session.total_sales = aggregates['total_sales'] or Decimal('0.00')
         session.cash_sales = aggregates['cash_sales'] or Decimal('0.00')
         session.card_sales = aggregates['card_sales'] or Decimal('0.00')
-        session.upi_sales = aggregates['upi_sales'] or Decimal('0.00')
+        session.esewa_sales = aggregates['esewa_sales'] or Decimal('0.00')
+        session.khalti_sales = aggregates['khalti_sales'] or Decimal('0.00')
+        session.fonepay_sales = aggregates['fonepay_sales'] or Decimal('0.00')
         session.credit_sales = aggregates['credit_sales'] or Decimal('0.00')
         
         session.expected_cash = session.opening_cash + session.cash_sales
@@ -457,7 +461,9 @@ class POSDailySalesReportViewSet(viewsets.ReadOnlyModelViewSet):
             net_sales=Sum('total'),
             cash_sales=Sum('total', filter=Q(payment_method='cash')),
             card_sales=Sum('total', filter=Q(payment_method='card')),
-            upi_sales=Sum('total', filter=Q(payment_method='upi')),
+            esewa_sales=Sum('total', filter=Q(payment_method='esewa')),
+            khalti_sales=Sum('total', filter=Q(payment_method='khalti')),
+            fonepay_sales=Sum('total', filter=Q(payment_method='fonepay')),
             credit_sales=Sum('total', filter=Q(payment_method='credit')),
         )
         
@@ -495,7 +501,9 @@ class POSDailySalesReportViewSet(viewsets.ReadOnlyModelViewSet):
                 'net_sales': aggregates['net_sales'] or Decimal('0.00'),
                 'cash_sales': aggregates['cash_sales'] or Decimal('0.00'),
                 'card_sales': aggregates['card_sales'] or Decimal('0.00'),
-                'upi_sales': aggregates['upi_sales'] or Decimal('0.00'),
+                'esewa_sales': aggregates['esewa_sales'] or Decimal('0.00'),
+                'khalti_sales': aggregates['khalti_sales'] or Decimal('0.00'),
+                'fonepay_sales': aggregates['fonepay_sales'] or Decimal('0.00'),
                 'credit_sales': aggregates['credit_sales'] or Decimal('0.00'),
                 'cancelled_transactions': cancelled_count,
                 'refunded_amount': refunded_amount,

@@ -1,7 +1,7 @@
 from django.urls import path
 from .views import (
     AccountViewSet, JournalEntryViewSet, BankAccountViewSet,
-    BankTransactionViewSet, TaxRuleViewSet, VATReturnViewSet
+    BankTransactionViewSet, TaxRuleViewSet, VATReturnViewSet, FiscalYearViewSet,
 )
 
 urlpatterns = [
@@ -14,13 +14,27 @@ urlpatterns = [
     path('accounts/trial_balance/', AccountViewSet.as_view({'get': 'trial_balance'}), name='account-trial-balance'),
     path('accounts/profit_loss/', AccountViewSet.as_view({'get': 'profit_loss'}), name='account-profit-loss'),
     path('accounts/balance_sheet/', AccountViewSet.as_view({'get': 'balance_sheet'}), name='account-balance-sheet'),
+    path('accounts/dashboard_summary/', AccountViewSet.as_view({'get': 'dashboard_summary'}), name='account-dashboard-summary'),
+    path('accounts/receivable_aging/', AccountViewSet.as_view({'get': 'receivable_aging'}), name='account-receivable-aging'),
+    path('accounts/payable_aging/', AccountViewSet.as_view({'get': 'payable_aging'}), name='account-payable-aging'),
+    path('accounts/journal_register/', AccountViewSet.as_view({'get': 'journal_register'}), name='account-journal-register'),
+    path('accounts/vat_sales_register/', AccountViewSet.as_view({'get': 'vat_sales_register'}), name='account-vat-sales-register'),
+    path('accounts/vat_purchase_register/', AccountViewSet.as_view({'get': 'vat_purchase_register'}), name='account-vat-purchase-register'),
+    path('accounts/cash_flow_summary/', AccountViewSet.as_view({'get': 'cash_flow_summary'}), name='account-cash-flow-summary'),
     
     # Journal Entries
     path('journal-entries/', JournalEntryViewSet.as_view({'get': 'list', 'post': 'create'}), name='journal-entry-list'),
     path('journal-entries/<int:pk>/', JournalEntryViewSet.as_view({'get': 'retrieve', 'put': 'update', 'patch': 'partial_update', 'delete': 'destroy'}), name='journal-entry-detail'),
     path('journal-entries/<int:pk>/post_entry/', JournalEntryViewSet.as_view({'post': 'post_entry'}), name='journal-entry-post'),
     path('journal-entries/<int:pk>/reverse/', JournalEntryViewSet.as_view({'post': 'reverse'}), name='journal-entry-reverse'),
+    path('journal-entries/<int:pk>/copy_entry/', JournalEntryViewSet.as_view({'post': 'copy_entry'}), name='journal-entry-copy'),
     path('journal-entries/gl-integration-summary/', JournalEntryViewSet.as_view({'get': 'gl_integration_summary'}), name='journal-entry-gl-summary'),
+
+    # Fiscal Years
+    path('fiscal-years/', FiscalYearViewSet.as_view({'get': 'list', 'post': 'create'}), name='fiscal-year-list'),
+    path('fiscal-years/ensure_current/', FiscalYearViewSet.as_view({'post': 'ensure_current'}), name='fiscal-year-ensure-current'),
+    path('fiscal-years/<int:pk>/', FiscalYearViewSet.as_view({'get': 'retrieve'}), name='fiscal-year-detail'),
+    path('fiscal-years/<int:pk>/close/', FiscalYearViewSet.as_view({'post': 'close'}), name='fiscal-year-close'),
     
     # Bank Accounts
     path('bank-accounts/', BankAccountViewSet.as_view({'get': 'list', 'post': 'create'}), name='bank-account-list'),

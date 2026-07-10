@@ -20,6 +20,10 @@ class Notification(TenantModel):
         ('user_message', 'User Message'),
         ('approval_request', 'Approval Request'),
         ('status_update', 'Status Update'),
+        ('inventory_alert', 'Inventory Alert'),
+        ('payment_reminder', 'Payment Reminder'),
+        ('sales_alert', 'Sales Alert'),
+        ('purchase_reminder', 'Purchase Reminder'),
     ]
     
     LEVELS = [

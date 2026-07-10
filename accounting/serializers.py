@@ -1,6 +1,6 @@
 from rest_framework import serializers
 from decimal import Decimal
-from .models import Account, JournalEntry, JournalLine, BankAccount, BankTransaction, TaxRule, VATReturn
+from .models import Account, JournalEntry, JournalLine, BankAccount, BankTransaction, TaxRule, VATReturn, FiscalYear
 from accounting.utils import generate_entry_number
 
 
@@ -300,3 +300,15 @@ class VATReturnSerializer(serializers.ModelSerializer):
         validated_data['return_number'] = return_number
         
         return super().create(validated_data)
+
+
+class FiscalYearSerializer(serializers.ModelSerializer):
+    """Nepal BS fiscal year."""
+
+    class Meta:
+        model = FiscalYear
+        fields = [
+            'id', 'bs_start_year', 'label', 'start_date', 'end_date',
+            'is_closed', 'closed_at', 'notes',
+        ]
+        read_only_fields = ['id', 'label', 'start_date', 'end_date', 'is_closed', 'closed_at']

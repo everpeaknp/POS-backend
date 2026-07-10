@@ -24,7 +24,7 @@ class POSSessionAdmin(admin.ModelAdmin):
             'fields': ('opening_cash', 'closing_cash', 'expected_cash', 'cash_variance')
         }),
         ('Session Summary', {
-            'fields': ('total_transactions', 'total_sales', 'cash_sales', 'card_sales', 'upi_sales', 'credit_sales')
+            'fields': ('total_transactions', 'total_sales', 'cash_sales', 'card_sales', 'esewa_sales', 'khalti_sales', 'fonepay_sales', 'credit_sales')
         }),
         ('Notes', {
             'fields': ('notes',),
@@ -130,7 +130,7 @@ class POSDailySalesReportAdmin(admin.ModelAdmin):
             'fields': ('gross_sales', 'total_discounts', 'total_tax', 'net_sales')
         }),
         ('Payment Methods', {
-            'fields': ('cash_sales', 'card_sales', 'upi_sales', 'credit_sales')
+            'fields': ('cash_sales', 'card_sales', 'esewa_sales', 'khalti_sales', 'fonepay_sales', 'credit_sales')
         }),
         ('Refunds', {
             'fields': ('refunded_amount',)

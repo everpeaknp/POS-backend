@@ -16,18 +16,23 @@ def post_sales_invoice(invoice):
     """Post sales invoice revenue to GL."""
     if not invoice.amount or Decimal(str(invoice.amount)) <= 0:
         return None
+    tax_amount = None
+    if invoice.sales_order_id:
+        tax_amount = invoice.sales_order.tax
     if invoice.payment_type == 'cash':
         return record_cash_sale(
             invoice.amount,
             invoice.invoice_number,
             invoice.customer.name,
             tenant=invoice.tenant,
+            tax_amount=tax_amount,
         )
     return record_credit_sale(
         invoice.customer,
         invoice.amount,
         invoice.invoice_number,
         tenant=invoice.tenant,
+        tax_amount=tax_amount,
     )
 
 
@@ -90,6 +95,7 @@ def post_sales_order_revenue(sales_order):
         sales_order.order_number,
         sales_order.customer.name,
         tenant=sales_order.tenant,
+        tax_amount=sales_order.tax,
     )
 
 
@@ -192,6 +198,7 @@ def post_pos_sale(transaction, lines_with_products):
             transaction.total,
             transaction.transaction_number,
             tenant=transaction.tenant,
+            tax_amount=transaction.tax_amount,
         )
     else:
         record_cash_sale(
@@ -199,6 +206,7 @@ def post_pos_sale(transaction, lines_with_products):
             transaction.transaction_number,
             transaction.customer.name if getattr(transaction, 'customer', None) else None,
             tenant=transaction.tenant,
+            tax_amount=transaction.tax_amount,
         )
 
     total_cogs = Decimal('0')

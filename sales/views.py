@@ -394,6 +394,16 @@ class SalesOrderViewSet(viewsets.ModelViewSet):
                 ensure_credit_order_on_ledger(sales_order)
             except ValueError as e:
                 return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            from users.business_alerts import notify_sales_order_status_change
+            notify_sales_order_status_change(
+                sales_order,
+                old_status=old_status,
+                new_status=new_status,
+            )
+        except Exception:
+            pass
         
         serializer = self.get_serializer(sales_order)
         return Response(serializer.data)
