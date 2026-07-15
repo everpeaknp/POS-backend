@@ -72,7 +72,7 @@ def notify_login_if_enabled(user, session) -> None:
         level='warning',
         reference_type='user_session',
         reference_id=None,
-        action_url='/settings/sessions',
+        action_url='/settings/security',
         data={
             'session_id': str(session.id),
             'device': session.device,
