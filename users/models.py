@@ -234,5 +234,6 @@ class AuditLog(models.Model):
 # Import notification models
 from users.notification_models import Notification
 from users.appearance_models import AppearancePreferences
+from users.session_models import UserSession
 
-__all__ = ['User', 'Notification', 'AppearancePreferences']
+__all__ = ['User', 'Notification', 'AppearancePreferences', 'UserSession']
