@@ -136,6 +136,7 @@ def get_or_create_account(code, name, account_type, tenant=None):
         '2000': 'Payable',  # Accounts Payable
         '2100': 'Payable',  # Wages Payable (Construction Workers)
         '2200': 'Payable',  # Salary Payable (HR Employees)
+        '2250': 'Tax',  # VAT Payable
         '4000': 'Revenue',  # Sales Revenue
         '5000': 'COGS',  # Cost of Goods Sold
         '5100': 'Operating',  # Construction Expenses

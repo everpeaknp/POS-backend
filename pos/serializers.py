@@ -285,7 +285,7 @@ class ProductSearchSerializer(serializers.ModelSerializer):
     """Lightweight serializer for product search in POS"""
     stock_quantity = serializers.SerializerMethodField()
     category_name = serializers.CharField(source='category.name', read_only=True)
-    category_id = serializers.IntegerField(source='category_id', read_only=True)
+    category_id = serializers.IntegerField(read_only=True)
     unit_name = serializers.CharField(source='unit.abbreviation', read_only=True)
     
     class Meta:
