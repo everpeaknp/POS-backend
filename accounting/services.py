@@ -885,3 +885,51 @@ def create_account_opening_balance(account, amount, date, balance_side, tenant):
         reference=f"OB-{account.code}",
         date=date,
     )
+
+
+
+def record_pos_refund(transaction, refund_amount, refund_id, tenant=None):
+    """
+    Record GL reversal for a POS refund.
+    Dr. Sales Revenue  (reduces revenue)
+    Cr. Cash / AR      (reduces cash or receivable)
+    """
+    if tenant is None:
+        tenant = get_current_tenant()
+    if not tenant:
+        return None
+
+    refund_amount = Decimal(str(refund_amount))
+    if refund_amount <= 0:
+        return None
+
+    reference = f"REFUND-{refund_id}"
+    if has_posted_journal(tenant, reference, 'Sales'):
+        return None
+
+    revenue_account = get_sales_revenue_account(tenant)
+
+    if transaction.payment_method == 'credit' and transaction.customer:
+        ar_account = get_accounts_receivable_account(tenant)
+        entries = [
+            {'account': revenue_account, 'debit': refund_amount, 'credit': 0,
+             'description': f'POS Refund {reference}'},
+            {'account': ar_account, 'debit': 0, 'credit': refund_amount,
+             'description': f'Reduce AR for refund {reference}'},
+        ]
+    else:
+        cash_account = get_cash_account(tenant)
+        entries = [
+            {'account': revenue_account, 'debit': refund_amount, 'credit': 0,
+             'description': f'POS Refund {reference}'},
+            {'account': cash_account, 'debit': 0, 'credit': refund_amount,
+             'description': f'Cash refunded {reference}'},
+        ]
+
+    return create_journal_entry(
+        tenant=tenant,
+        description=f'POS Refund for {transaction.transaction_number}',
+        reference=reference,
+        entry_type='Sales',
+        entries=entries,
+    )
