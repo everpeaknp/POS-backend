@@ -479,13 +479,28 @@ class AccountDeleteSerializer(serializers.Serializer):
 
 
 class GoogleAuthSerializer(serializers.Serializer):
-    credential = serializers.CharField(write_only=True)
+    credential = serializers.CharField(write_only=True, required=False, allow_blank=True)
+    code = serializers.CharField(write_only=True, required=False, allow_blank=True)
 
     def validate(self, attrs):
-        from users.google_auth import verify_google_id_token, authenticate_or_create_google_user
+        from users.google_auth import (
+            authenticate_or_create_google_user,
+            exchange_google_auth_code,
+            verify_google_id_token,
+        )
         from users.auth_tokens import issue_tokens_for_user
 
-        idinfo = verify_google_id_token(attrs['credential'])
+        credential = (attrs.get('credential') or '').strip()
+        code = (attrs.get('code') or '').strip()
+        if code:
+            idinfo = exchange_google_auth_code(code)
+        elif credential:
+            idinfo = verify_google_id_token(credential)
+        else:
+            raise serializers.ValidationError({
+                'detail': 'Google credential or authorization code is required.',
+            })
+
         user = authenticate_or_create_google_user(idinfo)
         request = self.context.get('request')
         return issue_tokens_for_user(user, request)
@@ -506,5 +521,9 @@ class AppearancePreferencesSerializer(serializers.Serializer):
         choices=['AD', 'BS'],
         default='AD'
     )
-    compact_mode = serializers.BooleanField(default=False)
+    compact_mode = serializers.BooleanField(default=True)
     smooth_animations = serializers.BooleanField(default=True)
+    navbar_position = serializers.ChoiceField(
+        choices=['left', 'top'],
+        default='left'
+    )

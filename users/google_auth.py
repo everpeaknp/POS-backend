@@ -1,5 +1,6 @@
 """Google OAuth sign-in using ID tokens from Google Identity Services."""
 
+import requests as http_requests
 from django.contrib.auth import get_user_model
 from google.auth.transport import requests as google_requests
 from google.oauth2 import id_token
@@ -36,6 +37,53 @@ def verify_google_id_token(token: str) -> dict:
         raise serializers.ValidationError({'detail': 'Invalid Google token issuer.'})
 
     return idinfo
+
+
+def exchange_google_auth_code(code: str) -> dict:
+    """
+    Exchange a GIS popup auth code (redirect_uri=postmessage) for an ID token.
+    Used by the Electron desktop shell where the GIS button iframe often fails.
+    """
+    config = get_google_oauth_config()
+    if not config['enabled']:
+        raise serializers.ValidationError({'detail': 'Google sign-in is not enabled.'})
+
+    settings = GoogleOAuthSettings.get_solo()
+    client_secret = settings.get_client_secret()
+    if not client_secret:
+        raise serializers.ValidationError({
+            'detail': 'Google OAuth client secret is not configured. Add it in admin → Google sign-in.',
+        })
+
+    try:
+        response = http_requests.post(
+            'https://oauth2.googleapis.com/token',
+            data={
+                'code': code,
+                'client_id': config['client_id'],
+                'client_secret': client_secret,
+                'redirect_uri': 'postmessage',
+                'grant_type': 'authorization_code',
+            },
+            timeout=30,
+        )
+    except http_requests.RequestException as exc:
+        raise serializers.ValidationError({
+            'detail': f'Google token exchange failed: {exc}',
+        }) from exc
+
+    payload = response.json() if response.content else {}
+    if response.status_code >= 400:
+        detail = payload.get('error_description') or payload.get('error') or 'Google token exchange failed.'
+        raise serializers.ValidationError({'detail': detail})
+
+    token = payload.get('id_token')
+    if not token:
+        raise serializers.ValidationError({
+            'detail': 'Google did not return an ID token. Ensure openid scope is requested.',
+        })
+
+    return verify_google_id_token(token)
 
 
 def _unique_username(base: str) -> str:

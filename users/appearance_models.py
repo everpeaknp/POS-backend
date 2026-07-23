@@ -45,6 +45,11 @@ class AppearancePreferences(models.Model):
         ('BS', 'Bikram Sambat (BS)'),
     ]
 
+    NAVBAR_POSITION_CHOICES = [
+        ('left', 'Left'),
+        ('top', 'Top'),
+    ]
+
     user = models.OneToOneField(
         settings.AUTH_USER_MODEL,
         on_delete=models.CASCADE,
@@ -83,13 +88,20 @@ class AppearancePreferences(models.Model):
     
     # Display settings
     compact_mode = models.BooleanField(
-        default=False,
+        default=True,
         help_text='Enable compact display mode'
     )
     
     smooth_animations = models.BooleanField(
         default=True,
         help_text='Enable smooth animations'
+    )
+
+    navbar_position = models.CharField(
+        max_length=10,
+        choices=NAVBAR_POSITION_CHOICES,
+        default='left',
+        help_text='Main navigation position (left sidebar or top bar)'
     )
     
     # Metadata

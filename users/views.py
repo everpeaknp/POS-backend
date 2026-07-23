@@ -4,7 +4,7 @@ from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
 from drf_spectacular.utils import extend_schema, extend_schema_view
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework.filters import SearchFilter, OrderingFilter
-from rest_framework.decorators import api_view, permission_classes, parser_classes
+from rest_framework.decorators import api_view, permission_classes, authentication_classes, parser_classes
 from rest_framework.parsers import MultiPartParser, FormParser
 from django.db import models
 from .models import User, AuditLog
@@ -67,6 +67,7 @@ class CustomTokenRefreshView(TokenRefreshView):
     description='Public config for Google sign-in button (client ID when enabled).',
 )
 @api_view(['GET'])
+@authentication_classes([])
 @permission_classes([permissions.AllowAny])
 def google_oauth_config(request):
     from users.google_auth import get_google_oauth_config
@@ -76,10 +77,14 @@ def google_oauth_config(request):
 @extend_schema(
     tags=['Authentication'],
     summary='Sign in with Google',
-    description='Exchange a Google ID token for JWT access and refresh tokens.',
+    description=(
+        'Exchange a Google ID token (GIS button) or authorization code '
+        '(desktop popup, redirect_uri=postmessage) for JWT access and refresh tokens.'
+    ),
     request=GoogleAuthSerializer,
 )
 @api_view(['POST'])
+@authentication_classes([])
 @permission_classes([permissions.AllowAny])
 def google_login(request):
     serializer = GoogleAuthSerializer(data=request.data, context={'request': request})
@@ -671,6 +676,7 @@ def export_user_data(request):
             'date_calendar_system': appearance_prefs.date_calendar_system,
             'compact_mode': appearance_prefs.compact_mode,
             'smooth_animations': appearance_prefs.smooth_animations,
+            'navbar_position': appearance_prefs.navbar_position,
         },
         'privacy_preferences': PrivacyPreferencesSerializer({
             'profile_visibility': privacy_prefs.profile_visibility,
@@ -974,8 +980,9 @@ def get_appearance_preferences(request):
             'language': 'en-US',
             'timezone': 'UTC',
             'date_calendar_system': 'AD',
-            'compact_mode': False,
+            'compact_mode': True,
             'smooth_animations': True,
+            'navbar_position': 'left',
         }
     )
     
@@ -986,6 +993,7 @@ def get_appearance_preferences(request):
         'date_calendar_system': preferences.date_calendar_system,
         'compact_mode': preferences.compact_mode,
         'smooth_animations': preferences.smooth_animations,
+        'navbar_position': preferences.navbar_position,
     })
     
     return Response(serializer.data)
@@ -1022,6 +1030,7 @@ def update_appearance_preferences(request):
         'date_calendar_system': preferences.date_calendar_system,
         'compact_mode': preferences.compact_mode,
         'smooth_animations': preferences.smooth_animations,
+        'navbar_position': preferences.navbar_position,
     })
     
     return Response(response_serializer.data)
