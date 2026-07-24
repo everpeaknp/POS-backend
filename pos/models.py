@@ -253,9 +253,12 @@ class POSTransaction(TenantModel):
     """
     STATUS_CHOICES = [
         ('completed', 'Completed'),
+        ('partially_refunded', 'Partially Refunded'),
+        ('refunded', 'Fully Refunded'),
         ('cancelled', 'Cancelled'),
-        ('refunded', 'Refunded'),
     ]
+
+    REFUNDABLE_STATUSES = frozenset({'completed', 'partially_refunded'})
     
     PAYMENT_METHOD_CHOICES = PAYMENT_METHOD_CHOICES
     
@@ -435,6 +438,22 @@ class POSTransactionLine(TenantModel):
     
     def __str__(self):
         return f"{self.product_name} x {self.quantity}"
+
+    def get_refund_amount(self, refund_quantity):
+        """
+        Calculate the refund amount for a quantity of this line using the
+        transaction line's effective discounted value, not the raw unit price.
+        """
+        refund_quantity = Decimal(str(refund_quantity))
+        if refund_quantity <= 0:
+            return Decimal('0.00')
+
+        if self.quantity <= 0:
+            return Decimal('0.00')
+
+        line_total = self.line_total or (self.quantity * self.unit_price - self.discount_amount)
+        effective_unit_price = line_total / self.quantity
+        return effective_unit_price * refund_quantity
     
     def save(self, *args, **kwargs):
         # Calculate line total if not provided
@@ -686,6 +705,21 @@ class POSRefund(TenantModel):
 
     def __str__(self):
         return f"Refund for {self.original_transaction.transaction_number}"
+
+    @property
+    def refund_number(self):
+        return f"REF-{self.id:06d}"
+
+    def get_subtotal_amount(self):
+        from django.db.models import Sum
+        return self.lines.aggregate(total=Sum('refund_amount'))['total'] or Decimal('0.00')
+
+    def get_total_amount(self):
+        from .utils import compute_refund_tax_amount, quantize_money
+        txn = self.original_transaction
+        subtotal = self.get_subtotal_amount()
+        tax_amount = compute_refund_tax_amount(txn, subtotal)
+        return quantize_money(subtotal + tax_amount)
 
 
 class POSRefundLine(TenantModel):

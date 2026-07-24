@@ -10,7 +10,13 @@ from .models import (
     POSRefund, POSRefundLine, LoyaltyProgram, CustomerLoyaltyPoints, LoyaltyTransaction,
 )
 from .constants import PAYMENT_METHOD_CHOICES
-from .utils import get_warehouse_stock, compute_pos_amounts, quantize_money, get_tenant_tax_rate
+from .utils import (
+    get_warehouse_stock,
+    compute_pos_amounts,
+    quantize_money,
+    get_tenant_tax_rate,
+    get_transaction_refund_summary,
+)
 from inventory.models import Product, Warehouse
 
 
@@ -467,6 +473,8 @@ class POSTransactionSerializer(serializers.ModelSerializer):
     cashier_name = serializers.CharField(source='cashier.username', read_only=True)
     customer_display = serializers.SerializerMethodField()
     session_number = serializers.CharField(source='session.session_number', read_only=True)
+    refunds = serializers.SerializerMethodField()
+    refund_summary = serializers.SerializerMethodField()
 
     class Meta:
         model = POSTransaction
@@ -476,9 +484,21 @@ class POSTransactionSerializer(serializers.ModelSerializer):
             'subtotal', 'discount_amount', 'tax_amount',
             'total', 'payment_method', 'amount_paid', 'change_given',
             'status', 'cashier', 'cashier_name', 'warehouse', 'notes',
-            'lines', 'payments', 'created_at',
+            'lines', 'payments', 'refunds', 'refund_summary', 'created_at',
         ]
         read_only_fields = ['transaction_number', 'date', 'cashier', 'created_at', 'session']
+
+    def get_refunds(self, obj):
+        refunds = obj.refunds.prefetch_related('lines', 'refunded_by').all()
+        return POSRefundSerializer(refunds, many=True).data
+
+    def get_refund_summary(self, obj):
+        summary = get_transaction_refund_summary(obj)
+        return {
+            'original_sale': float(summary['original_sale']),
+            'total_refunded': float(summary['total_refunded']),
+            'remaining_refundable': float(summary['remaining_refundable']),
+        }
     
     def get_customer_display(self, obj):
         """Get customer display name"""
@@ -524,7 +544,8 @@ class ProductSearchSerializer(serializers.ModelSerializer):
         model = Product
         fields = [
             'id', 'name', 'sku', 'selling_price', 'stock_quantity',
-            'category_id', 'category_name', 'unit_name', 'image', 'status'
+            'category_id', 'category_name', 'unit_name', 'image', 'status',
+            'reorder_level'
         ]
     
     def get_stock_quantity(self, obj):
@@ -563,35 +584,117 @@ class POSRefundSerializer(serializers.ModelSerializer):
     original_transaction_number = serializers.CharField(
         source='original_transaction.transaction_number', read_only=True
     )
+    refund_number = serializers.CharField(read_only=True)
+    subtotal_amount = serializers.SerializerMethodField()
+    tax_amount = serializers.SerializerMethodField()
+    total_amount = serializers.SerializerMethodField()
 
     class Meta:
         model = POSRefund
         fields = [
-            'id', 'original_transaction', 'original_transaction_number',
+            'id', 'refund_number', 'original_transaction', 'original_transaction_number',
             'reason', 'refund_method', 'refunded_by', 'refunded_by_name',
-            'refunded_at', 'lines', 'created_at',
+            'refunded_at', 'lines', 'subtotal_amount', 'tax_amount', 'total_amount',
+            'created_at',
         ]
         read_only_fields = ['refunded_by', 'refunded_at', 'created_at']
 
+    def get_subtotal_amount(self, obj):
+        return float(obj.get_subtotal_amount())
+
+    def get_tax_amount(self, obj):
+        from .utils import compute_refund_tax_amount
+        subtotal = obj.get_subtotal_amount()
+        return float(compute_refund_tax_amount(obj.original_transaction, subtotal))
+
+    def get_total_amount(self, obj):
+        return float(obj.get_total_amount())
+
 
 class POSRefundLineCreateSerializer(serializers.Serializer):
-    original_line = serializers.PrimaryKeyRelatedField(queryset=POSTransactionLine.objects.all())
-    quantity = serializers.DecimalField(max_digits=10, decimal_places=2, min_value=Decimal('0.01'))
+    original_line = serializers.PrimaryKeyRelatedField(queryset=POSTransactionLine.objects.none())
+    quantity = serializers.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        min_value=Decimal('0.01'),
+    )
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        request = self.context.get('request')
+        tenant = getattr(getattr(request, 'user', None), 'tenant', None)
+        if tenant:
+            self.fields['original_line'].queryset = POSTransactionLine.objects.filter(tenant=tenant)
 
 
 class POSRefundCreateSerializer(serializers.Serializer):
-    original_transaction = serializers.PrimaryKeyRelatedField(queryset=POSTransaction.objects.all())
+    original_transaction = serializers.PrimaryKeyRelatedField(queryset=POSTransaction.objects.none())
     lines = POSRefundLineCreateSerializer(many=True)
     reason = serializers.CharField(required=False, allow_blank=True, default='')
     refund_method = serializers.ChoiceField(choices=PAYMENT_METHOD_CHOICES)
 
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        request = self.context.get('request')
+        tenant = getattr(getattr(request, 'user', None), 'tenant', None)
+        if tenant:
+            self.fields['original_transaction'].queryset = POSTransaction.objects.filter(tenant=tenant)
+            if 'lines' in self.fields:
+                self.fields['lines'].child.fields['original_line'].queryset = POSTransactionLine.objects.filter(tenant=tenant)
+
     def validate_original_transaction(self, txn):
-        if txn.status != 'completed':
-            raise serializers.ValidationError('Refunds are only allowed for completed transactions.')
+        if txn.status == 'cancelled':
+            raise serializers.ValidationError('Cannot refund a cancelled invoice.')
+        if txn.status == 'refunded':
+            raise serializers.ValidationError('This invoice has already been fully refunded.')
+        if txn.status not in POSTransaction.REFUNDABLE_STATUSES:
+            raise serializers.ValidationError(
+                'Refunds are only allowed for completed or partially refunded transactions.'
+            )
         request = self.context.get('request')
         if request and txn.tenant != request.user.tenant:
             raise serializers.ValidationError('Transaction not found.')
         return txn
+
+    def validate_lines(self, lines):
+        if not lines:
+            raise serializers.ValidationError('At least one item must be selected for return.')
+        return lines
+
+    def validate(self, data):
+        from django.db.models import Sum
+
+        original = data['original_transaction']
+        line_ids = set()
+        for entry in data['lines']:
+            line = entry['original_line']
+            qty = entry['quantity']
+
+            if line.transaction_id != original.id:
+                raise serializers.ValidationError({
+                    'lines': f'Line {line.id} does not belong to this transaction.',
+                })
+
+            if line.id in line_ids:
+                raise serializers.ValidationError({
+                    'lines': f'Duplicate refund entry for line {line.id}.',
+                })
+            line_ids.add(line.id)
+
+            already_refunded = line.refund_lines.aggregate(
+                total=Sum('quantity')
+            )['total'] or Decimal('0')
+            available = line.quantity - already_refunded
+            if qty > available:
+                raise serializers.ValidationError({
+                    'lines': (
+                        f'Cannot return {qty} of {line.product_name}. '
+                        f'Sold: {line.quantity}, Already returned: {already_refunded}, '
+                        f'Available: {available}.'
+                    ),
+                })
+
+        return data
 
 
 # ---------------------------------------------------------------------------

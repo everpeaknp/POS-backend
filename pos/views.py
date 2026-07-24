@@ -859,7 +859,7 @@ class POSRefundViewSet(viewsets.ModelViewSet):
                         status=status.HTTP_400_BAD_REQUEST,
                     )
 
-                refund_amount = qty * orig_line.unit_price
+                refund_amount = orig_line.get_refund_amount(qty)
                 POSRefundLine.objects.create(
                     tenant=tenant,
                     refund=refund,
