@@ -24,10 +24,11 @@ def generate_entry_number(tenant) -> str:
 def get_vat_payable_account(tenant):
     from accounting.services import get_or_create_account
 
-    account = Account._base_manager.filter(tenant=tenant, code='2200').first()
+    # 2200 is reserved for HR Salary Payable; VAT is kept separate at 2250.
+    account = Account._base_manager.filter(tenant=tenant, code='2250').first()
     if account:
         return account
-    return get_or_create_account('2200', 'VAT Payable', 'liability', tenant)
+    return get_or_create_account('2250', 'VAT Payable', 'liability', tenant)
 
 
 def _vat_account_ids(tenant) -> set:
@@ -36,7 +37,7 @@ def _vat_account_ids(tenant) -> set:
             'account_id', flat=True
         )
     )
-    default_vat = Account._base_manager.filter(tenant=tenant, code='2200').first()
+    default_vat = Account._base_manager.filter(tenant=tenant, code='2250').first()
     if default_vat:
         account_ids.add(default_vat.id)
     return account_ids

@@ -12,6 +12,7 @@ urlpatterns = [
     # Purchase Requests
     path('requests/', PurchaseRequestViewSet.as_view({'get': 'list', 'post': 'create'}), name='purchaserequest-list'),
     path('requests/<int:pk>/', PurchaseRequestViewSet.as_view({'get': 'retrieve', 'put': 'update', 'patch': 'partial_update', 'delete': 'destroy'}), name='purchaserequest-detail'),
+    path('requests/<int:pk>/submit/', PurchaseRequestViewSet.as_view({'post': 'submit'}), name='purchaserequest-submit'),
     path('requests/<int:pk>/approve/', PurchaseRequestViewSet.as_view({'post': 'approve'}), name='purchaserequest-approve'),
     path('requests/<int:pk>/reject/', PurchaseRequestViewSet.as_view({'post': 'reject'}), name='purchaserequest-reject'),
     path('requests/<int:pk>/convert_to_po/', PurchaseRequestViewSet.as_view({'post': 'convert_to_po'}), name='purchaserequest-convert-to-po'),

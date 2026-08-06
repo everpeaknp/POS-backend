@@ -33,11 +33,13 @@ class EmailBackend(ModelBackend):
             return None
         
         try:
-            # Try to find user by email
-            user = User.objects.get(email=email)
-        except User.DoesNotExist:
-            # Run the default password hasher once to reduce the timing
-            # difference between an existing and a nonexistent user
+            # Try to find user by email — use filter().first() to handle
+            # edge case where duplicate emails exist in the database
+            user = User.objects.filter(email=email).order_by('id').first()
+            if user is None:
+                User().set_password(password)
+                return None
+        except Exception:
             User().set_password(password)
             return None
         

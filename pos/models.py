@@ -253,9 +253,12 @@ class POSTransaction(TenantModel):
     """
     STATUS_CHOICES = [
         ('completed', 'Completed'),
+        ('partially_refunded', 'Partially Refunded'),
+        ('refunded', 'Fully Refunded'),
         ('cancelled', 'Cancelled'),
-        ('refunded', 'Refunded'),
     ]
+
+    REFUNDABLE_STATUSES = frozenset({'completed', 'partially_refunded'})
     
     PAYMENT_METHOD_CHOICES = PAYMENT_METHOD_CHOICES
     
@@ -355,6 +358,11 @@ class POSTransaction(TenantModel):
     def __str__(self):
         return f"POS-{self.transaction_number} - Rs. {self.total}"
     
+    @property
+    def is_split_payment(self):
+        """True when this transaction has split payment records."""
+        return self.payments.exists()
+
     def save(self, *args, **kwargs):
         # Generate transaction number if not exists
         if not self.transaction_number:
@@ -430,6 +438,22 @@ class POSTransactionLine(TenantModel):
     
     def __str__(self):
         return f"{self.product_name} x {self.quantity}"
+
+    def get_refund_amount(self, refund_quantity):
+        """
+        Calculate the refund amount for a quantity of this line using the
+        transaction line's effective discounted value, not the raw unit price.
+        """
+        refund_quantity = Decimal(str(refund_quantity))
+        if refund_quantity <= 0:
+            return Decimal('0.00')
+
+        if self.quantity <= 0:
+            return Decimal('0.00')
+
+        line_total = self.line_total or (self.quantity * self.unit_price - self.discount_amount)
+        effective_unit_price = line_total / self.quantity
+        return effective_unit_price * refund_quantity
     
     def save(self, *args, **kwargs):
         # Calculate line total if not provided
@@ -508,3 +532,312 @@ class POSDailySalesReport(TenantModel):
     def __str__(self):
         cashier_name = self.cashier.username if self.cashier else 'All Cashiers'
         return f"POS Report - {self.date} - {cashier_name}"
+
+
+class POSPayment(TenantModel):
+    """
+    Individual payment entry for a POS transaction.
+    Supports split payments (Option A — backward compatible).
+    """
+    transaction = models.ForeignKey(
+        POSTransaction,
+        on_delete=models.CASCADE,
+        related_name='payments'
+    )
+    payment_method = models.CharField(max_length=20, choices=PAYMENT_METHOD_CHOICES)
+    amount = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        validators=[MinValueValidator(Decimal('0.01'))]
+    )
+    reference = models.CharField(
+        max_length=100,
+        blank=True,
+        help_text='Card last-4, eSewa TXN ID, etc.'
+    )
+
+    class Meta:
+        db_table = 'pos_payments'
+        ordering = ['id']
+
+    def __str__(self):
+        return f"{self.payment_method} Rs.{self.amount} for {self.transaction.transaction_number}"
+
+
+class POSHeldOrder(TenantModel):
+    """
+    Parked/held orders that can be resumed later.
+    """
+    session = models.ForeignKey(
+        POSSession,
+        on_delete=models.CASCADE,
+        related_name='held_orders'
+    )
+    customer = models.ForeignKey(
+        'sales.Customer',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True
+    )
+    customer_name = models.CharField(max_length=255, blank=True)
+    items = models.JSONField(help_text='Snapshot of cart items')
+    notes = models.TextField(blank=True)
+    held_by = models.ForeignKey(
+        'users.User',
+        on_delete=models.SET_NULL,
+        null=True
+    )
+    held_at = models.DateTimeField(auto_now_add=True)
+    is_resumed = models.BooleanField(default=False)
+    resumed_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = 'pos_held_orders'
+        ordering = ['-held_at']
+
+    def __str__(self):
+        return f"Held Order #{self.id} - {self.customer_name or 'Walk-in'}"
+
+
+class POSCashMovement(TenantModel):
+    """
+    Manual cash in/out movements during a session.
+    """
+    MOVEMENT_CHOICES = [
+        ('in', 'Cash In'),
+        ('out', 'Cash Out'),
+    ]
+
+    session = models.ForeignKey(
+        POSSession,
+        on_delete=models.CASCADE,
+        related_name='cash_movements'
+    )
+    movement_type = models.CharField(max_length=10, choices=MOVEMENT_CHOICES)
+    amount = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        validators=[MinValueValidator(Decimal('0.01'))]
+    )
+    reason = models.CharField(max_length=255)
+    performed_by = models.ForeignKey(
+        'users.User',
+        on_delete=models.SET_NULL,
+        null=True
+    )
+    performed_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'pos_cash_movements'
+        ordering = ['-performed_at']
+
+    def __str__(self):
+        return f"{self.movement_type} Rs.{self.amount} — {self.reason}"
+
+
+class POSSettings(TenantModel):
+    """
+    Per-tenant POS configuration (tax rate, receipt text, etc.)
+    """
+    tax_rate = models.DecimalField(
+        max_digits=5,
+        decimal_places=2,
+        default=Decimal('13.00')
+    )
+    tax_label = models.CharField(max_length=50, default='VAT')
+    tax_inclusive_pricing = models.BooleanField(default=False)
+    receipt_header = models.TextField(blank=True)
+    receipt_footer = models.TextField(
+        blank=True,
+        default='Thank you for your purchase!'
+    )
+    auto_print_receipt = models.BooleanField(default=True)
+    allow_zero_price_items = models.BooleanField(default=False)
+    require_customer_for_credit = models.BooleanField(default=True)
+
+    class Meta:
+        db_table = 'pos_settings'
+        unique_together = [['tenant']]
+
+    def __str__(self):
+        return f"POS Settings — {self.tenant}"
+
+    @classmethod
+    def get_for_tenant(cls, tenant):
+        settings, _ = cls._base_manager.get_or_create(tenant=tenant)
+        return settings
+
+
+# ============================================================================
+# Feature 1: Refund Tracking
+# ============================================================================
+
+class POSRefund(TenantModel):
+    """
+    Tracks partial or full refunds against a POS transaction.
+    Created when a cashier returns items from a completed sale.
+    """
+    original_transaction = models.ForeignKey(
+        POSTransaction,
+        on_delete=models.PROTECT,
+        related_name='refunds'
+    )
+    refund_transaction = models.ForeignKey(
+        POSTransaction,
+        on_delete=models.PROTECT,
+        related_name='refund_source',
+        null=True,
+        blank=True
+    )
+    reason = models.TextField(blank=True)
+    refund_method = models.CharField(max_length=20, choices=PAYMENT_METHOD_CHOICES)
+    refunded_by = models.ForeignKey(
+        'users.User',
+        on_delete=models.SET_NULL,
+        null=True,
+        related_name='pos_refunds'
+    )
+    refunded_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'pos_refunds'
+        ordering = ['-refunded_at']
+
+    def __str__(self):
+        return f"Refund for {self.original_transaction.transaction_number}"
+
+    @property
+    def refund_number(self):
+        return f"REF-{self.id:06d}"
+
+    def get_subtotal_amount(self):
+        from django.db.models import Sum
+        return self.lines.aggregate(total=Sum('refund_amount'))['total'] or Decimal('0.00')
+
+    def get_total_amount(self):
+        from .utils import compute_refund_tax_amount, quantize_money
+        txn = self.original_transaction
+        subtotal = self.get_subtotal_amount()
+        tax_amount = compute_refund_tax_amount(txn, subtotal)
+        return quantize_money(subtotal + tax_amount)
+
+
+class POSRefundLine(TenantModel):
+    """
+    Individual line items being refunded.
+    """
+    refund = models.ForeignKey(
+        POSRefund,
+        on_delete=models.CASCADE,
+        related_name='lines'
+    )
+    original_line = models.ForeignKey(
+        POSTransactionLine,
+        on_delete=models.PROTECT,
+        related_name='refund_lines'
+    )
+    quantity = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        validators=[MinValueValidator(Decimal('0.01'))]
+    )
+    refund_amount = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        validators=[MinValueValidator(Decimal('0'))]
+    )
+
+    class Meta:
+        db_table = 'pos_refund_lines'
+        ordering = ['id']
+
+    def __str__(self):
+        return f"Refund line: {self.original_line.product_name} x {self.quantity}"
+
+
+# ============================================================================
+# Feature 2: Customer Loyalty / Points
+# ============================================================================
+
+class LoyaltyProgram(TenantModel):
+    """
+    Per-tenant loyalty program configuration.
+    """
+    points_per_rupee = models.DecimalField(
+        max_digits=8,
+        decimal_places=4,
+        default=Decimal('1.0000'),
+        help_text='Points earned per Rs 1 spent'
+    )
+    rupees_per_point = models.DecimalField(
+        max_digits=8,
+        decimal_places=4,
+        default=Decimal('0.1000'),
+        help_text='Rs value of 1 point when redeeming'
+    )
+    min_redemption_points = models.IntegerField(
+        default=100,
+        help_text='Minimum points required to redeem'
+    )
+    is_active = models.BooleanField(default=True)
+
+    class Meta:
+        db_table = 'pos_loyalty_programs'
+        unique_together = [['tenant']]
+
+    def __str__(self):
+        return f"Loyalty Program — {self.tenant}"
+
+    @classmethod
+    def get_for_tenant(cls, tenant):
+        program, _ = cls._base_manager.get_or_create(tenant=tenant)
+        return program
+
+
+class CustomerLoyaltyPoints(TenantModel):
+    """
+    Loyalty points balance per customer.
+    """
+    customer = models.ForeignKey(
+        'sales.Customer',
+        on_delete=models.CASCADE,
+        related_name='loyalty_points'
+    )
+    points_balance = models.IntegerField(default=0)
+    total_earned = models.IntegerField(default=0)
+    total_redeemed = models.IntegerField(default=0)
+
+    class Meta:
+        db_table = 'pos_customer_loyalty_points'
+        unique_together = [['tenant', 'customer']]
+
+    def __str__(self):
+        return f"{self.customer.name}: {self.points_balance} pts"
+
+
+class LoyaltyTransaction(TenantModel):
+    """
+    Audit trail of all loyalty point movements.
+    """
+    TYPES = [
+        ('earn', 'Earn'),
+        ('redeem', 'Redeem'),
+        ('expire', 'Expire'),
+        ('adjust', 'Adjust'),
+    ]
+    customer_points = models.ForeignKey(
+        CustomerLoyaltyPoints,
+        on_delete=models.CASCADE,
+        related_name='transactions'
+    )
+    transaction_type = models.CharField(max_length=20, choices=TYPES)
+    points = models.IntegerField()
+    reference = models.CharField(max_length=100, blank=True)
+    description = models.TextField(blank=True)
+
+    class Meta:
+        db_table = 'pos_loyalty_transactions'
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f"{self.transaction_type}: {self.points} pts — {self.reference}"

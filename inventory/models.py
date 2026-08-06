@@ -109,6 +109,12 @@ class Product(TenantModel):
         blank=True,
         help_text='Optional expiry date for perishable products',
     )
+    image = models.ImageField(
+        upload_to='products/',
+        null=True,
+        blank=True,
+        help_text='Product image for POS display and catalog'
+    )
     
     # Status
     status = models.CharField(

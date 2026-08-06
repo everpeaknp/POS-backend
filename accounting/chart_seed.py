@@ -26,8 +26,10 @@ DEFAULT_CHART_OF_ACCOUNTS = [
      'description': 'Amounts owed to suppliers'},
     {'code': '2100', 'name': 'Wages Payable', 'type': 'Liabilities', 'sub_type': 'Payable',
      'description': 'Unpaid wages and salaries'},
-    {'code': '2200', 'name': 'VAT Payable', 'type': 'Liabilities', 'sub_type': 'Tax',
-     'description': 'Output VAT collected — link in tax rules'},
+    {'code': '2200', 'name': 'Salary Payable', 'type': 'Liabilities', 'sub_type': 'Payable',
+     'description': 'Unpaid salaries owed to HR employees'},
+    {'code': '2250', 'name': 'VAT Payable', 'type': 'Liabilities', 'sub_type': 'Tax',
+     'description': 'Output VAT collected'},
     {'code': '2300', 'name': 'TDS Payable', 'type': 'Liabilities', 'sub_type': 'Tax',
      'description': 'Tax deducted at source payable to IRD'},
     # Equity

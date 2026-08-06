@@ -16,13 +16,22 @@ from decimal import Decimal
 
 from users.dynamic_permissions import DynamicModulePermission
 from tenants.utils import get_request_tenant
-from .models import POSSession, POSDiscount, POSTransaction, POSTransactionLine, POSDailySalesReport
+from .models import (
+    POSSession, POSDiscount, POSTransaction, POSTransactionLine,
+    POSDailySalesReport, POSHeldOrder, POSCashMovement, POSSettings, POSPayment,
+)
 from .serializers import (
-    POSSessionSerializer, POSDiscountSerializer, POSTransactionSerializer, POSTransactionCreateSerializer,
-    POSDailySalesReportSerializer, ProductSearchSerializer
+    POSSessionSerializer, POSDiscountSerializer, POSTransactionSerializer,
+    POSTransactionCreateSerializer, POSDailySalesReportSerializer,
+    ProductSearchSerializer, POSHeldOrderSerializer, POSCashMovementSerializer,
+    POSSettingsSerializer,
 )
 from inventory.models import Product
 
+
+# ============================================================================
+# POS Sessions
+# ============================================================================
 
 @extend_schema_view(
     list=extend_schema(description="List all POS sessions", tags=["POS - Sessions"]),
@@ -104,7 +113,7 @@ class POSSessionViewSet(viewsets.ModelViewSet):
     )
     @action(detail=True, methods=['post'])
     def close(self, request, pk=None):
-        """Close a session"""
+        """Close a session — accounts for split payments and cash movements."""
         session = self.get_object()
         
         if session.status == 'closed':
@@ -134,29 +143,67 @@ class POSSessionViewSet(viewsets.ModelViewSet):
             session=session,
             status='completed'
         )
-        
-        aggregates = transactions.aggregate(
-            total_count=Count('id'),
-            total_sales=Sum('total'),
-            cash_sales=Sum('total', filter=Q(payment_method='cash')),
-            card_sales=Sum('total', filter=Q(payment_method='card')),
-            esewa_sales=Sum('total', filter=Q(payment_method='esewa')),
-            khalti_sales=Sum('total', filter=Q(payment_method='khalti')),
-            fonepay_sales=Sum('total', filter=Q(payment_method='fonepay')),
-            credit_sales=Sum('total', filter=Q(payment_method='credit')),
-        )
-        
+
+        # ---- Check if any transaction uses split payments ----
+        has_split = POSPayment.objects.filter(
+            transaction__in=transactions,
+        ).exists()
+
+        if has_split:
+            # Aggregate from POSPayment rows for accuracy
+            payment_agg = POSPayment.objects.filter(
+                transaction__in=transactions,
+            ).values('payment_method').annotate(total=Sum('amount'))
+            method_totals = {row['payment_method']: row['total'] for row in payment_agg}
+
+            # Transactions without split-payment entries — fall back to legacy field
+            txn_ids_with_payments = POSPayment.objects.filter(
+                transaction__in=transactions,
+            ).values_list('transaction_id', flat=True).distinct()
+            legacy_txns = transactions.exclude(id__in=txn_ids_with_payments)
+            legacy_agg = legacy_txns.values('payment_method').annotate(total=Sum('total'))
+            for row in legacy_agg:
+                method_totals[row['payment_method']] = (
+                    method_totals.get(row['payment_method'], Decimal('0')) + row['total']
+                )
+        else:
+            # No split payments at all — simple aggregation
+            aggregates = transactions.aggregate(
+                cash_sales=Sum('total', filter=Q(payment_method='cash')),
+                card_sales=Sum('total', filter=Q(payment_method='card')),
+                esewa_sales=Sum('total', filter=Q(payment_method='esewa')),
+                khalti_sales=Sum('total', filter=Q(payment_method='khalti')),
+                fonepay_sales=Sum('total', filter=Q(payment_method='fonepay')),
+                credit_sales=Sum('total', filter=Q(payment_method='credit')),
+            )
+            method_totals = {
+                'cash': aggregates['cash_sales'] or Decimal('0'),
+                'card': aggregates['card_sales'] or Decimal('0'),
+                'esewa': aggregates['esewa_sales'] or Decimal('0'),
+                'khalti': aggregates['khalti_sales'] or Decimal('0'),
+                'fonepay': aggregates['fonepay_sales'] or Decimal('0'),
+                'credit': aggregates['credit_sales'] or Decimal('0'),
+            }
+
         # Update session
-        session.total_transactions = aggregates['total_count'] or 0
-        session.total_sales = aggregates['total_sales'] or Decimal('0.00')
-        session.cash_sales = aggregates['cash_sales'] or Decimal('0.00')
-        session.card_sales = aggregates['card_sales'] or Decimal('0.00')
-        session.esewa_sales = aggregates['esewa_sales'] or Decimal('0.00')
-        session.khalti_sales = aggregates['khalti_sales'] or Decimal('0.00')
-        session.fonepay_sales = aggregates['fonepay_sales'] or Decimal('0.00')
-        session.credit_sales = aggregates['credit_sales'] or Decimal('0.00')
+        session.total_transactions = transactions.count()
+        session.total_sales = transactions.aggregate(t=Sum('total'))['t'] or Decimal('0.00')
+        session.cash_sales = method_totals.get('cash', Decimal('0'))
+        session.card_sales = method_totals.get('card', Decimal('0'))
+        session.esewa_sales = method_totals.get('esewa', Decimal('0'))
+        session.khalti_sales = method_totals.get('khalti', Decimal('0'))
+        session.fonepay_sales = method_totals.get('fonepay', Decimal('0'))
+        session.credit_sales = method_totals.get('credit', Decimal('0'))
         
-        session.expected_cash = session.opening_cash + session.cash_sales
+        # Include cash movements in expected_cash
+        cash_in = session.cash_movements.filter(
+            movement_type='in'
+        ).aggregate(t=Sum('amount'))['t'] or Decimal('0')
+        cash_out = session.cash_movements.filter(
+            movement_type='out'
+        ).aggregate(t=Sum('amount'))['t'] or Decimal('0')
+
+        session.expected_cash = session.opening_cash + session.cash_sales + cash_in - cash_out
         session.closing_cash = closing_cash
         session.cash_variance = closing_cash - session.expected_cash
         session.closed_at = timezone.now()
@@ -200,6 +247,10 @@ class POSSessionViewSet(viewsets.ModelViewSet):
         serializer = self.get_serializer(session)
         return Response(serializer.data)
 
+
+# ============================================================================
+# POS Discounts
+# ============================================================================
 
 @extend_schema_view(
     list=extend_schema(description="List all POS discounts", tags=["POS - Discounts"]),
@@ -248,6 +299,10 @@ class POSDiscountViewSet(viewsets.ModelViewSet):
         return Response(serializer.data)
 
 
+# ============================================================================
+# POS Transactions
+# ============================================================================
+
 @extend_schema_view(
     list=extend_schema(description="List all POS transactions", tags=["POS - Transactions"]),
     retrieve=extend_schema(description="Get transaction details", tags=["POS - Transactions"]),
@@ -271,12 +326,27 @@ class POSTransactionViewSet(viewsets.ModelViewSet):
         """Filter by current tenant"""
         return POSTransaction.objects.filter(
             tenant=self.request.user.tenant
-        ).select_related('customer', 'cashier', 'warehouse').prefetch_related('lines__product')
+        ).select_related('customer', 'cashier', 'warehouse').prefetch_related('lines__product', 'payments')
     
     def get_serializer_class(self):
         if self.action == 'create':
             return POSTransactionCreateSerializer
         return POSTransactionSerializer
+
+    def create(self, request, *args, **kwargs):
+        """Override to include reorder alerts in response."""
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        instance = serializer.save()
+        out = POSTransactionSerializer(instance, context={'request': request})
+        response_data = out.data
+        # Attach reorder alerts if any
+        alerts = getattr(instance, '_reorder_alerts', [])
+        if alerts:
+            response_data = dict(response_data)
+            response_data['reorder_alerts'] = alerts
+        from rest_framework import status as drf_status
+        return Response(response_data, status=drf_status.HTTP_201_CREATED)
     
     @extend_schema(
         tags=['POS - Transactions'],
@@ -368,6 +438,10 @@ class POSTransactionViewSet(viewsets.ModelViewSet):
         serializer = self.get_serializer(transactions, many=True)
         return Response(serializer.data)
 
+
+# ============================================================================
+# POS Daily Reports
+# ============================================================================
 
 @extend_schema_view(
     list=extend_schema(description="List daily sales reports", tags=["POS - Reports"]),
@@ -515,6 +589,10 @@ class POSDailySalesReportViewSet(viewsets.ReadOnlyModelViewSet):
         return Response(serializer.data, status=status.HTTP_201_CREATED if created else status.HTTP_200_OK)
 
 
+# ============================================================================
+# POS Product Search
+# ============================================================================
+
 @extend_schema_view(
     list=extend_schema(description="Search products for POS", tags=["POS - Products"]),
 )
@@ -578,3 +656,477 @@ class POSProductSearchViewSet(viewsets.ReadOnlyModelViewSet):
                 {'error': 'Product not found'},
                 status=status.HTTP_404_NOT_FOUND
             )
+
+
+# ============================================================================
+# POS Held Orders
+# ============================================================================
+
+@extend_schema_view(
+    list=extend_schema(description="List held/parked orders", tags=["POS - Held Orders"]),
+    retrieve=extend_schema(description="Get held order details", tags=["POS - Held Orders"]),
+    create=extend_schema(description="Create a held order (park cart)", tags=["POS - Held Orders"]),
+    destroy=extend_schema(description="Delete a held order", tags=["POS - Held Orders"]),
+)
+class POSHeldOrderViewSet(viewsets.ModelViewSet):
+    """ViewSet for holding/parking orders."""
+    permission_classes = [DynamicModulePermission]
+    permission_module = 'pos'
+    serializer_class = POSHeldOrderSerializer
+    http_method_names = ['get', 'post', 'delete']
+    ordering = ['-held_at']
+
+    def get_queryset(self):
+        qs = POSHeldOrder.objects.filter(tenant=self.request.user.tenant)
+        session_id = self.request.query_params.get('session')
+        if session_id:
+            qs = qs.filter(session_id=session_id)
+        # By default only show non-resumed orders
+        show_all = self.request.query_params.get('all')
+        if not show_all:
+            qs = qs.filter(is_resumed=False)
+        return qs.select_related('held_by', 'customer')
+
+    def perform_create(self, serializer):
+        serializer.save(
+            tenant=self.request.user.tenant,
+            held_by=self.request.user,
+        )
+
+    @extend_schema(
+        tags=['POS - Held Orders'],
+        summary='Resume a held order',
+        description='Mark a held order as resumed (client should populate the cart from the items JSON)',
+    )
+    @action(detail=True, methods=['post'])
+    def resume(self, request, pk=None):
+        """Mark a held order as resumed."""
+        held_order = self.get_object()
+        if held_order.is_resumed:
+            return Response(
+                {'error': 'This order has already been resumed.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        held_order.is_resumed = True
+        held_order.resumed_at = timezone.now()
+        held_order.save(update_fields=['is_resumed', 'resumed_at', 'updated_at'])
+        serializer = self.get_serializer(held_order)
+        return Response(serializer.data)
+
+
+# ============================================================================
+# POS Cash Movements
+# ============================================================================
+
+@extend_schema_view(
+    list=extend_schema(description="List cash movements for a session", tags=["POS - Cash"]),
+    create=extend_schema(description="Record a cash in/out movement", tags=["POS - Cash"]),
+)
+class POSCashMovementViewSet(viewsets.ModelViewSet):
+    """ViewSet for cash-in / cash-out operations during a session."""
+    permission_classes = [DynamicModulePermission]
+    permission_module = 'pos'
+    serializer_class = POSCashMovementSerializer
+    http_method_names = ['get', 'post', 'delete']
+    ordering = ['-performed_at']
+
+    def get_queryset(self):
+        qs = POSCashMovement.objects.filter(tenant=self.request.user.tenant)
+        session_id = self.request.query_params.get('session')
+        if session_id:
+            qs = qs.filter(session_id=session_id)
+        return qs.select_related('performed_by', 'session')
+
+    def perform_create(self, serializer):
+        session = serializer.validated_data.get('session')
+        if session and session.status != 'open':
+            from rest_framework.exceptions import ValidationError
+            raise ValidationError({'session': 'Cash movements can only be added to open sessions.'})
+        serializer.save(
+            tenant=self.request.user.tenant,
+            performed_by=self.request.user,
+        )
+
+
+# ============================================================================
+# POS Settings (single-object per tenant)
+# ============================================================================
+
+@extend_schema_view(
+    list=extend_schema(description="Get POS settings", tags=["POS - Settings"]),
+)
+class POSSettingsViewSet(viewsets.ViewSet):
+    """Single-object viewset for per-tenant POS settings (get-or-create)."""
+    permission_classes = [DynamicModulePermission]
+    permission_module = 'pos'
+
+    @extend_schema(tags=['POS - Settings'], summary='Get POS settings')
+    def list(self, request):
+        """Return the current tenant's POS settings."""
+        tenant = get_request_tenant(request.user)
+        settings = POSSettings.get_for_tenant(tenant)
+        serializer = POSSettingsSerializer(settings)
+        return Response(serializer.data)
+
+    @extend_schema(tags=['POS - Settings'], summary='Update POS settings')
+    @action(detail=False, methods=['patch', 'put'], url_path='update')
+    def update_settings(self, request):
+        """Update POS settings for the current tenant."""
+        tenant = get_request_tenant(request.user)
+        settings = POSSettings.get_for_tenant(tenant)
+        serializer = POSSettingsSerializer(settings, data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        return Response(serializer.data)
+
+
+# ============================================================================
+# Feature 1: Return / Refund with Stock Restore
+# ============================================================================
+
+class POSRefundViewSet(viewsets.ModelViewSet):
+    """
+    Partial or full refund for a completed POS transaction.
+    Restores stock, reverses GL, and optionally adjusts customer ledger.
+    """
+    permission_classes = [DynamicModulePermission]
+    permission_module = 'pos'
+    http_method_names = ['get', 'post']
+    ordering = ['-refunded_at']
+
+    def get_queryset(self):
+        from .models import POSRefund
+        qs = POSRefund.objects.filter(tenant=self.request.user.tenant)
+        txn_id = self.request.query_params.get('transaction')
+        if txn_id:
+            qs = qs.filter(original_transaction_id=txn_id)
+        return qs.select_related('original_transaction', 'refunded_by')
+
+    def get_serializer_class(self):
+        from .serializers import POSRefundSerializer, POSRefundCreateSerializer
+        if self.action == 'create':
+            return POSRefundCreateSerializer
+        return POSRefundSerializer
+
+    def create(self, request, *args, **kwargs):
+        from django.db import transaction as db_txn
+        from .models import POSRefund, POSRefundLine
+        from .serializers import POSRefundCreateSerializer, POSRefundSerializer
+        from inventory.models import Stock, StockMovement
+        from sales.accounting_integration import reverse_pos_sale
+
+        serializer = POSRefundCreateSerializer(
+            data=request.data, context={'request': request}
+        )
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+
+        original = data['original_transaction']
+        refund_lines_data = data['lines']  # [{original_line, quantity}]
+        reason = data.get('reason', '')
+        refund_method = data['refund_method']
+        tenant = request.user.tenant
+
+        with db_txn.atomic():
+            # Create the refund record
+            refund = POSRefund.objects.create(
+                tenant=tenant,
+                original_transaction=original,
+                reason=reason,
+                refund_method=refund_method,
+                refunded_by=request.user,
+            )
+
+            refund_total = Decimal('0.00')
+
+            for rline_data in refund_lines_data:
+                orig_line = rline_data['original_line']
+                qty = Decimal(str(rline_data['quantity']))
+
+                # Validate not over-refunding
+                already_refunded = POSRefundLine.objects.filter(
+                    original_line=orig_line
+                ).aggregate(t=Sum('quantity'))['t'] or Decimal('0')
+                if already_refunded + qty > orig_line.quantity:
+                    return Response(
+                        {
+                            'error': (
+                                f'Cannot refund {qty} of {orig_line.product_name}. '
+                                f'Sold: {orig_line.quantity}, '
+                                f'Already refunded: {already_refunded}'
+                            )
+                        },
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+
+                refund_amount = orig_line.get_refund_amount(qty)
+                POSRefundLine.objects.create(
+                    tenant=tenant,
+                    refund=refund,
+                    original_line=orig_line,
+                    quantity=qty,
+                    refund_amount=refund_amount,
+                )
+                refund_total += refund_amount
+
+                # Restore stock
+                if original.warehouse:
+                    stock, _ = Stock.objects.get_or_create(
+                        tenant=tenant,
+                        product=orig_line.product,
+                        warehouse=original.warehouse,
+                        defaults={'quantity': Decimal('0.00')},
+                    )
+                    stock.quantity += qty
+                    stock.save()
+
+                    StockMovement.objects.create(
+                        tenant=tenant,
+                        product=orig_line.product,
+                        warehouse=original.warehouse,
+                        movement_type='in',
+                        quantity=qty,
+                        reference_type='POSRefund',
+                        reference_id=refund.id,
+                        reason=f'POS Refund - {original.transaction_number}',
+                        performed_by=request.user,
+                    )
+
+            # Mark original transaction as refunded if fully returned
+            all_refunded = True
+            for line in original.lines.all():
+                total_refunded = POSRefundLine.objects.filter(
+                    original_line=line
+                ).aggregate(t=Sum('quantity'))['t'] or Decimal('0')
+                if total_refunded < line.quantity:
+                    all_refunded = False
+                    break
+            if all_refunded:
+                original.status = 'refunded'
+                original.save(update_fields=['status', 'updated_at'])
+
+            # GL reversal (proportional)
+            try:
+                from sales.accounting_integration import record_pos_refund
+                record_pos_refund(original, refund_total, refund.id, tenant)
+            except Exception as exc:
+                import logging
+                logging.getLogger(__name__).error(f'POS refund GL failed: {exc}')
+
+        out = POSRefundSerializer(refund)
+        return Response(out.data, status=status.HTTP_201_CREATED)
+
+
+# ============================================================================
+# Feature 2: Customer Loyalty / Points
+# ============================================================================
+
+class LoyaltyProgramViewSet(viewsets.ViewSet):
+    """Get/update the tenant loyalty program configuration."""
+    permission_classes = [DynamicModulePermission]
+    permission_module = 'pos'
+
+    def list(self, request):
+        from .models import LoyaltyProgram
+        from .serializers import LoyaltyProgramSerializer
+        tenant = get_request_tenant(request.user)
+        program = LoyaltyProgram.get_for_tenant(tenant)
+        return Response(LoyaltyProgramSerializer(program).data)
+
+    @action(detail=False, methods=['patch', 'put'], url_path='update')
+    def update_program(self, request):
+        from .models import LoyaltyProgram
+        from .serializers import LoyaltyProgramSerializer
+        tenant = get_request_tenant(request.user)
+        program = LoyaltyProgram.get_for_tenant(tenant)
+        serializer = LoyaltyProgramSerializer(program, data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        return Response(serializer.data)
+
+
+class CustomerLoyaltyViewSet(viewsets.ViewSet):
+    """Get loyalty balance and history for a customer, and redeem points."""
+    permission_classes = [DynamicModulePermission]
+    permission_module = 'pos'
+
+    def retrieve(self, request, pk=None):
+        from .models import CustomerLoyaltyPoints, LoyaltyTransaction
+        from .serializers import CustomerLoyaltySerializer
+        tenant = get_request_tenant(request.user)
+        try:
+            points_obj, _ = CustomerLoyaltyPoints._base_manager.get_or_create(
+                tenant=tenant,
+                customer_id=pk,
+            )
+        except Exception:
+            return Response({'error': 'Customer not found.'}, status=404)
+        history = LoyaltyTransaction.objects.filter(
+            customer_points=points_obj
+        ).order_by('-created_at')[:50]
+        data = CustomerLoyaltySerializer(points_obj).data
+        data['history'] = [
+            {
+                'type': t.transaction_type,
+                'points': t.points,
+                'reference': t.reference,
+                'description': t.description,
+                'date': t.created_at,
+            }
+            for t in history
+        ]
+        return Response(data)
+
+    @action(detail=True, methods=['post'])
+    def redeem(self, request, pk=None):
+        """Redeem loyalty points as a discount."""
+        from .models import CustomerLoyaltyPoints, LoyaltyTransaction, LoyaltyProgram
+        from django.db import transaction as db_txn
+
+        tenant = get_request_tenant(request.user)
+        points_to_redeem = int(request.data.get('points', 0))
+        if points_to_redeem <= 0:
+            return Response({'error': 'Points must be > 0.'}, status=400)
+
+        program = LoyaltyProgram.get_for_tenant(tenant)
+        if not program.is_active:
+            return Response({'error': 'Loyalty program is not active.'}, status=400)
+
+        with db_txn.atomic():
+            pts, _ = CustomerLoyaltyPoints._base_manager.select_for_update().get_or_create(
+                tenant=tenant, customer_id=pk
+            )
+            if pts.points_balance < points_to_redeem:
+                return Response(
+                    {'error': f'Insufficient points. Balance: {pts.points_balance}'},
+                    status=400,
+                )
+            if points_to_redeem < program.min_redemption_points:
+                return Response(
+                    {'error': f'Minimum redemption is {program.min_redemption_points} points.'},
+                    status=400,
+                )
+
+            discount_amount = Decimal(str(points_to_redeem)) * program.rupees_per_point
+            pts.points_balance -= points_to_redeem
+            pts.total_redeemed += points_to_redeem
+            pts.save()
+
+            LoyaltyTransaction.objects.create(
+                tenant=tenant,
+                customer_points=pts,
+                transaction_type='redeem',
+                points=-points_to_redeem,
+                reference=request.data.get('transaction_number', ''),
+                description=f'Redeemed {points_to_redeem} pts = Rs. {discount_amount}',
+            )
+
+        return Response({
+            'points_redeemed': points_to_redeem,
+            'discount_amount': float(discount_amount),
+            'remaining_balance': pts.points_balance,
+        })
+
+
+# ============================================================================
+# Feature 4: Z-Report (End of Day)
+# ============================================================================
+
+class ZReportViewSet(viewsets.ViewSet):
+    """Generate and retrieve Z-Reports (end-of-day register summaries)."""
+    permission_classes = [DynamicModulePermission]
+    permission_module = 'pos'
+
+    @action(detail=False, methods=['post'])
+    def generate(self, request):
+        """Generate Z-Report for a session."""
+        from .models import POSRefund
+        session_id = request.data.get('session_id')
+        if not session_id:
+            return Response({'error': 'session_id is required.'}, status=400)
+
+        tenant = get_request_tenant(request.user)
+        try:
+            session = POSSession._base_manager.get(id=session_id, tenant=tenant)
+        except POSSession.DoesNotExist:
+            return Response({'error': 'Session not found.'}, status=404)
+
+        transactions = POSTransaction.objects.filter(
+            tenant=tenant, session=session, status='completed'
+        )
+        refunded = POSTransaction.objects.filter(
+            tenant=tenant, session=session, status='refunded'
+        )
+
+        agg = transactions.aggregate(
+            total_txns=Count('id'),
+            gross_sales=Sum('subtotal'),
+            total_discounts=Sum('discount_amount'),
+            total_tax=Sum('tax_amount'),
+            net_sales=Sum('total'),
+            items_sold=Sum('lines__quantity'),
+            cash=Sum('total', filter=Q(payment_method='cash')),
+            card=Sum('total', filter=Q(payment_method='card')),
+            esewa=Sum('total', filter=Q(payment_method='esewa')),
+            khalti=Sum('total', filter=Q(payment_method='khalti')),
+            fonepay=Sum('total', filter=Q(payment_method='fonepay')),
+            credit=Sum('total', filter=Q(payment_method='credit')),
+        )
+
+        refund_agg = refunded.aggregate(refunded_total=Sum('total'))
+
+        # Cash movements
+        cash_in = session.cash_movements.filter(movement_type='in').aggregate(
+            t=Sum('amount'))['t'] or Decimal('0')
+        cash_out = session.cash_movements.filter(movement_type='out').aggregate(
+            t=Sum('amount'))['t'] or Decimal('0')
+
+        cash_sales = agg['cash'] or Decimal('0')
+        expected_cash = session.opening_cash + cash_sales + cash_in - cash_out
+
+        def d(val):
+            return float(val or 0)
+
+        report = {
+            'session_number': session.session_number,
+            'cashier': session.cashier.get_full_name() or session.cashier.username,
+            'warehouse': session.warehouse_name if hasattr(session, 'warehouse_name') else (
+                session.warehouse.name if session.warehouse else None
+            ),
+            'opened_at': session.opened_at,
+            'closed_at': session.closed_at,
+            'report_generated_at': timezone.now(),
+
+            # Cash drawer
+            'opening_cash': d(session.opening_cash),
+            'cash_in': d(cash_in),
+            'cash_out': d(cash_out),
+            'expected_cash': d(expected_cash),
+            'closing_cash': d(session.closing_cash) if session.closing_cash is not None else None,
+            'cash_variance': d(session.cash_variance),
+
+            # Sales
+            'total_transactions': agg['total_txns'] or 0,
+            'total_items_sold': d(agg['items_sold']),
+            'gross_sales': d(agg['gross_sales']),
+            'total_discounts': d(agg['total_discounts']),
+            'tax_collected': d(agg['total_tax']),
+            'net_sales': d(agg['net_sales']),
+
+            # By payment method
+            'cash_sales': d(cash_sales),
+            'card_sales': d(agg['card']),
+            'esewa_sales': d(agg['esewa']),
+            'khalti_sales': d(agg['khalti']),
+            'fonepay_sales': d(agg['fonepay']),
+            'credit_sales': d(agg['credit']),
+            'digital_wallet_sales': d(agg['esewa']) + d(agg['khalti']) + d(agg['fonepay']),
+
+            # Refunds
+            'refunded_transactions': refunded.count(),
+            'refunded_amount': d(refund_agg['refunded_total']),
+            'cancelled_transactions': POSTransaction.objects.filter(
+                tenant=tenant, session=session, status='cancelled'
+            ).count(),
+        }
+        return Response(report)

@@ -134,12 +134,15 @@ def get_or_create_account(code, name, account_type, tenant=None):
         '1100': 'Receivable',  # Accounts Receivable
         '1200': 'Current Asset',  # Inventory
         '2000': 'Payable',  # Accounts Payable
-        '2100': 'Payable',  # Wages Payable
+        '2100': 'Payable',  # Wages Payable (Construction Workers)
+        '2200': 'Payable',  # Salary Payable (HR Employees)
+        '2250': 'Tax',  # VAT Payable
         '4000': 'Revenue',  # Sales Revenue
         '5000': 'COGS',  # Cost of Goods Sold
         '5100': 'Operating',  # Construction Expenses
-        '5200': 'Operating',  # Labor Expenses
+        '5200': 'Operating',  # Labor Expenses (Construction)
         '5300': 'Operating',  # Equipment Expenses
+        '5400': 'Operating',  # Salary Expense (HR Employees)
     }
     
     account, created = Account._base_manager.get_or_create(
@@ -177,8 +180,28 @@ def get_accounts_payable_account(tenant=None):
 
 
 def get_wages_payable_account(tenant=None):
-    """Get or create Wages Payable account (Liability)"""
+    """Get or create Wages Payable account (Liability) — used for construction workers"""
     return get_or_create_account('2100', 'Wages Payable', 'liability', tenant)
+
+
+def get_salary_payable_account(tenant=None):
+    """Get or create Salary Payable account (Liability) — used for HR employees"""
+    if tenant is None:
+        tenant = get_current_tenant()
+    if not tenant:
+        raise ValueError("No tenant in context. Cannot create account.")
+    account, _ = Account._base_manager.get_or_create(
+        tenant=tenant,
+        code='2200',
+        defaults={
+            'name': 'Salary Payable',
+            'type': 'Liabilities',
+            'sub_type': 'Payable',
+            'status': 'active',
+            'level': 0,
+        }
+    )
+    return account
 
 
 def get_sales_revenue_account(tenant=None):
@@ -412,7 +435,14 @@ def record_site_other_expense(site, amount, date, reference, description, tenant
 
 
 def record_payroll_expense(employee, net_salary, reference, date, tenant=None):
-    """Record HR payroll expense."""
+    """
+    Record HR employee payroll expense.
+    Called by HR Payroll module.
+
+    Accounting Entry:
+    Dr. Salary Expense   (5400)
+    Cr. Salary Payable   (2200)  ← HR employees, NOT construction wages
+    """
     if tenant is None:
         tenant = get_current_tenant()
     if not tenant:
@@ -424,7 +454,7 @@ def record_payroll_expense(employee, net_salary, reference, date, tenant=None):
     if net_salary <= 0:
         return None
 
-    salary_account = get_or_create_account('5400', 'Salary Expense', 'expense', tenant)
+    salary_expense_account = get_or_create_account('5400', 'Salary Expense', 'expense', tenant)
 
     return create_journal_entry(
         tenant=tenant,
@@ -434,16 +464,16 @@ def record_payroll_expense(employee, net_salary, reference, date, tenant=None):
         entry_type='Payroll',
         entries=[
             {
-                'account': salary_account,
+                'account': salary_expense_account,
                 'debit': net_salary,
                 'credit': 0,
                 'description': f"Salary for {employee.name}",
             },
             {
-                'account': get_wages_payable_account(tenant),
+                'account': get_salary_payable_account(tenant),
                 'debit': 0,
                 'credit': net_salary,
-                'description': f"Wages payable to {employee.name}",
+                'description': f"Salary payable to {employee.name}",
             },
         ],
     )
@@ -854,4 +884,52 @@ def create_account_opening_balance(account, amount, date, balance_side, tenant):
         entries=entries,
         reference=f"OB-{account.code}",
         date=date,
+    )
+
+
+
+def record_pos_refund(transaction, refund_amount, refund_id, tenant=None):
+    """
+    Record GL reversal for a POS refund.
+    Dr. Sales Revenue  (reduces revenue)
+    Cr. Cash / AR      (reduces cash or receivable)
+    """
+    if tenant is None:
+        tenant = get_current_tenant()
+    if not tenant:
+        return None
+
+    refund_amount = Decimal(str(refund_amount))
+    if refund_amount <= 0:
+        return None
+
+    reference = f"REFUND-{refund_id}"
+    if has_posted_journal(tenant, reference, 'Sales'):
+        return None
+
+    revenue_account = get_sales_revenue_account(tenant)
+
+    if transaction.payment_method == 'credit' and transaction.customer:
+        ar_account = get_accounts_receivable_account(tenant)
+        entries = [
+            {'account': revenue_account, 'debit': refund_amount, 'credit': 0,
+             'description': f'POS Refund {reference}'},
+            {'account': ar_account, 'debit': 0, 'credit': refund_amount,
+             'description': f'Reduce AR for refund {reference}'},
+        ]
+    else:
+        cash_account = get_cash_account(tenant)
+        entries = [
+            {'account': revenue_account, 'debit': refund_amount, 'credit': 0,
+             'description': f'POS Refund {reference}'},
+            {'account': cash_account, 'debit': 0, 'credit': refund_amount,
+             'description': f'Cash refunded {reference}'},
+        ]
+
+    return create_journal_entry(
+        tenant=tenant,
+        description=f'POS Refund for {transaction.transaction_number}',
+        reference=reference,
+        entry_type='Sales',
+        entries=entries,
     )
