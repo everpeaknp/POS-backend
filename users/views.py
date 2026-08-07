@@ -976,6 +976,7 @@ def get_appearance_preferences(request):
             'date_calendar_system': 'AD',
             'compact_mode': False,
             'smooth_animations': True,
+            'navbar_position': 'left',
         }
     )
     
@@ -986,6 +987,7 @@ def get_appearance_preferences(request):
         'date_calendar_system': preferences.date_calendar_system,
         'compact_mode': preferences.compact_mode,
         'smooth_animations': preferences.smooth_animations,
+        'navbar_position': preferences.navbar_position,
     })
     
     return Response(serializer.data)
@@ -1022,6 +1024,7 @@ def update_appearance_preferences(request):
         'date_calendar_system': preferences.date_calendar_system,
         'compact_mode': preferences.compact_mode,
         'smooth_animations': preferences.smooth_animations,
+        'navbar_position': preferences.navbar_position,
     })
     
     return Response(response_serializer.data)

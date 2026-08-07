@@ -44,6 +44,11 @@ class AppearancePreferences(models.Model):
         ('AD', 'Gregorian (AD)'),
         ('BS', 'Bikram Sambat (BS)'),
     ]
+    
+    NAVBAR_POSITION_CHOICES = [
+        ('left', 'Left'),
+        ('top', 'Top'),
+    ]
 
     user = models.OneToOneField(
         settings.AUTH_USER_MODEL,
@@ -90,6 +95,13 @@ class AppearancePreferences(models.Model):
     smooth_animations = models.BooleanField(
         default=True,
         help_text='Enable smooth animations'
+    )
+    
+    navbar_position = models.CharField(
+        max_length=10,
+        choices=NAVBAR_POSITION_CHOICES,
+        default='left',
+        help_text='App bar position (left or top)'
     )
     
     # Metadata

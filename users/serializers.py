@@ -508,3 +508,7 @@ class AppearancePreferencesSerializer(serializers.Serializer):
     )
     compact_mode = serializers.BooleanField(default=False)
     smooth_animations = serializers.BooleanField(default=True)
+    navbar_position = serializers.ChoiceField(
+        choices=['left', 'top'],
+        default='left'
+    )
