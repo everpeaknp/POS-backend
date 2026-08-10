@@ -4,6 +4,7 @@ from django.contrib.auth import get_user_model
 from tenants.models import Tenant
 from pos.models import POSTransaction, POSTransactionLine
 from pos.serializers import POSRefundCreateSerializer
+from pos.utils import compute_pos_amounts
 from inventory.models import Product, Warehouse, UnitOfMeasure
 
 from tenants.middleware import set_current_tenant
@@ -27,6 +28,22 @@ class POSRefundCalculationTests(SimpleTestCase):
             line.get_refund_amount(refund_quantity),
             expected_refund_amount,
         )
+
+    def test_compute_pos_amounts_uses_line_discounts_before_tax(self):
+        lines = [
+            {
+                "quantity": Decimal("2"),
+                "unit_price": Decimal("100"),
+                "discount_amount": Decimal("20"),
+            },
+        ]
+
+        amounts = compute_pos_amounts(lines, Decimal("0"), tax_rate=Decimal("0.10"))
+
+        self.assertEqual(amounts["subtotal"], Decimal("200"))
+        self.assertEqual(amounts["discount_amount"], Decimal("20"))
+        self.assertEqual(amounts["tax_amount"], Decimal("18"))
+        self.assertEqual(amounts["total"], Decimal("198"))
 
 
 class POSRefundSerializerTests(TestCase):

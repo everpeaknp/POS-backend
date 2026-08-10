@@ -47,12 +47,16 @@ def compute_pos_amounts(lines_data, total_discount_amount, tax_rate=None):
         quantize_money(line['quantity'] * line['unit_price'])
         for line in lines_data
     )
-    total_discount = quantize_money(total_discount_amount or 0)
+    line_discounts = sum(
+        quantize_money(line.get('discount_amount', 0) or 0)
+        for line in lines_data
+    )
+    total_discount = quantize_money((total_discount_amount or 0) + line_discounts)
     if total_discount > subtotal:
         raise ValueError('Discount cannot exceed subtotal')
     net = subtotal - total_discount
     tax_amount = quantize_money(net * tax_rate)
-    total = net + tax_amount
+    total = quantize_money(net + tax_amount)
     return {
         'subtotal': subtotal,
         'discount_amount': total_discount,
