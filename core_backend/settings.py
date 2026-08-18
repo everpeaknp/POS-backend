@@ -78,6 +78,7 @@ INSTALLED_APPS = [
     'reports',
     'hr',
     'pos',
+    'finance',  # Personal Finance module
 ]
 
 MIDDLEWARE = [
