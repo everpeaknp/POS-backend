@@ -11,6 +11,7 @@ AVAILABLE_MODULES = [
     ('hr', 'HR & Payroll'),
     ('construction', 'Construction Management'),
     ('hardware', 'Hardware Business'),
+    ('personal_finance', 'Personal Finance'),
     ('dashboard', 'Dashboard'),
 ]
 

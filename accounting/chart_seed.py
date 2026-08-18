@@ -58,9 +58,72 @@ DEFAULT_CHART_OF_ACCOUNTS = [
 ]
 
 
+PERSONAL_CHART_OF_ACCOUNTS = [
+    # Assets
+    {'code': '1000', 'name': 'Cash', 'type': 'Assets', 'sub_type': 'Cash',
+     'description': 'Cash on hand and wallet'},
+    {'code': '1010', 'name': 'Checking Account', 'type': 'Assets', 'sub_type': 'Bank',
+     'description': 'Primary checking/current account'},
+    {'code': '1020', 'name': 'Savings Account', 'type': 'Assets', 'sub_type': 'Bank',
+     'description': 'Savings and deposit accounts'},
+    {'code': '1030', 'name': 'Investment Account', 'type': 'Assets', 'sub_type': 'Current Asset',
+     'description': 'Brokerage and investment accounts'},
+    {'code': '1500', 'name': 'Fixed Assets', 'type': 'Assets', 'sub_type': 'Fixed Asset',
+     'description': 'Property, vehicle, and long-term personal assets'},
+    # Liabilities
+    {'code': '2100', 'name': 'Credit Card', 'type': 'Liabilities', 'sub_type': 'Payable',
+     'description': 'Credit card balances'},
+    {'code': '2200', 'name': 'Personal Loan', 'type': 'Liabilities', 'sub_type': 'Payable',
+     'description': 'Personal loans and borrowings'},
+    {'code': '2300', 'name': 'Home Loan', 'type': 'Liabilities', 'sub_type': 'Payable',
+     'description': 'Mortgage and home loans'},
+    {'code': '2400', 'name': 'Car Loan', 'type': 'Liabilities', 'sub_type': 'Payable',
+     'description': 'Vehicle financing'},
+    {'code': '2500', 'name': 'Student Loan', 'type': 'Liabilities', 'sub_type': 'Payable',
+     'description': 'Education loans'},
+    # Equity
+    {'code': '3000', 'name': 'Opening Balance', 'type': 'Equity', 'sub_type': 'Capital',
+     'description': 'Initial net worth when starting to track finances'},
+    {'code': '3100', 'name': 'Retained Earnings', 'type': 'Equity', 'sub_type': 'Retained Earnings',
+     'description': 'Accumulated savings and net worth changes'},
+    # Income
+    {'code': '4000', 'name': 'Salary Income', 'type': 'Income', 'sub_type': 'Revenue',
+     'description': 'Primary employment salary'},
+    {'code': '4100', 'name': 'Freelance Income', 'type': 'Income', 'sub_type': 'Revenue',
+     'description': 'Freelance and contract work'},
+    {'code': '4200', 'name': 'Investment Income', 'type': 'Income', 'sub_type': 'Other Income',
+     'description': 'Interest, dividends, and capital gains'},
+    {'code': '4300', 'name': 'Rental Income', 'type': 'Income', 'sub_type': 'Other Income',
+     'description': 'Property rental income'},
+    {'code': '4400', 'name': 'Other Income', 'type': 'Income', 'sub_type': 'Other Income',
+     'description': 'Gifts, bonuses, and miscellaneous income'},
+    # Expenses
+    {'code': '5000', 'name': 'Groceries', 'type': 'Expense', 'sub_type': 'Operating',
+     'description': 'Food and household supplies'},
+    {'code': '5100', 'name': 'Rent', 'type': 'Expense', 'sub_type': 'Operating',
+     'description': 'Housing rent or mortgage payment'},
+    {'code': '5200', 'name': 'Utilities', 'type': 'Expense', 'sub_type': 'Operating',
+     'description': 'Electricity, water, gas, internet'},
+    {'code': '5300', 'name': 'Transportation', 'type': 'Expense', 'sub_type': 'Operating',
+     'description': 'Fuel, public transport, vehicle maintenance'},
+    {'code': '5400', 'name': 'Dining & Entertainment', 'type': 'Expense', 'sub_type': 'Operating',
+     'description': 'Restaurants, movies, recreation'},
+    {'code': '5500', 'name': 'Healthcare', 'type': 'Expense', 'sub_type': 'Operating',
+     'description': 'Medical expenses, insurance, medications'},
+    {'code': '5600', 'name': 'Education', 'type': 'Expense', 'sub_type': 'Operating',
+     'description': 'Tuition, courses, books'},
+    {'code': '5700', 'name': 'Insurance', 'type': 'Expense', 'sub_type': 'Operating',
+     'description': 'Health, life, vehicle insurance premiums'},
+    {'code': '5800', 'name': 'Shopping', 'type': 'Expense', 'sub_type': 'Operating',
+     'description': 'Clothing, electronics, personal items'},
+    {'code': '5900', 'name': 'Personal Care', 'type': 'Expense', 'sub_type': 'Operating',
+     'description': 'Haircuts, cosmetics, gym memberships'},
+]
+
+
 def seed_default_chart_of_accounts(tenant):
     """
-    Create the standard chart of accounts for a tenant.
+    Create the standard chart of accounts for a business tenant.
     Idempotent — existing accounts (matched by code) are skipped.
     Uses _base_manager so lookup is not affected by TenantManager thread-local filtering.
     """
@@ -100,3 +163,63 @@ def seed_default_chart_of_accounts(tenant):
         'total': len(DEFAULT_CHART_OF_ACCOUNTS),
         'accounts': created,
     }
+
+
+def seed_personal_chart_of_accounts(tenant):
+    """
+    Create the personal finance chart of accounts for a personal tenant.
+    Idempotent — existing accounts (matched by code) are skipped.
+    Uses _base_manager so lookup is not affected by TenantManager thread-local filtering.
+    """
+    from django.db import transaction, IntegrityError
+
+    created = []
+    skipped = []
+
+    with transaction.atomic():
+        for spec in PERSONAL_CHART_OF_ACCOUNTS:
+            lookup = {'tenant': tenant, 'code': spec['code']}
+            defaults = {
+                'name': spec['name'],
+                'type': spec['type'],
+                'sub_type': spec['sub_type'],
+                'description': spec.get('description', ''),
+                'status': 'active',
+                'level': 0,
+            }
+            try:
+                account, was_created = Account._base_manager.get_or_create(
+                    defaults=defaults,
+                    **lookup,
+                )
+            except IntegrityError:
+                account = Account._base_manager.get(**lookup)
+                was_created = False
+
+            if was_created:
+                created.append(account)
+            else:
+                skipped.append(account)
+
+    return {
+        'created': len(created),
+        'skipped': len(skipped),
+        'total': len(PERSONAL_CHART_OF_ACCOUNTS),
+        'accounts': created,
+    }
+
+
+def seed_chart_of_accounts_for_tenant(tenant):
+    """
+    Seed the appropriate chart of accounts based on tenant business_type.
+    
+    Args:
+        tenant: Tenant instance
+    
+    Returns:
+        dict: Result of seeding operation
+    """
+    if tenant.business_type == 'personal':
+        return seed_personal_chart_of_accounts(tenant)
+    else:
+        return seed_default_chart_of_accounts(tenant)
