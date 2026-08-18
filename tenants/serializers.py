@@ -113,6 +113,25 @@ class TenantCreateSerializer(serializers.ModelSerializer):
 
         new_org_plan_code = 'free'
         modules = data.get('active_modules')
+        
+        # Business-type specific module assignment
+        business_type = data.get('business_type', 'other')
+        if business_type == 'personal':
+            # Personal Finance tenants: Reports + Personal Finance only (plus core)
+            # Core modules (accounting, settings, dashboard) added automatically by normalize_active_modules_for_plan
+            default_personal_modules = ['reports', 'personal_finance']
+            if not modules:
+                modules = default_personal_modules
+            # Filter to only allow personal-appropriate modules
+            allowed_personal_modules = {'reports', 'personal_finance', 'accounting', 'settings', 'dashboard'}
+            modules = [m for m in modules if m in allowed_personal_modules]
+        else:
+            # Retail/Business tenants: Standard business modules (existing behavior)
+            if not modules:
+                modules = None  # Will use plan defaults
+        
+        data['active_modules'] = modules  # Pass filtered modules for validation
+        
         if modules:
             assert_modules_allowed_for_plan(new_org_plan_code, modules)
             data['active_modules'] = normalize_active_modules_for_plan(new_org_plan_code, modules)

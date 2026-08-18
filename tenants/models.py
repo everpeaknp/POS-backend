@@ -22,6 +22,7 @@ class Tenant(models.Model):
         ('wholesale', 'Wholesale'),
         ('manufacturing', 'Manufacturing'),
         ('services', 'Services'),
+        ('personal', 'Personal Finance'),
         ('other', 'Other'),
     ]
     
