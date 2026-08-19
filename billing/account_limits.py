@@ -51,18 +51,38 @@ def count_orgs_created_by_user(user) -> int:
     return Tenant.objects.filter(created_by=user).count()
 
 
+def count_personal_accounts_by_user(user) -> int:
+    """Count personal accounts created by this user."""
+    from tenants.models import Tenant
+    return Tenant.objects.filter(created_by=user, account_type='personal').count()
+
+
+def count_org_accounts_by_user(user) -> int:
+    """Count organization accounts created by this user."""
+    from tenants.models import Tenant
+    return Tenant.objects.filter(created_by=user, account_type='organization').count()
+
+
 def user_can_create_org(user) -> bool:
+    """Check if user can create another organization account."""
     plan = get_plan(get_user_account_plan_code(user))
     max_orgs = plan.get('max_orgs')
     if max_orgs is None:
         return True
-    return count_orgs_created_by_user(user) < max_orgs
+    return count_org_accounts_by_user(user) < max_orgs
+
+
+def user_can_create_personal(user) -> bool:
+    """Check if user can create a personal account (max 1 per user)."""
+    return count_personal_accounts_by_user(user) == 0
 
 
 def get_user_account_limits(user) -> dict:
+    """Account subscription tier for this user, with org creation limits."""
     account_plan_code = get_user_account_plan_code(user)
     account_plan = get_plan(account_plan_code)
-    orgs_created = count_orgs_created_by_user(user)
+    orgs_created = count_org_accounts_by_user(user)
+    personal_created = count_personal_accounts_by_user(user)
     max_orgs = account_plan.get('max_orgs')
     new_org_plan_code = 'free'
     new_org_plan = get_plan(new_org_plan_code)
@@ -72,7 +92,9 @@ def get_user_account_limits(user) -> dict:
         'account_plan_name': account_plan['name'],
         'max_orgs': max_orgs,
         'orgs_created': orgs_created,
+        'personal_created': personal_created,
         'can_create_org': user_can_create_org(user),
+        'can_create_personal': user_can_create_personal(user),
         'new_org_plan_code': new_org_plan_code,
         'new_org_plan_name': new_org_plan['name'],
         'new_org_allowed_modules': get_allowed_modules_for_plan(new_org_plan_code),
@@ -101,7 +123,20 @@ def normalize_active_modules_for_plan(plan_code: str, modules: list[str] | None)
     return normalized
 
 
-def assert_user_can_create_org(user) -> None:
+def assert_user_can_create_org(user, is_personal_account: bool = False) -> None:
+    """
+    Validate that user can create a new organization.
+    Personal accounts: max 1 per user
+    Organization accounts: based on plan limits
+    """
+    if is_personal_account:
+        if user_can_create_personal(user):
+            return
+        raise serializers.ValidationError({
+            'detail': 'You already have a personal account. Each user can create only one personal account.',
+        })
+
+    # Regular organization check
     if user_can_create_org(user):
         return
 

@@ -13,12 +13,13 @@ DEFAULT_SUBSCRIPTION_PLANS = {
         'features': [
             '1 organization',
             '1 user',
+            'Personal Finance',
             'Sales & Purchase',
             'Inventory',
             'Basic Reports',
             'Accounting',
         ],
-        'modules': ['sales', 'purchase', 'inventory', 'reports', 'accounting'],
+        'modules': ['personal_finance', 'sales', 'purchase', 'inventory', 'reports', 'accounting'],
         'is_popular': False,
     },
     'starter': {
@@ -31,12 +32,13 @@ DEFAULT_SUBSCRIPTION_PLANS = {
         'features': [
             'Up to 10 users',
             'Up to 5 organizations',
+            'Personal Finance',
             'Sales & Purchase',
             'Basic Reports',
             'Email Support',
             'Accounting',
         ],
-        'modules': ['sales', 'purchase', 'inventory', 'reports', 'accounting'],
+        'modules': ['personal_finance', 'sales', 'purchase', 'inventory', 'reports', 'accounting'],
         'is_popular': False,
     },
     'business': {
@@ -55,7 +57,7 @@ DEFAULT_SUBSCRIPTION_PLANS = {
             'API Access',
         ],
         'modules': [
-            'sales', 'purchase', 'inventory', 'accounting',
+            'personal_finance', 'sales', 'purchase', 'inventory', 'accounting',
             'reports', 'pos', 'hr', 'construction', 'hardware',
         ],
         'is_popular': True,
@@ -77,7 +79,7 @@ DEFAULT_SUBSCRIPTION_PLANS = {
             'SLA Guarantee',
         ],
         'modules': [
-            'sales', 'purchase', 'inventory', 'accounting',
+            'personal_finance', 'sales', 'purchase', 'inventory', 'accounting',
             'reports', 'pos', 'hr', 'construction', 'hardware',
         ],
         'is_popular': False,

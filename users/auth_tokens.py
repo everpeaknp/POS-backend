@@ -48,6 +48,7 @@ def build_tenant_payload(user):
         'id': tenant.id,
         'name': tenant.name,
         'slug': tenant.slug,
+        'account_type': tenant.account_type,
         'workspace_name': tenant.workspace_name,
         'email': tenant.email,
         'address': tenant.address,

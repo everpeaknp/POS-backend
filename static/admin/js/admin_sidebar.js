@@ -5,16 +5,17 @@
   'use strict';
 
   function injectAnalyticsLink() {
+    // The dashboard now lives at /admin/ itself, so this just links home.
     var $nav = $('#jazzy-navigation');
-    if (!$nav.length || $nav.find('a[href="/admin/platform/"]').length) return;
+    if (!$nav.length || $nav.find('a[href="/admin/"]').length) return;
 
     var path = window.location.pathname.replace(/\/$/, '');
-    var isActive = path === '/admin/platform';
+    var isActive = path === '' || path === '/admin';
     var $item = $(
       '<li class="nav-item">' +
-        '<a href="/admin/platform/" class="nav-link' + (isActive ? ' active' : '') + '">' +
+        '<a href="/admin/" class="nav-link' + (isActive ? ' active' : '') + '">' +
           '<i class="nav-icon fas fa-chart-line"></i>' +
-          '<p>Analytics</p>' +
+          '<p>Dashboard</p>' +
         '</a>' +
       '</li>'
     );

@@ -1,0 +1,125 @@
+  <div class="quick-actions">
+    <a href="{% url 'admin:tenants_tenant_changelist' %}" class="primary">Organizations</a>
+    <a href="{% url 'admin:billing_billingpayment_changelist' %}">Payments</a>
+    <a href="{% url 'admin_mail_dashboard' %}">Mail Center</a>
+    <a href="http://localhost:3000" target="_blank" rel="noopener">Customer App ↗</a>
+    <form method="post" style="display:inline;">{% csrf_token %}
+      <button type="submit" name="action" value="process_mail_queue">Process mail queue</button>
+    </form>
+  </div>
+
+  <div class="kpi-grid">
+    <div class="kpi-card">
+      <div class="kpi-label">Organizations</div>
+      <div class="kpi-value">{{ stats.kpis.total_tenants }}</div>
+      <div class="kpi-sub">{{ stats.kpis.active_tenants }} active · {{ stats.kpis.new_tenants_month }} new this month</div>
+    </div>
+    <div class="kpi-card info">
+      <div class="kpi-label">Users</div>
+      <div class="kpi-value">{{ stats.kpis.total_users }}</div>
+      <div class="kpi-sub">{{ stats.kpis.new_users_month }} joined this month</div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-label">Revenue (month)</div>
+      <div class="kpi-value">Rs. {{ stats.kpis.revenue_month|floatformat:0 }}</div>
+      <div class="kpi-sub">Rs. {{ stats.kpis.revenue_all|floatformat:0 }} all time</div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-label">Subscriptions</div>
+      <div class="kpi-value">{{ stats.kpis.active_subscriptions }}</div>
+      <div class="kpi-sub">active or trialing</div>
+    </div>
+    <div class="kpi-card {% if stats.kpis.pending_payments %}warn{% endif %}">
+      <div class="kpi-label">Pending payments</div>
+      <div class="kpi-value">{{ stats.kpis.pending_payments }}</div>
+      <div class="kpi-sub">{{ stats.kpis.failed_payments }} failed</div>
+    </div>
+    <div class="kpi-card {% if stats.kpis.mail_failed %}danger{% endif %}">
+      <div class="kpi-label">Email queue</div>
+      <div class="kpi-value">{{ stats.kpis.mail_queued }}</div>
+      <div class="kpi-sub">{{ stats.kpis.mail_failed }} failed · {{ stats.kpis.emails_sent_month }} sent this month</div>
+    </div>
+    <div class="kpi-card info">
+      <div class="kpi-label">Invitations</div>
+      <div class="kpi-value">{{ stats.kpis.pending_invitations }}</div>
+      <div class="kpi-sub">pending acceptance</div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-label">Self-serve signups</div>
+      <div class="kpi-value">{{ stats.kpis.registration_tenants }}</div>
+      <div class="kpi-sub">from registration flow</div>
+    </div>
+  </div>
+
+  <div class="chart-grid">
+    <div class="chart-card">
+      <h3>New organizations (30 days)</h3>
+      <div class="chart-wrap"><canvas id="chartSignups"></canvas></div>
+    </div>
+    <div class="chart-card">
+      <h3>Revenue (30 days)</h3>
+      <div class="chart-wrap"><canvas id="chartRevenue"></canvas></div>
+    </div>
+    <div class="chart-card">
+      <h3>Subscription status</h3>
+      <div class="chart-wrap"><canvas id="chartSubStatus"></canvas></div>
+    </div>
+    <div class="chart-card">
+      <h3>Plan distribution</h3>
+      <div class="chart-wrap"><canvas id="chartSubPlan"></canvas></div>
+    </div>
+    <div class="chart-card">
+      <h3>Module adoption</h3>
+      <div class="chart-wrap"><canvas id="chartModules"></canvas></div>
+    </div>
+    <div class="chart-card">
+      <h3>Business types</h3>
+      <div class="chart-wrap"><canvas id="chartBiz"></canvas></div>
+    </div>
+  </div>
+
+  <div class="tables-grid">
+    <div class="chart-card">
+      <h3>Recent organizations</h3>
+      <table class="data-table">
+        <thead><tr><th>Name</th><th>Plan</th><th>Status</th><th>Created</th></tr></thead>
+        <tbody>
+        {% for t in stats.recent_tenants %}
+          <tr>
+            <td><a href="{% url 'admin:tenants_tenant_change' t.id %}">{{ t.name }}</a></td>
+            <td>{{ t.plan_type|title }}</td>
+            <td>{% if t.is_active %}<span class="badge badge-ok">Active</span>{% else %}<span class="badge badge-muted">Inactive</span>{% endif %}</td>
+            <td>{{ t.created_at|date:"M j, Y" }}</td>
+          </tr>
+        {% empty %}
+          <tr><td colspan="4" style="color:#94a3b8;">No organizations yet</td></tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    <div class="chart-card">
+      <h3>Recent payments</h3>
+      <table class="data-table">
+        <thead><tr><th>Account</th><th>Plan</th><th>Amount</th><th>Status</th></tr></thead>
+        <tbody>
+        {% for p in stats.recent_payments %}
+          <tr>
+            <td>{{ p.initiated_by__email|default:"—" }}</td>
+            <td>{{ p.plan_code|title }}</td>
+            <td>Rs. {{ p.amount }}</td>
+            <td>
+              {% if p.status == 'completed' %}<span class="badge badge-ok">Completed</span>
+              {% elif p.status == 'pending' %}<span class="badge badge-warn">Pending</span>
+              {% elif p.status == 'failed' %}<span class="badge badge-bad">Failed</span>
+              {% else %}<span class="badge badge-muted">{{ p.status }}</span>{% endif %}
+            </td>
+          </tr>
+        {% empty %}
+          <tr><td colspan="4" style="color:#94a3b8;">No payments yet</td></tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+{{ charts|json_script:"platform-charts" }}

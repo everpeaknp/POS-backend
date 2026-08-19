@@ -98,7 +98,11 @@ ROOT_URLCONF = 'core_backend.urls'
 TEMPLATES = [
     {
         'BACKEND': 'django.template.backends.django.DjangoTemplates',
-        'DIRS': [],
+        # Filesystem loader runs before app_directories, so this lets
+        # core_backend/templates/admin/index.html win over jazzmin's own
+        # admin/index.html even though jazzmin is listed before core_backend
+        # in INSTALLED_APPS.
+        'DIRS': [BASE_DIR / 'core_backend' / 'templates'],
         'APP_DIRS': True,
         'OPTIONS': {
             'context_processors': [
@@ -916,7 +920,6 @@ JAZZMIN_SETTINGS = {
     
     # Top menu
     "topmenu_links": [
-        {"name": "Analytics", "url": "/admin/platform/", "permissions": ["auth.view_user"]},
         {"name": "Dashboard", "url": "admin:index", "permissions": ["auth.view_user"]},
         {"name": "Mail Center", "url": "/admin/mail/dashboard/", "permissions": ["auth.view_user"]},
         {"name": "Customer App", "url": "http://localhost:3000", "new_window": True},

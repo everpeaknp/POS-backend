@@ -26,10 +26,21 @@ class Tenant(models.Model):
         ('other', 'Other'),
     ]
     
+    ACCOUNT_TYPE_CHOICES = [
+        ('organization', 'Organization'),
+        ('personal', 'Personal'),
+    ]
+    
     # Basic Information
     name = models.CharField(max_length=255, unique=True)
     slug = models.SlugField(max_length=255, unique=True, blank=True)
     business_type = models.CharField(max_length=50, choices=BUSINESS_TYPE_CHOICES, default='other')
+    account_type = models.CharField(
+        max_length=20,
+        choices=ACCOUNT_TYPE_CHOICES,
+        default='organization',
+        help_text='Personal accounts are limited to the personal finance module'
+    )
     
     # Creator tracking
     created_by = models.ForeignKey(

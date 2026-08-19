@@ -11,7 +11,7 @@ from tenants.utils import get_request_tenant
 from tenants.membership_models import UserTenantMembership
 
 
-CORE_MODULES = frozenset({'accounting', 'settings', 'dashboard'})
+CORE_MODULES = frozenset({'settings', 'dashboard'})
 
 
 def tenant_has_active_module(tenant, module):

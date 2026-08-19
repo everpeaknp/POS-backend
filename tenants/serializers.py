@@ -18,7 +18,7 @@ class TenantSerializer(serializers.ModelSerializer):
     class Meta:
         model = Tenant
         fields = [
-            'id', 'name', 'slug', 'business_type', 'owner_name', 'email',
+            'id', 'name', 'slug', 'business_type', 'account_type', 'owner_name', 'email',
             'phone', 'address', 'pan_vat_number', 'website',
             'accounting_start_date', 'vat_registered',
             'workspace_name', 'logo', 'is_active', 'plan_type', 'active_modules',
@@ -26,7 +26,7 @@ class TenantSerializer(serializers.ModelSerializer):
             'created_at', 'updated_at', 'created_by', 'user_role'
         ]
         read_only_fields = [
-            'id', 'slug', 'created_at', 'updated_at', 'created_by',
+            'id', 'slug', 'account_type', 'created_at', 'updated_at', 'created_by',
             'user_role', 'allowed_modules', 'user_limits',
         ]
     
@@ -91,12 +91,12 @@ class TenantCreateSerializer(serializers.ModelSerializer):
     class Meta:
         model = Tenant
         fields = [
-            'id', 'slug', 'name', 'business_type', 'owner_name', 'email',
+            'id', 'slug', 'name', 'business_type', 'account_type', 'owner_name', 'email',
             'phone', 'address', 'pan_vat_number', 'website',
             'accounting_start_date', 'vat_registered',
             'workspace_name', 'logo', 'active_modules'
         ]
-        read_only_fields = ['id', 'slug']
+        read_only_fields = ['id', 'slug', 'account_type']
     
     def validate_name(self, value):
         """Ensure tenant name is unique"""
@@ -108,22 +108,23 @@ class TenantCreateSerializer(serializers.ModelSerializer):
         request = self.context.get('request')
         user = getattr(request, 'user', None) if request else None
 
-        if user and user.is_authenticated:
-            assert_user_can_create_org(user)
-
         new_org_plan_code = 'free'
         modules = data.get('active_modules')
         
-        # Business-type specific module assignment
-        business_type = data.get('business_type', 'other')
-        if business_type == 'personal':
-            # Personal Finance tenants: Reports + Personal Finance only (plus core)
-            # Core modules (accounting, settings, dashboard) added automatically by normalize_active_modules_for_plan
-            default_personal_modules = ['reports', 'personal_finance']
+        # Detect personal finance accounts: if personal_finance is explicitly in the modules list
+        is_personal_account = modules and 'personal_finance' in modules
+        
+        if user and user.is_authenticated:
+            assert_user_can_create_org(user, is_personal_account=is_personal_account)
+        
+        if is_personal_account:
+            # Personal Finance tenants: Only Settings + Personal Finance
+            # No dashboard, no accounting - just personal finance features
+            default_personal_modules = ['settings', 'personal_finance']
             if not modules:
                 modules = default_personal_modules
             # Filter to only allow personal-appropriate modules
-            allowed_personal_modules = {'reports', 'personal_finance', 'accounting', 'settings', 'dashboard'}
+            allowed_personal_modules = {'settings', 'personal_finance'}
             modules = [m for m in modules if m in allowed_personal_modules]
         else:
             # Retail/Business tenants: Standard business modules (existing behavior)
@@ -134,9 +135,18 @@ class TenantCreateSerializer(serializers.ModelSerializer):
         
         if modules:
             assert_modules_allowed_for_plan(new_org_plan_code, modules)
-            data['active_modules'] = normalize_active_modules_for_plan(new_org_plan_code, modules)
+            if is_personal_account:
+                # For personal accounts, don't add core modules - use modules as-is
+                data['active_modules'] = modules
+            else:
+                # For organizations, normalize and add core modules
+                data['active_modules'] = normalize_active_modules_for_plan(new_org_plan_code, modules)
         else:
-            data['active_modules'] = normalize_active_modules_for_plan(new_org_plan_code, None)
+            if is_personal_account:
+                # Default personal modules (no core modules)
+                data['active_modules'] = ['settings', 'personal_finance']
+            else:
+                data['active_modules'] = normalize_active_modules_for_plan(new_org_plan_code, None)
 
         return data
 
@@ -144,6 +154,13 @@ class TenantCreateSerializer(serializers.ModelSerializer):
         """Create tenant with default values"""
         validated_data['plan_type'] = 'free'
         validated_data['is_active'] = True
+        
+        # Set account_type based on modules
+        modules = validated_data.get('active_modules', [])
+        if 'personal_finance' in modules:
+            validated_data['account_type'] = 'personal'
+        else:
+            validated_data['account_type'] = 'organization'
 
         return super().create(validated_data)
 
@@ -154,7 +171,7 @@ class TenantProfileSerializer(serializers.ModelSerializer):
     class Meta:
         model = Tenant
         fields = [
-            'id', 'name', 'slug', 'workspace_name', 'email', 'business_type', 'is_active',
+            'id', 'name', 'slug', 'account_type', 'workspace_name', 'email', 'business_type', 'is_active',
             'plan_type', 'active_modules',
         ]
         read_only_fields = fields
