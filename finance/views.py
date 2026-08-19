@@ -6,14 +6,17 @@ from rest_framework.filters import SearchFilter, OrderingFilter
 from drf_spectacular.utils import extend_schema, extend_schema_view
 from django.db import transaction
 from django.db.models import Sum, Q
+from django.utils import timezone
 from decimal import Decimal
+import secrets
 
 from users.dynamic_permissions import DynamicModulePermission
-from .models import FinanceAccount, FinanceCategory, FinanceTransaction, FinanceBudget, FinanceBill, PartyLender
+from .models import FinanceAccount, FinanceCategory, FinanceTransaction, FinanceBudget, FinanceBill, PartyLender, PartyTransaction, PartyTransactionShare
 from .serializers import (
     AccountSerializer, CategorySerializer,
     TransactionListSerializer, TransactionDetailSerializer,
-    BudgetSerializer, BillSerializer, PartyLenderSerializer
+    BudgetSerializer, BillSerializer, PartyLenderSerializer,
+    PartyTransactionSerializer, PartyTransactionShareSerializer
 )
 
 
@@ -436,3 +439,212 @@ class BillViewSet(viewsets.ModelViewSet):
         
         serializer = self.get_serializer(upcoming_bills, many=True)
         return Response(serializer.data)
+
+
+@extend_schema_view(
+    list=extend_schema(
+        tags=['Personal Finance - Party Transactions'],
+        summary='List all party transactions',
+        description='Get a paginated list of all party transactions (In/Out).',
+    ),
+    retrieve=extend_schema(
+        tags=['Personal Finance - Party Transactions'],
+        summary='Get party transaction details',
+        description='Retrieve detailed information about a specific party transaction.',
+    ),
+    create=extend_schema(
+        tags=['Personal Finance - Party Transactions'],
+        summary='Create a new party transaction',
+        description='Create a new transaction with a party (Money In/Out). Payment method and receipt are only for Out transactions.',
+    ),
+    update=extend_schema(
+        tags=['Personal Finance - Party Transactions'],
+        summary='Update party transaction',
+        description='Update an existing party transaction.',
+    ),
+    destroy=extend_schema(
+        tags=['Personal Finance - Party Transactions'],
+        summary='Delete party transaction',
+        description='Delete a party transaction.',
+    ),
+)
+class PartyTransactionViewSet(viewsets.ModelViewSet):
+    """ViewSet for managing party transactions (In/Out)"""
+    serializer_class = PartyTransactionSerializer
+    permission_classes = [DynamicModulePermission]
+    permission_module = 'personal_finance'
+    filter_backends = FINANCE_FILTER_BACKENDS
+    filterset_fields = ['direction', 'party', 'payment_method', 'date']
+    search_fields = ['party__name', 'note']
+    ordering_fields = ['date', 'amount', 'created_at']
+    
+    def get_queryset(self):
+        """Filter by current tenant"""
+        if self.request.user and self.request.user.is_authenticated:
+            tenant = self.request.user.get_tenant()
+            if tenant:
+                return PartyTransaction.objects.filter(
+                    tenant=tenant
+                ).select_related('party').order_by('-date')
+        return PartyTransaction.objects.none()
+    
+    def perform_create(self, serializer):
+        """Ensure tenant is set when creating"""
+        tenant = self.request.user.get_tenant()
+        serializer.save(tenant=tenant)
+
+
+@extend_schema_view(
+    list=extend_schema(
+        tags=['Personal Finance - Party Shares'],
+        summary='List shareable links',
+        description='Get a list of all created shareable links for parties/transactions.',
+    ),
+    retrieve=extend_schema(
+        tags=['Personal Finance - Party Shares'],
+        summary='Get share details',
+        description='Retrieve details about a specific shareable link.',
+    ),
+    create=extend_schema(
+        tags=['Personal Finance - Party Shares'],
+        summary='Create shareable link',
+        description='Generate a unique shareable read-only link for a party ledger or specific transaction.',
+    ),
+    destroy=extend_schema(
+        tags=['Personal Finance - Party Shares'],
+        summary='Revoke share',
+        description='Revoke/delete a shareable link.',
+    ),
+)
+class PartyTransactionShareViewSet(viewsets.ModelViewSet):
+    """ViewSet for managing shareable party transaction links"""
+    serializer_class = PartyTransactionShareSerializer
+    permission_classes = [DynamicModulePermission]
+    permission_module = 'personal_finance'
+    filter_backends = FINANCE_FILTER_BACKENDS
+    filterset_fields = ['share_type', 'is_active']
+    search_fields = ['token']
+    ordering_fields = ['created_at']
+    
+    def get_queryset(self):
+        """Filter by current tenant"""
+        if self.request.user and self.request.user.is_authenticated:
+            tenant = self.request.user.get_tenant()
+            if tenant:
+                return PartyTransactionShare.objects.filter(
+                    tenant=tenant
+                ).select_related('transaction', 'party')
+        return PartyTransactionShare.objects.none()
+    
+    def perform_create(self, serializer):
+        """Generate unique token and set tenant"""
+        tenant = self.request.user.get_tenant()
+        token = secrets.token_urlsafe(48)
+        serializer.save(tenant=tenant, token=token)
+
+
+# Public view for shared transactions (no authentication required)
+from rest_framework.response import Response
+from rest_framework.status import HTTP_404_NOT_FOUND
+from rest_framework.views import APIView
+from rest_framework.permissions import AllowAny
+from django.shortcuts import get_object_or_404
+
+class PublicPartyTransactionShareView(APIView):
+    """Public endpoint to view shared party transactions without authentication"""
+    permission_classes = [AllowAny]
+    
+    def get(self, request, token):
+        """Retrieve transaction/ledger details by share token"""
+        try:
+            share = PartyTransactionShare.objects.get(token=token, is_active=True)
+            
+            # Check if share has expired
+            if share.expires_at and share.expires_at < timezone.now():
+                return Response(
+                    {'error': 'This share link has expired'},
+                    status=HTTP_404_NOT_FOUND
+                )
+            
+            if share.share_type == 'transaction' and share.transaction:
+                serializer = PartyTransactionSerializer(
+                    share.transaction,
+                    context={'request': request}
+                )
+                return Response(serializer.data)
+            elif share.share_type == 'party_ledger' and share.party:
+                serializer = PartyLenderSerializer(
+                    share.party,
+                    context={'request': request}
+                )
+                return Response(serializer.data)
+            else:
+                return Response(
+                    {'error': 'Invalid share data'},
+                    status=HTTP_404_NOT_FOUND
+                )
+        except PartyTransactionShare.DoesNotExist:
+            return Response(
+                {'error': 'Share not found'},
+                status=HTTP_404_NOT_FOUND
+            )
+
+
+class PublicPartyLedgerShareView(APIView):
+    """Public endpoint to view party ledger by share token without authentication"""
+    permission_classes = [AllowAny]
+    
+    def get(self, request, token):
+        """Retrieve party ledger details by share token"""
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.error(f"PublicPartyLedgerShareView.get() called with token: {token}")
+        
+        try:
+            # Bypass tenant filtering for public share - use raw database query
+            from django.db import connection
+            from django.db.models import Model
+            
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    'SELECT * FROM finance_parties_lenders WHERE share_token = %s',
+                    [token]
+                )
+                columns = [col[0] for col in cursor.description]
+                row = cursor.fetchone()
+                logger.error(f"  Raw query result: {row is not None}")
+                
+                if not row:
+                    logger.error(f"  Returning 404 - party not found")
+                    return Response(
+                        {'error': 'Party ledger not found'},
+                        status=HTTP_404_NOT_FOUND
+                    )
+                
+                # Map row to PartyLender instance
+                party_id = row[columns.index('id')]
+                party_data = dict(zip(columns, row))
+                party = PartyLender(**party_data)
+                logger.error(f"  Created PartyLender instance: {party.name}")
+            
+            # Get transactions bypassing tenant filter
+            transactions_qs = PartyTransaction.objects.all().model.objects.filter(party_id=party_id).order_by('-date', '-created_at')
+            logger.error(f"  Found {transactions_qs.count()} transactions")
+            
+            response_data = {
+                'party': PartyLenderSerializer(party, context={'request': request}).data,
+                'transactions': PartyTransactionSerializer(
+                    transactions_qs,
+                    many=True,
+                    context={'request': request}
+                ).data
+            }
+            return Response(response_data)
+        except Exception as e:
+            import logging
+            logging.error(f"Error in PublicPartyLedgerShareView: {e}")
+            return Response(
+                {'error': 'Party ledger not found'},
+                status=HTTP_404_NOT_FOUND
+            )
+

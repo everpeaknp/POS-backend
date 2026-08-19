@@ -209,6 +209,14 @@ class PartyLender(TenantModel):
         blank=True,
         help_text='Party/Lender photo (optional)'
     )
+    share_token = models.CharField(
+        max_length=64,
+        unique=True,
+        null=True,
+        blank=True,
+        db_index=True,
+        help_text='Unique token for sharing this party ledger'
+    )
     
     class Meta:
         db_table = 'finance_parties_lenders'
@@ -218,3 +226,111 @@ class PartyLender(TenantModel):
     
     def __str__(self):
         return self.name
+
+    def save(self, *args, **kwargs):
+        if not self.share_token:
+            import uuid
+            self.share_token = uuid.uuid4().hex[:32]
+        super().save(*args, **kwargs)
+
+
+class PartyTransaction(TenantModel):
+    """Transactions with parties (money In/Out)"""
+    DIRECTION_CHOICES = [
+        ('in', 'Money In (Received)'),
+        ('out', 'Money Out (Given)'),
+    ]
+    
+    PAYMENT_METHOD_CHOICES = [
+        ('cash', 'Cash'),
+        ('esewa', 'eSewa'),
+        ('bank', 'Bank Transfer'),
+    ]
+    
+    party = models.ForeignKey(
+        PartyLender,
+        on_delete=models.PROTECT,
+        related_name='transactions'
+    )
+    direction = models.CharField(max_length=10, choices=DIRECTION_CHOICES)
+    amount = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        validators=[MinValueValidator(Decimal('0.01'))]
+    )
+    date = models.DateField()
+    payment_method = models.CharField(
+        max_length=20,
+        choices=PAYMENT_METHOD_CHOICES,
+        blank=True,
+        null=True,
+        help_text='Payment method (only for Money Out transactions)'
+    )
+    receipt = models.FileField(
+        upload_to='finance/party-receipts/',
+        blank=True,
+        null=True,
+        help_text='Receipt image or PDF (only for Money Out transactions)'
+    )
+    note = models.TextField(blank=True)
+    share_token = models.CharField(
+        max_length=64,
+        unique=True,
+        null=True,
+        blank=True,
+        db_index=True,
+        help_text='Unique token for sharing this transaction'
+    )
+    
+    class Meta:
+        db_table = 'finance_party_transactions'
+        ordering = ['-date', '-created_at']
+        verbose_name = 'Party Transaction'
+        verbose_name_plural = 'Party Transactions'
+    
+    def __str__(self):
+        return f"{self.party.name} - {self.get_direction_display()} - Rs.{self.amount}"
+
+    def save(self, *args, **kwargs):
+        if not self.share_token:
+            import uuid
+            self.share_token = uuid.uuid4().hex[:32]
+        super().save(*args, **kwargs)
+
+
+class PartyTransactionShare(TenantModel):
+    """Shareable read-only links for party transactions/ledger"""
+    SHARE_TYPE_CHOICES = [
+        ('transaction', 'Single Transaction'),
+        ('party_ledger', 'Party Ledger'),
+    ]
+    
+    transaction = models.ForeignKey(
+        PartyTransaction,
+        on_delete=models.CASCADE,
+        related_name='shares',
+        blank=True,
+        null=True,
+        help_text='For single transaction shares'
+    )
+    party = models.ForeignKey(
+        PartyLender,
+        on_delete=models.CASCADE,
+        related_name='ledger_shares',
+        blank=True,
+        null=True,
+        help_text='For party ledger shares'
+    )
+    share_type = models.CharField(max_length=20, choices=SHARE_TYPE_CHOICES)
+    token = models.CharField(max_length=64, unique=True, db_index=True)
+    expires_at = models.DateTimeField(null=True, blank=True)
+    is_active = models.BooleanField(default=True)
+    
+    class Meta:
+        db_table = 'finance_party_transaction_shares'
+        ordering = ['-created_at']
+        verbose_name = 'Party Transaction Share'
+        verbose_name_plural = 'Party Transaction Shares'
+    
+    def __str__(self):
+        return f"Share - {self.get_share_type_display()}"
