@@ -26,27 +26,29 @@ class Supplier(TenantModel):
     ]
     
     name = models.CharField(max_length=255)
-    phone = models.CharField(max_length=20)
+    phone = models.CharField(max_length=20, null=True, blank=True)
     email = models.EmailField(blank=True, null=True)
     website = models.URLField(blank=True, null=True)
     pan = models.CharField(max_length=20, blank=True, null=True, verbose_name='PAN/VAT Number')
     address = models.TextField(blank=True, null=True)
-    type = models.CharField(max_length=20, choices=TYPE_CHOICES, default='Company')
+    type = models.CharField(max_length=20, choices=TYPE_CHOICES, default='Company', null=True, blank=True)
     credit_limit = models.DecimalField(
         max_digits=12,
         decimal_places=2,
         default=0,
+        null=True,
+        blank=True,
         validators=[MinValueValidator(Decimal('0'))]
     )
-    payment_terms = models.CharField(max_length=20, choices=PAYMENT_TERMS_CHOICES, default='Net 30')
-    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='active')
+    payment_terms = models.CharField(max_length=20, choices=PAYMENT_TERMS_CHOICES, default='Net 30', null=True, blank=True)
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='active', null=True, blank=True)
     
     # Banking details
     bank_name = models.CharField(max_length=255, blank=True, null=True)
     bank_account = models.CharField(max_length=50, blank=True, null=True)
     
     # Lead time in days
-    lead_time_days = models.IntegerField(default=7, validators=[MinValueValidator(0)])
+    lead_time_days = models.IntegerField(default=7, null=True, blank=True, validators=[MinValueValidator(0)])
     
     class Meta:
         ordering = ['-created_at']
@@ -186,17 +188,17 @@ class PurchaseOrder(TenantModel):
         ('Cancelled', 'Cancelled'),
     ]
     
-    po_number = models.CharField(max_length=50)
+    po_number = models.CharField(max_length=50, null=True, blank=True)
     date = models.DateField()
     supplier = models.ForeignKey(
         Supplier,
         on_delete=models.PROTECT,
         related_name='purchase_orders'
     )
-    expected_delivery_date = models.DateField()
+    expected_delivery_date = models.DateField(null=True, blank=True)
     reference = models.CharField(max_length=100, blank=True, null=True)
-    payment_terms = models.CharField(max_length=50)
-    status = models.CharField(max_length=30, choices=STATUS_CHOICES, default='Draft')
+    payment_terms = models.CharField(max_length=50, null=True, blank=True)
+    status = models.CharField(max_length=30, choices=STATUS_CHOICES, default='Draft', null=True, blank=True)
     
     # Amounts
     subtotal = models.DecimalField(max_digits=12, decimal_places=2, default=0)
@@ -276,6 +278,8 @@ class PurchaseOrderLine(TenantModel):
         max_digits=5,
         decimal_places=2,
         default=13,
+        null=True,
+        blank=True,
         validators=[MinValueValidator(Decimal('0'))]
     )
     amount = models.DecimalField(max_digits=12, decimal_places=2, default=0)
@@ -313,9 +317,9 @@ class PurchaseInvoice(TenantModel):
         ('Overdue', 'Overdue'),
     ]
     
-    invoice_number = models.CharField(max_length=50)
+    invoice_number = models.CharField(max_length=50, null=True, blank=True)
     date = models.DateField()
-    due_date = models.DateField()
+    due_date = models.DateField(null=True, blank=True)
     supplier = models.ForeignKey(
         Supplier,
         on_delete=models.PROTECT,
@@ -339,7 +343,7 @@ class PurchaseInvoice(TenantModel):
         default=0,
         validators=[MinValueValidator(Decimal('0'))]
     )
-    status = models.CharField(max_length=30, choices=STATUS_CHOICES, default='Received')
+    status = models.CharField(max_length=30, choices=STATUS_CHOICES, default='Received', null=True, blank=True)
     notes = models.TextField(blank=True, null=True)
     created_by = models.ForeignKey(
         User,
@@ -401,7 +405,7 @@ class DebitNote(TenantModel):
         ('Other', 'Other'),
     ]
     
-    debit_note_number = models.CharField(max_length=50)
+    debit_note_number = models.CharField(max_length=50, null=True, blank=True)
     date = models.DateField()
     supplier = models.ForeignKey(
         Supplier,
@@ -411,14 +415,16 @@ class DebitNote(TenantModel):
     invoice = models.ForeignKey(
         PurchaseInvoice,
         on_delete=models.PROTECT,
-        related_name='debit_notes'
+        related_name='debit_notes',
+        null=True,
+        blank=True
     )
     amount = models.DecimalField(
         max_digits=12,
         decimal_places=2,
         validators=[MinValueValidator(Decimal('0.01'))]
     )
-    reason = models.CharField(max_length=50, choices=REASON_CHOICES)
+    reason = models.CharField(max_length=50, choices=REASON_CHOICES, null=True, blank=True)
     description = models.TextField(blank=True, null=True)
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='Draft')
     created_by = models.ForeignKey(

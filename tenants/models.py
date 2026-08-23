@@ -19,6 +19,7 @@ class Tenant(models.Model):
         ('construction', 'Construction'),
         ('hardware', 'Hardware'),
         ('retail', 'Retail'),
+        ('kirana', 'Small Retail / Kirana'),
         ('wholesale', 'Wholesale'),
         ('manufacturing', 'Manufacturing'),
         ('services', 'Services'),

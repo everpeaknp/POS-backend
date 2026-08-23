@@ -85,12 +85,12 @@ class SalesOrder(TenantModel):
         ('credit', 'Credit'),
     ]
     
-    order_number = models.CharField(max_length=50)
+    order_number = models.CharField(max_length=50, null=True, blank=True)
     date = models.DateField()
     customer = models.ForeignKey(Customer, on_delete=models.PROTECT, related_name='sales_orders')
     reference = models.CharField(max_length=100, blank=True, null=True)
-    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='Draft')
-    payment_type = models.CharField(max_length=20, choices=PAYMENT_TYPE_CHOICES, default='cash')
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='Draft', null=True, blank=True)
+    payment_type = models.CharField(max_length=20, choices=PAYMENT_TYPE_CHOICES, default='cash', null=True, blank=True)
     subtotal = models.DecimalField(max_digits=12, decimal_places=2, default=0)
     discount = models.DecimalField(max_digits=12, decimal_places=2, default=0, validators=[MinValueValidator(Decimal('0'))])
     tax = models.DecimalField(max_digits=12, decimal_places=2, default=0, validators=[MinValueValidator(Decimal('0'))])
@@ -205,8 +205,8 @@ class SalesOrderLine(TenantModel):
     description = models.TextField(blank=True, null=True)
     quantity = models.DecimalField(max_digits=10, decimal_places=2, validators=[MinValueValidator(Decimal('0.01'))])
     unit_price = models.DecimalField(max_digits=12, decimal_places=2, validators=[MinValueValidator(Decimal('0'))])
-    discount_percent = models.DecimalField(max_digits=5, decimal_places=2, default=0, validators=[MinValueValidator(Decimal('0'))])
-    tax_percent = models.DecimalField(max_digits=5, decimal_places=2, default=13, validators=[MinValueValidator(Decimal('0'))])
+    discount_percent = models.DecimalField(max_digits=5, decimal_places=2, default=0, null=True, blank=True, validators=[MinValueValidator(Decimal('0'))])
+    tax_percent = models.DecimalField(max_digits=5, decimal_places=2, default=13, null=True, blank=True, validators=[MinValueValidator(Decimal('0'))])
     amount = models.DecimalField(max_digits=12, decimal_places=2, default=0)
     
     class Meta:
@@ -316,15 +316,15 @@ class Invoice(TenantModel):
         ('credit', 'Credit'),
     ]
     
-    invoice_number = models.CharField(max_length=50)
+    invoice_number = models.CharField(max_length=50, null=True, blank=True)
     date = models.DateField()
-    due_date = models.DateField()
+    due_date = models.DateField(null=True, blank=True)
     customer = models.ForeignKey(Customer, on_delete=models.PROTECT, related_name='invoices')
     sales_order = models.ForeignKey(SalesOrder, on_delete=models.SET_NULL, null=True, blank=True, related_name='invoices')
     amount = models.DecimalField(max_digits=12, decimal_places=2, default=0)
     paid_amount = models.DecimalField(max_digits=12, decimal_places=2, default=0, validators=[MinValueValidator(Decimal('0'))])
-    payment_type = models.CharField(max_length=20, choices=PAYMENT_TYPE_CHOICES, default='cash')
-    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='Draft')
+    payment_type = models.CharField(max_length=20, choices=PAYMENT_TYPE_CHOICES, default='cash', null=True, blank=True)
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='Draft', null=True, blank=True)
     notes = models.TextField(blank=True, null=True)
     created_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, related_name='created_invoices')
     
@@ -428,12 +428,12 @@ class CreditNote(TenantModel):
         ('Applied', 'Applied'),
     ]
     
-    credit_note_number = models.CharField(max_length=50)
+    credit_note_number = models.CharField(max_length=50, null=True, blank=True)
     date = models.DateField()
     customer = models.ForeignKey(Customer, on_delete=models.PROTECT, related_name='credit_notes')
-    invoice = models.ForeignKey(Invoice, on_delete=models.PROTECT, related_name='credit_notes')
+    invoice = models.ForeignKey(Invoice, on_delete=models.PROTECT, related_name='credit_notes', null=True, blank=True)
     amount = models.DecimalField(max_digits=12, decimal_places=2, validators=[MinValueValidator(Decimal('0.01'))])
-    reason = models.TextField()
+    reason = models.TextField(null=True, blank=True)
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='Draft')
     created_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, related_name='created_credit_notes')
     

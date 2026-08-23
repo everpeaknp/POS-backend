@@ -70,7 +70,7 @@ class FinanceTransaction(TenantModel):
         ('expense', 'Transaction Out (Expense)'),
     ]
     
-    transaction_number = models.CharField(max_length=50)
+    transaction_number = models.CharField(max_length=50, null=True, blank=True)
     date = models.DateField()
     type = models.CharField(max_length=20, choices=TYPE_CHOICES, default='expense')
     amount = models.DecimalField(
@@ -86,7 +86,9 @@ class FinanceTransaction(TenantModel):
     account = models.ForeignKey(
         FinanceAccount,
         on_delete=models.PROTECT,
-        related_name='transactions'
+        related_name='transactions',
+        null=True,
+        blank=True
     )
     description = models.TextField(blank=True)
     
@@ -167,7 +169,7 @@ class FinanceBill(TenantModel):
         ('overdue', 'Overdue'),
     ]
     
-    bill_number = models.CharField(max_length=50)
+    bill_number = models.CharField(max_length=50, null=True, blank=True)
     name = models.CharField(max_length=255)
     amount = models.DecimalField(
         max_digits=12,
@@ -182,7 +184,7 @@ class FinanceBill(TenantModel):
         null=True,
         blank=True
     )
-    recurring = models.CharField(max_length=20, choices=RECURRING_CHOICES, default='one-time')
+    recurring = models.CharField(max_length=20, choices=RECURRING_CHOICES, default='one-time', null=True, blank=True)
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='unpaid')
     notes = models.TextField(blank=True)
     

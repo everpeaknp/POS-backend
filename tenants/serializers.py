@@ -110,6 +110,7 @@ class TenantCreateSerializer(serializers.ModelSerializer):
 
         new_org_plan_code = 'free'
         modules = data.get('active_modules')
+        business_type = data.get('business_type', 'other')
         
         # Detect personal finance accounts: if personal_finance is explicitly in the modules list
         is_personal_account = modules and 'personal_finance' in modules
@@ -126,6 +127,15 @@ class TenantCreateSerializer(serializers.ModelSerializer):
             # Filter to only allow personal-appropriate modules
             allowed_personal_modules = {'settings', 'personal_finance'}
             modules = [m for m in modules if m in allowed_personal_modules]
+        elif business_type in ('kirana', 'retail'):
+            # Kirana / Retail / Small Retail tenants: Simplified module set
+            # Only Sales, Inventory, Purchase, Expenses, Reports
+            default_retail_modules = ['sales', 'inventory', 'purchase', 'reports', 'settings', 'dashboard', 'accounting']
+            if not modules:
+                modules = default_retail_modules
+            # Filter to only allow retail-appropriate modules
+            allowed_retail_modules = {'sales', 'inventory', 'purchase', 'reports', 'settings', 'dashboard', 'accounting'}
+            modules = [m for m in modules if m in allowed_retail_modules]
         else:
             # Retail/Business tenants: Standard business modules (existing behavior)
             if not modules:
@@ -138,6 +148,9 @@ class TenantCreateSerializer(serializers.ModelSerializer):
             if is_personal_account:
                 # For personal accounts, don't add core modules - use modules as-is
                 data['active_modules'] = modules
+            elif business_type in ('kirana', 'retail'):
+                # For kirana/retail, normalize with core modules
+                data['active_modules'] = normalize_active_modules_for_plan(new_org_plan_code, modules)
             else:
                 # For organizations, normalize and add core modules
                 data['active_modules'] = normalize_active_modules_for_plan(new_org_plan_code, modules)
@@ -145,6 +158,9 @@ class TenantCreateSerializer(serializers.ModelSerializer):
             if is_personal_account:
                 # Default personal modules (no core modules)
                 data['active_modules'] = ['settings', 'personal_finance']
+            elif business_type in ('kirana', 'retail'):
+                # Default kirana/retail modules
+                data['active_modules'] = ['sales', 'inventory', 'purchase', 'reports', 'settings', 'dashboard', 'accounting']
             else:
                 data['active_modules'] = normalize_active_modules_for_plan(new_org_plan_code, None)
 

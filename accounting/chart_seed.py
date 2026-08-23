@@ -121,6 +121,35 @@ PERSONAL_CHART_OF_ACCOUNTS = [
 ]
 
 
+KIRANA_CHART_OF_ACCOUNTS = [
+    # Assets
+    {'code': '1000', 'name': 'Cash in Hand', 'type': 'Assets', 'sub_type': 'Cash',
+     'description': 'Shop cash drawer and cash on hand'},
+    {'code': '1010', 'name': 'Bank Account', 'type': 'Assets', 'sub_type': 'Bank',
+     'description': 'Shop bank account'},
+    {'code': '1200', 'name': 'Stock/Inventory', 'type': 'Assets', 'sub_type': 'Current Asset',
+     'description': 'Goods available for sale'},
+    # Liabilities
+    {'code': '2000', 'name': 'Udhaaro / Accounts Payable', 'type': 'Liabilities', 'sub_type': 'Payable',
+     'description': 'Amounts owed to suppliers and credit given to customers'},
+    # Equity
+    {'code': '3000', 'name': "Owner's Capital", 'type': 'Equity', 'sub_type': 'Capital',
+     'description': 'Initial investment in the shop'},
+    {'code': '3100', 'name': 'Retained Earnings', 'type': 'Equity', 'sub_type': 'Retained Earnings',
+     'description': 'Accumulated profits'},
+    # Income
+    {'code': '4000', 'name': 'Sales', 'type': 'Income', 'sub_type': 'Revenue',
+     'description': 'Revenue from sales of goods'},
+    # Expenses
+    {'code': '5000', 'name': 'Purchases / Cost of Goods', 'type': 'Expense', 'sub_type': 'COGS',
+     'description': 'Cost of goods purchased for resale'},
+    {'code': '5100', 'name': 'Utilities', 'type': 'Expense', 'sub_type': 'Operating',
+     'description': 'Electricity, water, rent for shop'},
+    {'code': '5200', 'name': 'Other Expenses', 'type': 'Expense', 'sub_type': 'Operating',
+     'description': 'Miscellaneous operating expenses'},
+]
+
+
 def seed_default_chart_of_accounts(tenant):
     """
     Create the standard chart of accounts for a business tenant.
@@ -209,6 +238,50 @@ def seed_personal_chart_of_accounts(tenant):
     }
 
 
+def seed_kirana_chart_of_accounts(tenant):
+    """
+    Create the simplified chart of accounts for a kirana/small retail tenant.
+    Idempotent — existing accounts (matched by code) are skipped.
+    Uses _base_manager so lookup is not affected by TenantManager thread-local filtering.
+    """
+    from django.db import transaction, IntegrityError
+
+    created = []
+    skipped = []
+
+    with transaction.atomic():
+        for spec in KIRANA_CHART_OF_ACCOUNTS:
+            lookup = {'tenant': tenant, 'code': spec['code']}
+            defaults = {
+                'name': spec['name'],
+                'type': spec['type'],
+                'sub_type': spec['sub_type'],
+                'description': spec.get('description', ''),
+                'status': 'active',
+                'level': 0,
+            }
+            try:
+                account, was_created = Account._base_manager.get_or_create(
+                    defaults=defaults,
+                    **lookup,
+                )
+            except IntegrityError:
+                account = Account._base_manager.get(**lookup)
+                was_created = False
+
+            if was_created:
+                created.append(account)
+            else:
+                skipped.append(account)
+
+    return {
+        'created': len(created),
+        'skipped': len(skipped),
+        'total': len(KIRANA_CHART_OF_ACCOUNTS),
+        'accounts': created,
+    }
+
+
 def seed_chart_of_accounts_for_tenant(tenant):
     """
     Seed the appropriate chart of accounts based on tenant business_type.
@@ -221,5 +294,7 @@ def seed_chart_of_accounts_for_tenant(tenant):
     """
     if tenant.business_type == 'personal':
         return seed_personal_chart_of_accounts(tenant)
+    elif tenant.business_type == 'kirana':
+        return seed_kirana_chart_of_accounts(tenant)
     else:
         return seed_default_chart_of_accounts(tenant)
