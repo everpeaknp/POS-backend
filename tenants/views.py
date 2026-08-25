@@ -62,6 +62,18 @@ class TenantViewSet(viewsets.ModelViewSet):
         if self.action == 'create':
             return TenantCreateSerializer
         return super().get_serializer_class()
+    
+    def create(self, request, *args, **kwargs):
+        """Override create to log request data"""
+        print(f"[TenantViewSet] create() called with data: {request.data}")
+        serializer = self.get_serializer(data=request.data)
+        try:
+            serializer.is_valid(raise_exception=True)
+        except Exception as e:
+            print(f"[TenantViewSet] Serializer validation error: {e}")
+            print(f"[TenantViewSet] Serializer errors: {serializer.errors}")
+            raise
+        return super().create(request, *args, **kwargs)
 
     ALLOWED_TENANT_UPDATE_FIELDS = [
         'name', 'business_type', 'owner_name', 'email', 'phone', 'address',

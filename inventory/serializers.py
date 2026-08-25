@@ -78,6 +78,8 @@ class ProductDetailSerializer(serializers.ModelSerializer):
     unit_name = serializers.CharField(source='unit.name', read_only=True)
     total_stock = serializers.SerializerMethodField()
     stock_by_warehouse = serializers.SerializerMethodField()
+    opening_stock = serializers.DecimalField(max_digits=12, decimal_places=2, write_only=True, required=False, allow_null=True)
+    warehouse = serializers.IntegerField(write_only=True, required=False, allow_null=True)
     
     class Meta:
         model = Product
@@ -85,19 +87,65 @@ class ProductDetailSerializer(serializers.ModelSerializer):
             'id', 'name', 'sku', 'description', 'category', 'category_name',
             'unit', 'unit_name', 'cost_price', 'selling_price',
             'reorder_level', 'expiry_date', 'image', 'status', 'total_stock', 'stock_by_warehouse',
-            'created_at', 'updated_at'
+            'opening_stock', 'warehouse', 'created_at', 'updated_at'
         ]
         read_only_fields = ['id', 'created_at', 'updated_at']
     
     def create(self, validated_data):
-        """Override create to add logging"""
+        """Override create to handle opening_stock and add logging"""
         import logging
+        from .models import Stock, Warehouse, StockMovement
         logger = logging.getLogger(__name__)
         
         try:
-            logger.info(f"Creating product with data: {validated_data}")
+            # Extract opening_stock and warehouse before creating product
+            opening_stock = validated_data.pop('opening_stock', None)
+            warehouse_id = validated_data.pop('warehouse', None)
+            
+            logger.info(f"Creating product with data: {validated_data}, opening_stock: {opening_stock}, warehouse: {warehouse_id}")
             product = super().create(validated_data)
             logger.info(f"Product created successfully: {product.id}")
+            
+            # If opening_stock is provided, create initial stock record
+            if opening_stock and opening_stock > 0:
+                # Get the specified warehouse or default to first warehouse
+                warehouse = None
+                if warehouse_id:
+                    warehouse = Warehouse.objects.filter(id=warehouse_id, tenant=product.tenant).first()
+                
+                if not warehouse:
+                    warehouse = Warehouse.objects.filter(tenant=product.tenant).first()
+                
+                if not warehouse:
+                    logger.warning("No warehouse found, creating default warehouse")
+                    warehouse = Warehouse.objects.create(
+                        tenant=product.tenant,
+                        name='Main Warehouse',
+                        location='Default Location',
+                        is_active=True
+                    )
+                
+                # Create stock record
+                Stock.objects.create(
+                    product=product,
+                    warehouse=warehouse,
+                    quantity=opening_stock,
+                    tenant=product.tenant
+                )
+                
+                # Create stock movement record for opening stock
+                StockMovement.objects.create(
+                    product=product,
+                    warehouse=warehouse,
+                    movement_type='opening_balance',
+                    quantity=opening_stock,
+                    performed_by=self.context['request'].user if 'request' in self.context else None,
+                    notes='Opening stock balance',
+                    tenant=product.tenant
+                )
+                
+                logger.info(f"Created opening stock: {opening_stock} units in warehouse {warehouse.name}")
+            
             return product
         except Exception as e:
             logger.error(f"Error creating product: {str(e)}")

@@ -96,21 +96,19 @@ class TenantCreateSerializer(serializers.ModelSerializer):
             'accounting_start_date', 'vat_registered',
             'workspace_name', 'logo', 'active_modules'
         ]
-        read_only_fields = ['id', 'slug', 'account_type']
-    
-    def validate_name(self, value):
-        """Ensure tenant name is unique"""
-        if Tenant.objects.filter(name=value).exists():
-            raise serializers.ValidationError('An organization with this name already exists.')
-        return value
+        read_only_fields = ['id', 'slug']
     
     def validate(self, data):
+        print(f"[TenantCreateSerializer] validate() called with data: {data}")
         request = self.context.get('request')
         user = getattr(request, 'user', None) if request else None
 
         new_org_plan_code = 'free'
         modules = data.get('active_modules')
         business_type = data.get('business_type', 'other')
+        account_type = data.get('account_type')
+        
+        print(f"[TenantCreateSerializer] modules: {modules}, business_type: {business_type}, account_type: {account_type}")
         
         # Detect personal finance accounts: if personal_finance is explicitly in the modules list
         is_personal_account = modules and 'personal_finance' in modules
@@ -171,12 +169,17 @@ class TenantCreateSerializer(serializers.ModelSerializer):
         validated_data['plan_type'] = 'free'
         validated_data['is_active'] = True
         
-        # Set account_type based on modules
-        modules = validated_data.get('active_modules', [])
-        if 'personal_finance' in modules:
-            validated_data['account_type'] = 'personal'
-        else:
-            validated_data['account_type'] = 'organization'
+        # Set account_type based on modules if not already provided
+        if 'account_type' not in validated_data or not validated_data.get('account_type'):
+            modules = validated_data.get('active_modules', [])
+            if 'personal_finance' in modules:
+                validated_data['account_type'] = 'personal'
+            elif 'construction' in modules:
+                validated_data['account_type'] = 'construction'
+            elif 'hardware' in modules:
+                validated_data['account_type'] = 'hardware'
+            else:
+                validated_data['account_type'] = 'organization'
 
         return super().create(validated_data)
 

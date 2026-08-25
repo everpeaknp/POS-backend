@@ -8,81 +8,27 @@ DEFAULT_SUBSCRIPTION_PLANS = {
         'name': 'Free',
         'plan_type': 'free',
         'price': Decimal('0.00'),
-        'max_users': 1,
-        'max_orgs': 1,
+        'max_users': None,  # Unlimited users
+        'max_orgs': None,   # Unlimited organizations
         'features': [
-            '1 organization',
-            '1 user',
+            'Unlimited users',
+            'Unlimited organizations',
+            'All Modules',
             'Personal Finance',
             'Sales & Purchase',
             'Inventory',
-            'Basic Reports',
             'Accounting',
-        ],
-        'modules': ['personal_finance', 'sales', 'purchase', 'inventory', 'reports', 'accounting'],
-        'is_popular': False,
-    },
-    'starter': {
-        'code': 'starter',
-        'name': 'Starter',
-        'plan_type': 'basic',
-        'price': Decimal('999.00'),
-        'max_users': 10,
-        'max_orgs': 5,
-        'features': [
-            'Up to 10 users',
-            'Up to 5 organizations',
-            'Personal Finance',
-            'Sales & Purchase',
-            'Basic Reports',
-            'Email Support',
-            'Accounting',
-        ],
-        'modules': ['personal_finance', 'sales', 'purchase', 'inventory', 'reports', 'accounting'],
-        'is_popular': False,
-    },
-    'business': {
-        'code': 'business',
-        'name': 'Business',
-        'plan_type': 'premium',
-        'price': Decimal('2499.00'),
-        'max_users': 50,
-        'max_orgs': 10,
-        'features': [
-            'Up to 50 users',
-            'Up to 10 organizations',
-            'All Modules',
-            'Advanced Reports',
-            'Priority Support',
-            'API Access',
+            'Reports & Analytics',
+            'POS (Point of Sale)',
+            'HR Management',
+            'Construction Management',
+            'Hardware Management',
         ],
         'modules': [
             'personal_finance', 'sales', 'purchase', 'inventory', 'accounting',
             'reports', 'pos', 'hr', 'construction', 'hardware',
         ],
         'is_popular': True,
-    },
-    'enterprise': {
-        'code': 'enterprise',
-        'name': 'Enterprise',
-        'plan_type': 'enterprise',
-        'price': Decimal('5999.00'),
-        'max_users': None,
-        'max_orgs': None,
-        'features': [
-            'Unlimited users',
-            'Unlimited organizations',
-            'All Modules',
-            'Custom Reports',
-            'Dedicated Support',
-            'Custom Integrations',
-            'SLA Guarantee',
-        ],
-        'modules': [
-            'personal_finance', 'sales', 'purchase', 'inventory', 'accounting',
-            'reports', 'pos', 'hr', 'construction', 'hardware',
-        ],
-        'is_popular': False,
     },
 }
 
@@ -91,9 +37,6 @@ SUBSCRIPTION_PLANS = DEFAULT_SUBSCRIPTION_PLANS
 
 DEFAULT_PLAN_TYPE_TO_CODE = {
     'free': 'free',
-    'basic': 'starter',
-    'premium': 'business',
-    'enterprise': 'enterprise',
 }
 
 PLAN_TYPE_TO_CODE = DEFAULT_PLAN_TYPE_TO_CODE
