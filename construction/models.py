@@ -38,6 +38,8 @@ class Site(TenantModel):
         'hr.Employee',
         on_delete=models.PROTECT,
         related_name='managed_sites',
+        null=True,
+        blank=True,
         help_text='Employee assigned as site manager'
     )
     
@@ -49,6 +51,8 @@ class Site(TenantModel):
         'inventory.Warehouse',
         on_delete=models.PROTECT,
         related_name='construction_sites',
+        null=True,
+        blank=True,
         help_text='Warehouse/storage location for this site'
     )
     
