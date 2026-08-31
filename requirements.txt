@@ -12,3 +12,5 @@ requests>=2.31.0
 google-auth>=2.29.0
 premailer>=3.10.0
 nepali-datetime>=1.0.0
+cloudinary>=1.36.0
+django-cloudinary-storage>=0.3.0

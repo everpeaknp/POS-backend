@@ -207,6 +207,28 @@ class SiteSettings(models.Model):
         default=True,
         help_text='When disabled, adds noindex guidance for public pages.',
     )
+    
+    # Cloudinary Configuration
+    use_cloudinary = models.BooleanField(
+        default=False,
+        help_text='Enable Cloudinary for image storage (cloud-based CDN)',
+    )
+    cloudinary_cloud_name = models.CharField(
+        max_length=100,
+        blank=True,
+        help_text='Your Cloudinary cloud name',
+    )
+    cloudinary_api_key = models.CharField(
+        max_length=100,
+        blank=True,
+        help_text='Your Cloudinary API key',
+    )
+    cloudinary_api_secret = models.CharField(
+        max_length=100,
+        blank=True,
+        help_text='Your Cloudinary API secret (stored securely)',
+    )
+    
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:

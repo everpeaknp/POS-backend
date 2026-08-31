@@ -6,7 +6,8 @@ PAYMENT_METHOD_CHOICES = [
     ('esewa', 'eSewa'),
     ('khalti', 'Khalti'),
     ('fonepay', 'Fonepay'),
+    ('bank_transfer', 'Bank Transfer'),
     ('credit', 'Credit'),
 ]
 
-DIGITAL_WALLET_METHODS = frozenset({'esewa', 'khalti', 'fonepay'})
+DIGITAL_WALLET_METHODS = frozenset({'esewa', 'khalti', 'fonepay', 'bank_transfer'})

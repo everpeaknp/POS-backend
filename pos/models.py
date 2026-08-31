@@ -456,6 +456,19 @@ class POSTransactionLine(TenantModel):
         return effective_unit_price * refund_quantity
     
     def save(self, *args, **kwargs):
+        # Ensure product_sku is never empty or None
+        if not self.product_sku:
+            if self.product and self.product.sku:
+                self.product_sku = self.product.sku
+            elif self.product:
+                self.product_sku = f'PROD-{self.product.id}'
+            else:
+                self.product_sku = 'UNKNOWN'
+        
+        # Ensure product_name is never empty or None  
+        if not self.product_name and self.product:
+            self.product_name = self.product.name
+        
         # Calculate line total if not provided
         if not self.line_total:
             subtotal = self.quantity * self.unit_price
@@ -654,6 +667,27 @@ class POSSettings(TenantModel):
     auto_print_receipt = models.BooleanField(default=True)
     allow_zero_price_items = models.BooleanField(default=False)
     require_customer_for_credit = models.BooleanField(default=True)
+    
+    # Payment method settings
+    esewa_enabled = models.BooleanField(default=True)
+    esewa_qr = models.ImageField(upload_to='pos/qr/', blank=True, null=True)
+    esewa_number = models.CharField(max_length=50, blank=True)
+    esewa_name = models.CharField(max_length=100, blank=True)
+    
+    khalti_enabled = models.BooleanField(default=True)
+    khalti_qr = models.ImageField(upload_to='pos/qr/', blank=True, null=True)
+    khalti_number = models.CharField(max_length=50, blank=True)
+    khalti_name = models.CharField(max_length=100, blank=True)
+    
+    fonepay_enabled = models.BooleanField(default=True)
+    fonepay_qr = models.ImageField(upload_to='pos/qr/', blank=True, null=True)
+    fonepay_number = models.CharField(max_length=50, blank=True, null=True)
+    
+    bank_transfer_enabled = models.BooleanField(default=True)
+    bank_qr = models.ImageField(upload_to='pos/qr/', blank=True, null=True)
+    bank_name = models.CharField(max_length=100, blank=True)
+    bank_account_number = models.CharField(max_length=50, blank=True)
+    bank_account_name = models.CharField(max_length=100, blank=True)
 
     class Meta:
         db_table = 'pos_settings'
