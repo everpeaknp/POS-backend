@@ -175,8 +175,16 @@ class BankAccount(TenantModel):
     branch = models.CharField(max_length=200, blank=True)
     swift_code = models.CharField(max_length=20, blank=True)
     
-    # Link to Chart of Accounts
-    gl_account = models.ForeignKey(Account, on_delete=models.PROTECT, related_name='bank_accounts')
+    # Link to Chart of Accounts (optional)
+    gl_account = models.ForeignKey(Account, on_delete=models.SET_NULL, null=True, blank=True, related_name='bank_accounts')
+    
+    # Optional QR code for digital payments (Fonepay, mobile wallet, etc.)
+    qr_code_image = models.ImageField(
+        upload_to='bank_qr_codes/',
+        null=True,
+        blank=True,
+        help_text='Payment QR code for this bank account (Bank QR / Fonepay QR / Mobile Wallet QR)'
+    )
     
     balance = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal('0.00'))
     last_reconciled = models.DateField(null=True, blank=True)
@@ -337,3 +345,44 @@ class FiscalYear(TenantModel):
 
     def __str__(self):
         return f"FY {self.label}"
+
+
+
+class PaymentMethod(TenantModel):
+    """
+    Configurable payment methods linked to GL accounts.
+    Replaces hardcoded payment method choices with tenant-specific configuration.
+    """
+    METHOD_TYPE_CHOICES = [
+        ('cash', 'Cash'),
+        ('card', 'Card'),
+        ('digital_wallet', 'Digital Wallet'),
+        ('cheque', 'Cheque'),
+        ('bank_transfer', 'Bank Transfer'),
+    ]
+    
+    name = models.CharField(max_length=100, help_text='e.g., Cash, Visa Card, eSewa, Cheque - NIC Asia')
+    method_type = models.CharField(max_length=20, choices=METHOD_TYPE_CHOICES)
+    linked_account = models.ForeignKey(
+        Account,
+        on_delete=models.PROTECT,
+        related_name='payment_methods',
+        help_text='GL account to debit/credit when this payment method is used'
+    )
+    is_active = models.BooleanField(default=True)
+    is_system_default = models.BooleanField(
+        default=False,
+        help_text='System default payment methods cannot be deleted, only deactivated'
+    )
+    
+    class Meta:
+        db_table = 'accounting_payment_methods'
+        ordering = ['name']
+        unique_together = [['tenant', 'name']]
+        indexes = [
+            models.Index(fields=['tenant', 'is_active']),
+            models.Index(fields=['tenant', 'method_type']),
+        ]
+    
+    def __str__(self):
+        return f"{self.name} ({self.get_method_type_display()})"

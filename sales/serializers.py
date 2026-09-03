@@ -361,7 +361,7 @@ class PaymentReceivedSerializer(serializers.ModelSerializer):
         model = PaymentReceived
         fields = [
             'id', 'payment_number', 'date', 'customer', 'customer_name',
-            'amount', 'payment_method', 'reference_number', 'bank_name',
+            'amount', 'payment_method', 'payment_method_ref', 'reference_number', 'bank_name',
             'invoice', 'invoice_number', 'notes', 'received_by', 'received_by_name',
             'created_at', 'updated_at'
         ]

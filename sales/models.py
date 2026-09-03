@@ -161,12 +161,13 @@ class SalesOrder(TenantModel):
             self.save()
             
             # Create ledger entry
-            current_balance = self.customer.current_balance
+            customer = Customer.objects.select_for_update().get(pk=self.customer.pk)
+            current_balance = customer.current_balance
             new_balance = current_balance + self.total
             
             CustomerLedger.objects.create(
                 tenant=self.tenant,
-                customer=self.customer,
+                customer=customer,
                 date=self.date,
                 transaction_type='sale',
                 reference_type='SalesOrder',
@@ -179,8 +180,9 @@ class SalesOrder(TenantModel):
             )
             
             # Update customer balance
-            self.customer.current_balance = new_balance
-            self.customer.save()
+            customer.current_balance = new_balance
+            customer.save()
+            self.customer = customer
 
             from accounting.services import record_credit_sale
             try:
@@ -415,8 +417,10 @@ class Invoice(TenantModel):
         ar_amount = self._ar_amount()
         if ar_amount <= 0:
             return
-        self.customer.current_balance += ar_amount
-        self.customer.save()
+        customer = Customer.objects.select_for_update().get(pk=self.customer.pk)
+        customer.current_balance += ar_amount
+        customer.save()
+        self.customer = customer
 
 
 
@@ -595,6 +599,14 @@ class PaymentReceived(TenantModel):
         validators=[MinValueValidator(Decimal('0.01'))]
     )
     payment_method = models.CharField(max_length=20, choices=PAYMENT_METHODS)
+    payment_method_ref = models.ForeignKey(
+        'accounting.PaymentMethod',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='payment_received',
+        help_text='Reference to configured PaymentMethod (preferred over CharField)'
+    )
     
     # Payment details
     reference_number = models.CharField(
@@ -698,8 +710,10 @@ class PaymentReceived(TenantModel):
     
     def _update_customer_balance(self):
         """Update customer's current balance"""
-        self.customer.current_balance -= self.amount
-        self.customer.save()
+        customer = Customer.objects.select_for_update().get(pk=self.customer.pk)
+        customer.current_balance -= self.amount
+        customer.save()
+        self.customer = customer
     
     def _update_invoice_payment(self):
         """Update invoice paid amount if payment is linked to invoice."""

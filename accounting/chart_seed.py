@@ -157,9 +157,11 @@ def seed_default_chart_of_accounts(tenant):
     Uses _base_manager so lookup is not affected by TenantManager thread-local filtering.
     """
     from django.db import transaction, IntegrityError
+    from accounting.models import PaymentMethod
 
     created = []
     skipped = []
+    cash_account_obj = None
 
     with transaction.atomic():
         for spec in DEFAULT_CHART_OF_ACCOUNTS:
@@ -183,8 +185,34 @@ def seed_default_chart_of_accounts(tenant):
 
             if was_created:
                 created.append(account)
+                # Auto-create default Cash payment method when Cash account (1000) is created
+                if spec['code'] == '1000':
+                    cash_account_obj = account
             else:
                 skipped.append(account)
+                # Track existing Cash account for PaymentMethod creation
+                if spec['code'] == '1000':
+                    cash_account_obj = account
+        
+        # Create default Payment Methods if Cash account exists
+        if cash_account_obj:
+            default_payment_methods = [
+                ('Cash', 'cash'),
+                ('Bank', 'bank_transfer'),
+                ('Fonepay', 'digital_wallet'),
+                ('Credit Card', 'card'),
+            ]
+            for name, method_type in default_payment_methods:
+                PaymentMethod._base_manager.get_or_create(
+                    tenant=tenant,
+                    name=name,
+                    defaults={
+                        'method_type': method_type,
+                        'linked_account': cash_account_obj,
+                        'is_active': True,
+                        'is_system_default': True,
+                    }
+                )
 
     return {
         'created': len(created),
@@ -201,9 +229,11 @@ def seed_personal_chart_of_accounts(tenant):
     Uses _base_manager so lookup is not affected by TenantManager thread-local filtering.
     """
     from django.db import transaction, IntegrityError
+    from accounting.models import PaymentMethod
 
     created = []
     skipped = []
+    cash_account_obj = None
 
     with transaction.atomic():
         for spec in PERSONAL_CHART_OF_ACCOUNTS:
@@ -227,8 +257,25 @@ def seed_personal_chart_of_accounts(tenant):
 
             if was_created:
                 created.append(account)
+                if spec['code'] == '1000':
+                    cash_account_obj = account
             else:
                 skipped.append(account)
+                if spec['code'] == '1000':
+                    cash_account_obj = account
+        
+        # Create default Cash PaymentMethod
+        if cash_account_obj:
+            PaymentMethod._base_manager.get_or_create(
+                tenant=tenant,
+                name='Cash',
+                defaults={
+                    'method_type': 'cash',
+                    'linked_account': cash_account_obj,
+                    'is_active': True,
+                    'is_system_default': True,
+                }
+            )
 
     return {
         'created': len(created),
@@ -245,9 +292,11 @@ def seed_kirana_chart_of_accounts(tenant):
     Uses _base_manager so lookup is not affected by TenantManager thread-local filtering.
     """
     from django.db import transaction, IntegrityError
+    from accounting.models import PaymentMethod
 
     created = []
     skipped = []
+    cash_account_obj = None
 
     with transaction.atomic():
         for spec in KIRANA_CHART_OF_ACCOUNTS:
@@ -271,8 +320,25 @@ def seed_kirana_chart_of_accounts(tenant):
 
             if was_created:
                 created.append(account)
+                if spec['code'] == '1000':
+                    cash_account_obj = account
             else:
                 skipped.append(account)
+                if spec['code'] == '1000':
+                    cash_account_obj = account
+        
+        # Create default Cash PaymentMethod
+        if cash_account_obj:
+            PaymentMethod._base_manager.get_or_create(
+                tenant=tenant,
+                name='Cash',
+                defaults={
+                    'method_type': 'cash',
+                    'linked_account': cash_account_obj,
+                    'is_active': True,
+                    'is_system_default': True,
+                }
+            )
 
     return {
         'created': len(created),

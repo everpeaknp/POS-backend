@@ -19,7 +19,7 @@ DEFAULT_SUBSCRIPTION_PLANS = {
             'Basic Reports',
             'Accounting',
         ],
-        'modules': ['personal_finance', 'sales', 'purchase', 'inventory', 'reports', 'accounting'],
+        'modules': ['personal_finance', 'sales', 'purchase', 'inventory', 'reports', 'accounting', 'pos'],
         'is_popular': False,
     },
     'starter': {

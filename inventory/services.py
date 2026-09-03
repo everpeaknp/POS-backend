@@ -184,6 +184,7 @@ def stock_out(
                 f"Cannot remove stock that doesn't exist."
             )
 
+        # Validate availability after lock is acquired, using locked row's quantity
         if stock.quantity < quantity:
             raise ValueError(
                 f"Insufficient stock for {product.name} in {warehouse.name}. "

@@ -188,13 +188,15 @@ class POSTransactionCreateSerializer(serializers.ModelSerializer):
         model = POSTransaction
         fields = [
             'customer', 'customer_name', 'subtotal', 'discount_amount',
-            'tax_amount', 'total', 'payment_method', 'amount_paid',
+            'tax_amount', 'total', 'payment_method', 'payment_method_ref', 'bank_account', 'amount_paid',
             'change_given', 'warehouse', 'notes', 'lines', 'payments',
         ]
         extra_kwargs = {
             'subtotal': {'required': False},
             'tax_amount': {'required': False},
             'total': {'required': False},
+            'payment_method_ref': {'required': False},
+            'bank_account': {'required': False},
         }
     
     def validate(self, data):
@@ -296,12 +298,18 @@ class POSTransactionCreateSerializer(serializers.ModelSerializer):
                 except ValueError as exc:
                     raise serializers.ValidationError({'customer': str(exc)}) from exc
 
-            if data['amount_paid'] < data['total']:
-                raise serializers.ValidationError({
-                    'amount_paid': 'Amount paid must be greater than or equal to total'
-                })
-
-            data['change_given'] = data['amount_paid'] - data['total']
+            # For non-cash payments, adjust amount_paid to match recalculated total
+            # For cash payments, validate that cash given >= total
+            if data['payment_method'] == 'cash':
+                if Decimal(str(data['amount_paid'])) < Decimal(str(data['total'])):
+                    raise serializers.ValidationError({
+                        'amount_paid': 'Amount paid must be greater than or equal to total'
+                    })
+                data['change_given'] = Decimal(str(data['amount_paid'])) - Decimal(str(data['total']))
+            else:
+                # For card/credit/digital, amount_paid should equal total (auto-adjust)
+                data['amount_paid'] = data['total']
+                data['change_given'] = Decimal('0')
 
         return data
     
@@ -482,7 +490,7 @@ class POSTransactionSerializer(serializers.ModelSerializer):
             'id', 'transaction_number', 'date', 'session', 'session_number',
             'customer', 'customer_name', 'customer_display',
             'subtotal', 'discount_amount', 'tax_amount',
-            'total', 'payment_method', 'amount_paid', 'change_given',
+            'total', 'payment_method', 'payment_method_ref', 'bank_account', 'amount_paid', 'change_given',
             'status', 'cashier', 'cashier_name', 'warehouse', 'notes',
             'lines', 'payments', 'refunds', 'refund_summary', 'created_at',
         ]

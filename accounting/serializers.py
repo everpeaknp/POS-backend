@@ -1,6 +1,6 @@
 from rest_framework import serializers
 from decimal import Decimal
-from .models import Account, JournalEntry, JournalLine, BankAccount, BankTransaction, TaxRule, VATReturn, FiscalYear
+from .models import Account, JournalEntry, JournalLine, BankAccount, BankTransaction, TaxRule, VATReturn, FiscalYear, PaymentMethod
 from accounting.utils import generate_entry_number
 
 
@@ -206,7 +206,7 @@ class BankAccountSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'bank_name', 'account_name', 'account_number', 'type', 'branch',
             'swift_code', 'gl_account', 'gl_account_name', 'gl_account_code',
-            'balance', 'last_reconciled', 'status', 'created_at', 'updated_at'
+            'qr_code_image', 'balance', 'last_reconciled', 'status', 'created_at', 'updated_at'
         ]
         read_only_fields = ['id', 'gl_account_name', 'gl_account_code', 'created_at', 'updated_at']
 
@@ -312,3 +312,20 @@ class FiscalYearSerializer(serializers.ModelSerializer):
             'is_closed', 'closed_at', 'notes',
         ]
         read_only_fields = ['id', 'label', 'start_date', 'end_date', 'is_closed', 'closed_at']
+
+
+
+class PaymentMethodSerializer(serializers.ModelSerializer):
+    """Serializer for Payment Methods"""
+    linked_account_name = serializers.CharField(source='linked_account.name', read_only=True)
+    linked_account_code = serializers.CharField(source='linked_account.code', read_only=True)
+    method_type_display = serializers.CharField(source='get_method_type_display', read_only=True)
+    
+    class Meta:
+        model = PaymentMethod
+        fields = [
+            'id', 'name', 'method_type', 'method_type_display', 'linked_account',
+            'linked_account_name', 'linked_account_code', 'is_active', 'is_system_default',
+            'created_at', 'updated_at'
+        ]
+        read_only_fields = ['id', 'linked_account_name', 'linked_account_code', 'method_type_display', 'created_at', 'updated_at']

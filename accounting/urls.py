@@ -2,6 +2,7 @@ from django.urls import path
 from .views import (
     AccountViewSet, JournalEntryViewSet, BankAccountViewSet,
     BankTransactionViewSet, TaxRuleViewSet, VATReturnViewSet, FiscalYearViewSet,
+    PaymentMethodViewSet,
 )
 
 urlpatterns = [
@@ -46,6 +47,10 @@ urlpatterns = [
     path('bank-transactions/', BankTransactionViewSet.as_view({'get': 'list', 'post': 'create'}), name='bank-transaction-list'),
     path('bank-transactions/<int:pk>/', BankTransactionViewSet.as_view({'get': 'retrieve', 'put': 'update', 'patch': 'partial_update', 'delete': 'destroy'}), name='bank-transaction-detail'),
     path('bank-transactions/<int:pk>/reconcile/', BankTransactionViewSet.as_view({'post': 'reconcile'}), name='bank-transaction-reconcile'),
+    
+    # Payment Methods
+    path('payment-methods/', PaymentMethodViewSet.as_view({'get': 'list', 'post': 'create'}), name='payment-method-list'),
+    path('payment-methods/<int:pk>/', PaymentMethodViewSet.as_view({'get': 'retrieve', 'put': 'update', 'patch': 'partial_update', 'delete': 'destroy'}), name='payment-method-detail'),
     
     # Tax Rules
     path('tax-rules/', TaxRuleViewSet.as_view({'get': 'list', 'post': 'create'}), name='tax-rule-list'),

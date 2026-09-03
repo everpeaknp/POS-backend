@@ -311,6 +311,22 @@ class POSTransaction(TenantModel):
     
     # Payment
     payment_method = models.CharField(max_length=20, choices=PAYMENT_METHOD_CHOICES)
+    payment_method_ref = models.ForeignKey(
+        'accounting.PaymentMethod',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='pos_transactions',
+        help_text='Reference to configured PaymentMethod (preferred over CharField)'
+    )
+    bank_account = models.ForeignKey(
+        'accounting.BankAccount',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='pos_transactions',
+        help_text='Bank account for non-cash payments'
+    )
     amount_paid = models.DecimalField(
         max_digits=12,
         decimal_places=2,

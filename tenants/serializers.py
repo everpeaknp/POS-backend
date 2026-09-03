@@ -130,11 +130,11 @@ class TenantCreateSerializer(serializers.ModelSerializer):
         elif business_type in ('kirana', 'retail'):
             # Kirana / Retail / Small Retail tenants: Simplified module set
             # Only Sales, Inventory, Purchase, Expenses, Reports
-            default_retail_modules = ['sales', 'inventory', 'purchase', 'reports', 'settings', 'dashboard', 'accounting']
+            default_retail_modules = ['sales', 'inventory', 'purchase', 'reports', 'settings', 'dashboard', 'accounting', 'pos']
             if not modules:
                 modules = default_retail_modules
             # Filter to only allow retail-appropriate modules
-            allowed_retail_modules = {'sales', 'inventory', 'purchase', 'reports', 'settings', 'dashboard', 'accounting'}
+            allowed_retail_modules = {'sales', 'inventory', 'purchase', 'reports', 'settings', 'dashboard', 'accounting', 'pos'}
             modules = [m for m in modules if m in allowed_retail_modules]
         else:
             # Retail/Business tenants: Standard business modules (existing behavior)

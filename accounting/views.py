@@ -13,7 +13,7 @@ from django.db.models import Sum, Q, Count
 from decimal import Decimal
 from datetime import date
 
-from accounting.models import Account, JournalEntry, JournalLine, BankAccount, BankTransaction, TaxRule, VATReturn, FiscalYear
+from accounting.models import Account, JournalEntry, JournalLine, BankAccount, BankTransaction, TaxRule, VATReturn, FiscalYear, PaymentMethod
 from accounting.reports import (
     build_account_distribution,
     build_income_expense_breakdown,
@@ -40,6 +40,7 @@ from .utils import (
 from .serializers import (
     AccountSerializer, JournalEntrySerializer, BankAccountSerializer,
     BankTransactionSerializer, TaxRuleSerializer, VATReturnSerializer, FiscalYearSerializer,
+    PaymentMethodSerializer,
 )
 
 
@@ -1040,6 +1041,47 @@ class BankTransactionViewSet(viewsets.ModelViewSet):
         
         serializer = self.get_serializer(transaction)
         return Response(serializer.data)
+
+
+@extend_schema_view(
+    list=extend_schema(tags=['Accounting - Payment Methods'], summary='List all payment methods'),
+    retrieve=extend_schema(tags=['Accounting - Payment Methods'], summary='Get payment method details'),
+    create=extend_schema(tags=['Accounting - Payment Methods'], summary='Create new payment method'),
+    update=extend_schema(tags=['Accounting - Payment Methods'], summary='Update payment method'),
+    partial_update=extend_schema(tags=['Accounting - Payment Methods'], summary='Partially update payment method'),
+    destroy=extend_schema(tags=['Accounting - Payment Methods'], summary='Delete payment method'),
+)
+class PaymentMethodViewSet(viewsets.ModelViewSet):
+    """ViewSet for Payment Methods"""
+    serializer_class = PaymentMethodSerializer
+    permission_classes = [DynamicModulePermission]
+    permission_module = 'accounting'
+    filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
+    filterset_fields = ['method_type', 'is_active', 'is_system_default']
+    search_fields = ['name']
+    ordering_fields = ['name', 'method_type', 'created_at']
+    ordering = ['name']
+    
+    def get_queryset(self):
+        tenant = get_request_tenant(self.request.user)
+        if not tenant:
+            return PaymentMethod.objects.none()
+        return PaymentMethod.objects.filter(tenant=tenant).select_related('linked_account')
+    
+    def perform_create(self, serializer):
+        tenant = get_request_tenant(self.request.user)
+        if not tenant:
+            raise PermissionDenied("No active organization. Please select an organization first.")
+        serializer.save(tenant=tenant)
+    
+    def perform_destroy(self, instance):
+        """Prevent deletion of system default payment methods"""
+        if instance.is_system_default:
+            raise PermissionDenied(
+                "System default payment methods cannot be deleted. "
+                "You can deactivate them by setting is_active=False."
+            )
+        instance.delete()
 
 
 @extend_schema_view(

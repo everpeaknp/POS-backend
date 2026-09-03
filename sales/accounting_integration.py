@@ -52,11 +52,42 @@ def post_invoice_payment(invoice, payment_amount):
 
 def post_payment_received(payment):
     """Post standalone customer payment to GL."""
-    return record_payment_from_customer(
-        payment.customer,
-        payment.amount,
-        payment.payment_number,
+    # Determine the account to debit based on payment_method_ref or fallback to Cash
+    if hasattr(payment, 'payment_method_ref') and payment.payment_method_ref:
+        cash_account = payment.payment_method_ref.linked_account
+    else:
+        # Fallback to default Cash account for backward compatibility
+        from accounting.services import get_cash_account
+        cash_account = get_cash_account(payment.tenant)
+    
+    # Create journal entry manually to use the specific account
+    from accounting.services import create_journal_entry, get_accounts_receivable_account, has_posted_journal
+    
+    reference = payment.payment_number
+    if has_posted_journal(payment.tenant, reference, 'Receipt'):
+        return None
+    
+    amount = Decimal(str(payment.amount))
+    
+    return create_journal_entry(
         tenant=payment.tenant,
+        description=f"Payment from {payment.customer.name}",
+        reference=reference,
+        entry_type='Receipt',
+        entries=[
+            {
+                'account': cash_account,  # Use payment method's linked account
+                'debit': amount,
+                'credit': 0,
+                'description': f"Payment from {payment.customer.name}"
+            },
+            {
+                'account': get_accounts_receivable_account(payment.tenant),
+                'debit': 0,
+                'credit': amount,
+                'description': f"Receivable from {payment.customer.name}"
+            }
+        ]
     )
 
 
@@ -192,6 +223,18 @@ def post_pos_sale(transaction, lines_with_products):
     Post POS revenue and COGS.
     lines_with_products: iterable of objects with .product and .quantity
     """
+    # Ensure an open fiscal year exists before posting
+    from accounting.fiscal_services import ensure_fiscal_year
+    ensure_fiscal_year(transaction.tenant)
+    
+    # Determine the account to debit based on payment_method_ref or fallback to Cash
+    if hasattr(transaction, 'payment_method_ref') and transaction.payment_method_ref:
+        cash_account = transaction.payment_method_ref.linked_account
+    else:
+        # Fallback to default Cash account for backward compatibility
+        from accounting.services import get_cash_account
+        cash_account = get_cash_account(transaction.tenant)
+    
     if transaction.payment_method == 'credit' and getattr(transaction, 'customer', None):
         record_credit_sale(
             transaction.customer,
@@ -201,12 +244,42 @@ def post_pos_sale(transaction, lines_with_products):
             tax_amount=transaction.tax_amount,
         )
     else:
-        record_cash_sale(
-            transaction.total,
-            transaction.transaction_number,
-            transaction.customer.name if getattr(transaction, 'customer', None) else None,
+        # Use the determined cash account instead of always using default Cash
+        from accounting.services import create_journal_entry, get_sales_revenue_account, get_vat_payable_account
+        
+        tax_amount = transaction.tax_amount or Decimal('0')
+        gross_amount = transaction.total
+        net_amount = gross_amount - tax_amount
+        
+        entries = [
+            {
+                'account': cash_account,  # Use payment method's linked account
+                'debit': gross_amount,
+                'credit': 0,
+                'description': f'Cash received for {transaction.transaction_number}',
+            },
+            {
+                'account': get_sales_revenue_account(transaction.tenant),
+                'debit': 0,
+                'credit': net_amount,
+                'description': f'Sales revenue for {transaction.transaction_number}',
+            },
+        ]
+        
+        if tax_amount > 0:
+            entries.append({
+                'account': get_vat_payable_account(transaction.tenant),
+                'debit': 0,
+                'credit': tax_amount,
+                'description': f'VAT on {transaction.transaction_number}',
+            })
+        
+        create_journal_entry(
+            reference=transaction.transaction_number,
+            description=f'POS Sale - {transaction.customer.name if getattr(transaction, "customer", None) else "Walk-in Customer"}',
+            entry_type='Sales',
             tenant=transaction.tenant,
-            tax_amount=transaction.tax_amount,
+            entries=entries,
         )
 
     total_cogs = Decimal('0')
