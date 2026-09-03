@@ -5,3 +5,7 @@ class SettingConfig(AppConfig):
     default_auto_field = 'django.db.models.BigAutoField'
     name = 'setting'
     verbose_name = 'Setting'
+    
+    def ready(self):
+        """Import signals when app is ready."""
+        import setting.signals

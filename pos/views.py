@@ -2,7 +2,7 @@
 POS Views for API endpoints
 """
 
-from rest_framework import viewsets, status
+from rest_framework import viewsets, status, parsers
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from drf_spectacular.utils import extend_schema, extend_schema_view, OpenApiParameter
@@ -335,18 +335,51 @@ class POSTransactionViewSet(viewsets.ModelViewSet):
 
     def create(self, request, *args, **kwargs):
         """Override to include reorder alerts in response."""
+        import logging
+        import json
+        logger = logging.getLogger(__name__)
+        logger.info(f"POS Transaction create request data: {json.dumps(request.data, indent=2)}")
+        logger.info(f"Request user: {request.user}, tenant: {request.user.tenant}")
+        
         serializer = self.get_serializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-        instance = serializer.save()
-        out = POSTransactionSerializer(instance, context={'request': request})
-        response_data = out.data
-        # Attach reorder alerts if any
-        alerts = getattr(instance, '_reorder_alerts', [])
-        if alerts:
-            response_data = dict(response_data)
-            response_data['reorder_alerts'] = alerts
-        from rest_framework import status as drf_status
-        return Response(response_data, status=drf_status.HTTP_201_CREATED)
+        if not serializer.is_valid():
+            logger.error(f"POS Transaction validation errors: {json.dumps(serializer.errors, indent=2)}")
+            # Return detailed errors with better structure
+            error_response = {
+                'status': 'error',
+                'message': 'Validation failed',
+                'errors': serializer.errors,
+                'detail': str(serializer.errors),
+            }
+            logger.error(f"Returning error response: {json.dumps(error_response, indent=2)}")
+            return Response(
+                error_response,
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        try:
+            instance = serializer.save()
+            out = POSTransactionSerializer(instance, context={'request': request})
+            response_data = out.data
+            # Attach reorder alerts if any
+            alerts = getattr(instance, '_reorder_alerts', [])
+            if alerts:
+                response_data = dict(response_data)
+                response_data['reorder_alerts'] = alerts
+            from rest_framework import status as drf_status
+            return Response(response_data, status=drf_status.HTTP_201_CREATED)
+        except Exception as e:
+            logger.error(f"POS Transaction creation failed: {str(e)}", exc_info=True)
+            error_response = {
+                'status': 'error',
+                'message': str(e),
+                'detail': 'Failed to create transaction',
+                'error_type': type(e).__name__
+            }
+            return Response(
+                error_response,
+                status=status.HTTP_400_BAD_REQUEST
+            )
     
     @extend_schema(
         tags=['POS - Transactions'],
@@ -437,6 +470,24 @@ class POSTransactionViewSet(viewsets.ModelViewSet):
         
         serializer = self.get_serializer(transactions, many=True)
         return Response(serializer.data)
+    
+    @extend_schema(
+        tags=['POS - Transactions'],
+        summary='Get transaction by number',
+        description='Retrieve a transaction by its transaction number (e.g., POS-000029)'
+    )
+    @action(detail=False, methods=['get'], url_path='by-number/(?P<transaction_number>[^/.]+)')
+    def by_number(self, request, transaction_number=None):
+        """Get transaction by transaction number"""
+        try:
+            transaction = self.get_queryset().get(transaction_number=transaction_number)
+            serializer = self.get_serializer(transaction)
+            return Response(serializer.data)
+        except POSTransaction.DoesNotExist:
+            return Response(
+                {'detail': f'Transaction {transaction_number} not found'},
+                status=status.HTTP_404_NOT_FOUND
+            )
 
 
 # ============================================================================
@@ -759,6 +810,7 @@ class POSSettingsViewSet(viewsets.ViewSet):
     """Single-object viewset for per-tenant POS settings (get-or-create)."""
     permission_classes = [DynamicModulePermission]
     permission_module = 'pos'
+    parser_classes = [parsers.MultiPartParser, parsers.FormParser, parsers.JSONParser]
 
     @extend_schema(tags=['POS - Settings'], summary='Get POS settings')
     def list(self, request):
@@ -771,10 +823,19 @@ class POSSettingsViewSet(viewsets.ViewSet):
     @extend_schema(tags=['POS - Settings'], summary='Update POS settings')
     @action(detail=False, methods=['patch', 'put'], url_path='update')
     def update_settings(self, request):
-        """Update POS settings for the current tenant."""
+        """Update POS settings for the current tenant. Supports file uploads."""
         tenant = get_request_tenant(request.user)
         settings = POSSettings.get_for_tenant(tenant)
-        serializer = POSSettingsSerializer(settings, data=request.data, partial=True)
+        
+        # Merge request.data and request.FILES for proper file handling
+        data = request.data.copy() if hasattr(request.data, 'copy') else dict(request.data)
+        
+        # Add files from request.FILES if present
+        if request.FILES:
+            for key, file in request.FILES.items():
+                data[key] = file
+        
+        serializer = POSSettingsSerializer(settings, data=data, partial=True)
         serializer.is_valid(raise_exception=True)
         serializer.save()
         return Response(serializer.data)

@@ -30,12 +30,15 @@ class Tenant(models.Model):
     ACCOUNT_TYPE_CHOICES = [
         ('organization', 'Organization'),
         ('personal', 'Personal'),
+        ('retail', 'Retail / Kirana'),
+        ('construction', 'Construction'),
+        ('hardware', 'Hardware'),
     ]
     
     # Basic Information
-    name = models.CharField(max_length=255, unique=True)
+    name = models.CharField(max_length=255)
     slug = models.SlugField(max_length=255, unique=True, blank=True)
-    business_type = models.CharField(max_length=50, choices=BUSINESS_TYPE_CHOICES, default='other')
+    business_type = models.CharField(max_length=50, default='other')
     account_type = models.CharField(
         max_length=20,
         choices=ACCOUNT_TYPE_CHOICES,

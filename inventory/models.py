@@ -81,7 +81,7 @@ class Product(TenantModel):
     Product model with automatic tenant scoping and price history tracking.
     """
     name = models.CharField(max_length=255)
-    sku = models.CharField(max_length=100)
+    sku = models.CharField(max_length=100, blank=True, null=True)
     description = models.TextField(blank=True)
     
     # Categorization

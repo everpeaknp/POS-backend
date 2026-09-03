@@ -58,6 +58,8 @@ INSTALLED_APPS = [
     'corsheaders',
     'drf_spectacular',
     'django_filters',
+    'cloudinary_storage',
+    'cloudinary',
     
     # Local apps - Core
     'core_backend',
@@ -1084,3 +1086,61 @@ ESEWA_STATUS_URL = config(
     'ESEWA_STATUS_URL',
     default='https://rc.esewa.com.np/api/epay/transaction/status/',
 )
+
+
+# ============================================================================
+# CLOUDINARY STORAGE CONFIGURATION
+# ============================================================================
+
+def get_cloudinary_config():
+    """Get Cloudinary configuration from database or environment variables."""
+    try:
+        from setting.models import SiteSettings
+        site_settings = SiteSettings.objects.first()
+        if site_settings and site_settings.use_cloudinary:
+            return {
+                'cloud_name': site_settings.cloudinary_cloud_name,
+                'api_key': site_settings.cloudinary_api_key,
+                'api_secret': site_settings.cloudinary_api_secret,
+            }
+    except:
+        pass
+    
+    # Fallback to environment variables
+    cloud_name = config('CLOUDINARY_CLOUD_NAME', default='')
+    api_key = config('CLOUDINARY_API_KEY', default='')
+    api_secret = config('CLOUDINARY_API_SECRET', default='')
+    
+    if cloud_name and api_key and api_secret:
+        return {
+            'cloud_name': cloud_name,
+            'api_key': api_key,
+            'api_secret': api_secret,
+        }
+    
+    return None
+
+# Get Cloudinary configuration
+cloudinary_config = get_cloudinary_config()
+
+# Only use Cloudinary if credentials are provided
+if cloudinary_config:
+    import cloudinary
+    import cloudinary.uploader
+    import cloudinary.api
+
+    cloudinary.config(
+        cloud_name=cloudinary_config['cloud_name'],
+        api_key=cloudinary_config['api_key'],
+        api_secret=cloudinary_config['api_secret'],
+        secure=True
+    )
+
+    # Use Cloudinary for media files storage
+    DEFAULT_FILE_STORAGE = 'cloudinary_storage.storage.MediaCloudinaryStorage'
+
+    # Cloudinary storage settings
+    CLOUDINARY_STORAGE = cloudinary_config
+else:
+    # Fall back to local file storage if Cloudinary is not configured
+    DEFAULT_FILE_STORAGE = 'django.core.files.storage.FileSystemStorage'

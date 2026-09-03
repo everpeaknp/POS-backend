@@ -82,6 +82,10 @@ class POSSettingsSerializer(serializers.ModelSerializer):
             'id', 'tax_rate', 'tax_label', 'tax_inclusive_pricing',
             'receipt_header', 'receipt_footer', 'auto_print_receipt',
             'allow_zero_price_items', 'require_customer_for_credit',
+            'esewa_enabled', 'esewa_qr', 'esewa_number', 'esewa_name',
+            'khalti_enabled', 'khalti_qr', 'khalti_number', 'khalti_name',
+            'fonepay_enabled', 'fonepay_qr', 'fonepay_number',
+            'bank_transfer_enabled', 'bank_qr', 'bank_name', 'bank_account_number', 'bank_account_name',
         ]
 
 
@@ -160,6 +164,7 @@ class POSDiscountSerializer(serializers.ModelSerializer):
 class POSTransactionLineSerializer(serializers.ModelSerializer):
     """Serializer for POS Transaction Lines"""
     refunded_quantity = serializers.SerializerMethodField()
+    # Don't declare product field - let it use default behavior but we'll override validation
     
     class Meta:
         model = POSTransactionLine
@@ -168,6 +173,43 @@ class POSTransactionLineSerializer(serializers.ModelSerializer):
             'unit_price', 'discount_amount', 'line_total', 'refunded_quantity'
         ]
         read_only_fields = ['product_name', 'product_sku', 'line_total', 'refunded_quantity']
+    
+    def to_internal_value(self, data):
+        """Override to manually look up product by ID"""
+        from inventory.models import Product
+        
+        # If product is an integer ID, look it up
+        if 'product' in data and isinstance(data['product'], (int, str)):
+            product_id = int(data['product'])
+            
+            # Get tenant from context
+            request = self.context.get('request')
+            tenant = request.user.tenant if request and hasattr(request.user, 'tenant') else None
+            
+            # Try to find product
+            try:
+                if tenant:
+                    # Use unfiltered queryset with explicit tenant check
+                    from django.db import models as django_models
+                    product = Product.objects.filter(id=product_id, tenant=tenant).first()
+                else:
+                    product = None
+                
+                if not product:
+                    raise serializers.ValidationError({
+                        'product': f'Invalid pk "{product_id}" - object does not exist.'
+                    })
+                
+                # Replace ID with actual product instance for parent serializer
+                data = data.copy()
+                data['product'] = product
+                
+            except (ValueError, TypeError, Product.DoesNotExist):
+                raise serializers.ValidationError({
+                    'product': f'Invalid pk "{product_id}" - object does not exist.'
+                })
+        
+        return super().to_internal_value(data)
 
     def get_refunded_quantity(self, obj):
         from django.db.models import Sum
@@ -199,12 +241,31 @@ class POSTransactionCreateSerializer(serializers.ModelSerializer):
             'bank_account': {'required': False},
         }
     
+    def validate_warehouse(self, value):
+        """Validate warehouse belongs to tenant"""
+        if not value:
+            raise serializers.ValidationError('Warehouse is required')
+        
+        request = self.context.get('request')
+        if request and request.user.tenant:
+            if value.tenant_id != request.user.tenant.id:
+                raise serializers.ValidationError('Warehouse does not belong to your organization')
+        
+        return value
+    
     def validate(self, data):
         """Validate transaction data and recalculate totals server-side."""
         from sales.credit_utils import check_credit_available
 
         request = self.context['request']
         tenant = request.user.tenant
+        
+        # Check if user has a tenant
+        if not tenant:
+            raise serializers.ValidationError({
+                'detail': 'No active organization. Please select or create an organization first.'
+            })
+        
         warehouse = data.get('warehouse')
         if not warehouse:
             raise serializers.ValidationError({'warehouse': 'Warehouse is required'})
@@ -250,6 +311,10 @@ class POSTransactionCreateSerializer(serializers.ModelSerializer):
                     'lines': f'Line discount exceeds subtotal for {product.name}.'
                 })
             line_data['line_total'] = line_subtotal - line_discount
+            
+            # Set snapshot fields during validation - ensure they're never None
+            line_data['product_name'] = product.name
+            line_data['product_sku'] = product.sku if product.sku else f'PROD-{product.id}'
 
         # Use tenant-specific tax rate
         tax_rate = get_tenant_tax_rate(tenant)
@@ -316,9 +381,14 @@ class POSTransactionCreateSerializer(serializers.ModelSerializer):
     def create(self, validated_data):
         """Create transaction with lines and optional split payments."""
         from django.db import transaction
+        import logging
+        logger = logging.getLogger(__name__)
         
         lines_data = validated_data.pop('lines')
         payments_data = validated_data.pop('payments', [])
+        
+        logger.info(f"Creating POS transaction with {len(lines_data)} lines")
+        logger.info(f"Lines data: {lines_data}")
         
         with transaction.atomic():
             pos_transaction = POSTransaction.objects.create(
@@ -327,19 +397,34 @@ class POSTransactionCreateSerializer(serializers.ModelSerializer):
                 tenant=self.context['request'].user.tenant
             )
             
+            logger.info(f"Created POS transaction: {pos_transaction.id}")
+            
             created_lines = []
-            for line_data in lines_data:
-                product = line_data['product']
+            for idx, line_data in enumerate(lines_data):
+                product = line_data.pop('product')  # Remove product from line_data
                 
-                line_data['product_name'] = product.name
-                line_data['product_sku'] = product.sku
+                # Ensure snapshot fields are set (should be from validation)
+                product_name = line_data.get('product_name') or product.name
+                product_sku = line_data.get('product_sku') or (product.sku if product.sku else f'PROD-{product.id}')
                 
-                line = POSTransactionLine.objects.create(
-                    transaction=pos_transaction,
-                    tenant=self.context['request'].user.tenant,
-                    **line_data
-                )
-                line.product = product
+                line_data['product_name'] = product_name
+                line_data['product_sku'] = product_sku
+                
+                logger.info(f"Line {idx}: product_name={product_name}, product_sku={product_sku}")
+                logger.info(f"Line {idx} full data: {line_data}")
+                
+                try:
+                    line = POSTransactionLine.objects.create(
+                        transaction=pos_transaction,
+                        tenant=self.context['request'].user.tenant,
+                        product=product,
+                        **line_data
+                    )
+                    logger.info(f"Created line {idx}: {line.id}")
+                    created_lines.append(line)
+                except Exception as e:
+                    logger.error(f"Failed to create line {idx}: {str(e)}", exc_info=True)
+                    raise
                 created_lines.append(line)
                 
                 from inventory.models import Stock, StockMovement

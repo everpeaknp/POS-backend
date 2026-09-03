@@ -291,6 +291,16 @@ class SiteSettingsAdmin(admin.ModelAdmin):
             ),
             'description': 'Default metadata for public pages and search engines.',
         }),
+        ('Cloudinary Storage (Optional)', {
+            'fields': (
+                'use_cloudinary',
+                'cloudinary_cloud_name',
+                'cloudinary_api_key',
+                'cloudinary_api_secret',
+            ),
+            'description': 'Enable Cloudinary for cloud-based image storage with CDN delivery. If disabled, images are stored locally.',
+            'classes': ('collapse',),
+        }),
     )
 
     @admin.display(description='Logo preview')
