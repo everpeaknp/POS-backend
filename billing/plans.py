@@ -25,7 +25,7 @@ DEFAULT_SUBSCRIPTION_PLANS = {
             'Hardware Management',
         ],
         'modules': [
-            'personal_finance', 'sales', 'purchase', 'inventory', 'accounting',
+            'personal_finance', 'sales', 'purchase', 'inventory', 'customers', 'accounting',
             'reports', 'pos', 'hr', 'construction', 'hardware',
         ],
         'is_popular': False,
@@ -46,7 +46,7 @@ DEFAULT_SUBSCRIPTION_PLANS = {
             'Email Support',
             'Accounting',
         ],
-        'modules': ['personal_finance', 'sales', 'purchase', 'inventory', 'reports', 'accounting'],
+        'modules': ['personal_finance', 'sales', 'purchase', 'inventory', 'customers', 'reports', 'accounting'],
         'is_popular': False,
     },
     'business': {
@@ -65,7 +65,7 @@ DEFAULT_SUBSCRIPTION_PLANS = {
             'API Access',
         ],
         'modules': [
-            'personal_finance', 'sales', 'purchase', 'inventory', 'accounting',
+            'personal_finance', 'sales', 'purchase', 'inventory', 'customers', 'accounting',
             'reports', 'pos', 'hr', 'construction', 'hardware',
         ],
         'is_popular': True,

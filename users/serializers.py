@@ -512,3 +512,9 @@ class AppearancePreferencesSerializer(serializers.Serializer):
         choices=['left', 'top'],
         default='left'
     )
+    accent_color = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        allow_null=True,
+        max_length=7
+    )

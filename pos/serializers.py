@@ -18,6 +18,7 @@ from .utils import (
     get_transaction_refund_summary,
 )
 from inventory.models import Product, Warehouse
+from tenants.utils import get_request_tenant
 
 
 # ---------------------------------------------------------------------------
@@ -148,7 +149,7 @@ class POSDiscountSerializer(serializers.ModelSerializer):
         read_only_fields = ['created_at', 'updated_at']
 
     def validate_code(self, value):
-        tenant = self.context['request'].user.tenant
+        tenant = get_request_tenant(self.context['request'].user)
         qs = POSDiscount.objects.filter(tenant=tenant, code=value)
         if self.instance:
             qs = qs.exclude(pk=self.instance.pk)
@@ -164,8 +165,14 @@ class POSDiscountSerializer(serializers.ModelSerializer):
 class POSTransactionLineSerializer(serializers.ModelSerializer):
     """Serializer for POS Transaction Lines"""
     refunded_quantity = serializers.SerializerMethodField()
-    # Don't declare product field - let it use default behavior but we'll override validation
-    
+    # Declared as a plain write-only int: the actual Product instance is
+    # resolved (tenant-scoped) in to_internal_value() below and injected
+    # directly into validated_data. Leaving this to ModelSerializer's
+    # default PrimaryKeyRelatedField would re-validate that already-resolved
+    # instance as if it were raw input and reject it ("Incorrect type.
+    # Expected pk value, received Product.").
+    product = serializers.IntegerField(write_only=True)
+
     class Meta:
         model = POSTransactionLine
         fields = [
@@ -173,43 +180,31 @@ class POSTransactionLineSerializer(serializers.ModelSerializer):
             'unit_price', 'discount_amount', 'line_total', 'refunded_quantity'
         ]
         read_only_fields = ['product_name', 'product_sku', 'line_total', 'refunded_quantity']
-    
+
     def to_internal_value(self, data):
-        """Override to manually look up product by ID"""
-        from inventory.models import Product
-        
-        # If product is an integer ID, look it up
-        if 'product' in data and isinstance(data['product'], (int, str)):
-            product_id = int(data['product'])
-            
-            # Get tenant from context
-            request = self.context.get('request')
-            tenant = request.user.tenant if request and hasattr(request.user, 'tenant') else None
-            
-            # Try to find product
+        """Override to manually look up product by ID (tenant-scoped)."""
+        product_instance = None
+        if 'product' in data:
             try:
-                if tenant:
-                    # Use unfiltered queryset with explicit tenant check
-                    from django.db import models as django_models
-                    product = Product.objects.filter(id=product_id, tenant=tenant).first()
-                else:
-                    product = None
-                
-                if not product:
-                    raise serializers.ValidationError({
-                        'product': f'Invalid pk "{product_id}" - object does not exist.'
-                    })
-                
-                # Replace ID with actual product instance for parent serializer
-                data = data.copy()
-                data['product'] = product
-                
-            except (ValueError, TypeError, Product.DoesNotExist):
+                product_id = int(data['product'])
+            except (TypeError, ValueError):
+                raise serializers.ValidationError({
+                    'product': f'Invalid pk "{data["product"]}" - object does not exist.'
+                })
+
+            request = self.context.get('request')
+            tenant = get_request_tenant(request.user) if request else None
+            product_instance = Product.objects.filter(id=product_id, tenant=tenant).first() if tenant else None
+
+            if not product_instance:
                 raise serializers.ValidationError({
                     'product': f'Invalid pk "{product_id}" - object does not exist.'
                 })
-        
-        return super().to_internal_value(data)
+
+        validated = super().to_internal_value(data)
+        if product_instance is not None:
+            validated['product'] = product_instance
+        return validated
 
     def get_refunded_quantity(self, obj):
         from django.db.models import Sum
@@ -247,8 +242,8 @@ class POSTransactionCreateSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError('Warehouse is required')
         
         request = self.context.get('request')
-        if request and request.user.tenant:
-            if value.tenant_id != request.user.tenant.id:
+        if request and get_request_tenant(request.user):
+            if value.tenant_id != get_request_tenant(request.user).id:
                 raise serializers.ValidationError('Warehouse does not belong to your organization')
         
         return value
@@ -258,7 +253,7 @@ class POSTransactionCreateSerializer(serializers.ModelSerializer):
         from sales.credit_utils import check_credit_available
 
         request = self.context['request']
-        tenant = request.user.tenant
+        tenant = get_request_tenant(request.user)
         
         # Check if user has a tenant
         if not tenant:
@@ -394,7 +389,7 @@ class POSTransactionCreateSerializer(serializers.ModelSerializer):
             pos_transaction = POSTransaction.objects.create(
                 **validated_data,
                 cashier=self.context['request'].user,
-                tenant=self.context['request'].user.tenant
+                tenant=get_request_tenant(self.context['request'].user)
             )
             
             logger.info(f"Created POS transaction: {pos_transaction.id}")
@@ -416,7 +411,7 @@ class POSTransactionCreateSerializer(serializers.ModelSerializer):
                 try:
                     line = POSTransactionLine.objects.create(
                         transaction=pos_transaction,
-                        tenant=self.context['request'].user.tenant,
+                        tenant=get_request_tenant(self.context['request'].user),
                         product=product,
                         **line_data
                     )
@@ -432,7 +427,7 @@ class POSTransactionCreateSerializer(serializers.ModelSerializer):
                 
                 if warehouse:
                     stock, _created = Stock.objects.get_or_create(
-                        tenant=self.context['request'].user.tenant,
+                        tenant=get_request_tenant(self.context['request'].user),
                         product=product,
                         warehouse=warehouse,
                         defaults={'quantity': Decimal('0.00')}
@@ -442,7 +437,7 @@ class POSTransactionCreateSerializer(serializers.ModelSerializer):
                     stock.save()
                     
                     StockMovement.objects.create(
-                        tenant=self.context['request'].user.tenant,
+                        tenant=get_request_tenant(self.context['request'].user),
                         product=product,
                         warehouse=warehouse,
                         movement_type='out',
@@ -461,7 +456,7 @@ class POSTransactionCreateSerializer(serializers.ModelSerializer):
                 for p in payments_data:
                     POSPayment.objects.create(
                         transaction=pos_transaction,
-                        tenant=self.context['request'].user.tenant,
+                        tenant=get_request_tenant(self.context['request'].user),
                         payment_method=p['payment_method'],
                         amount=p['amount'],
                         reference=p.get('reference', ''),
@@ -487,7 +482,7 @@ class POSTransactionCreateSerializer(serializers.ModelSerializer):
                 customer.save(update_fields=['current_balance', 'updated_at'])
                 
                 CustomerLedger.objects.create(
-                    tenant=self.context['request'].user.tenant,
+                    tenant=get_request_tenant(self.context['request'].user),
                     customer=customer,
                     date=pos_transaction.date.date(),
                     transaction_type='sale',
@@ -504,7 +499,7 @@ class POSTransactionCreateSerializer(serializers.ModelSerializer):
             if pos_transaction.customer_id:
                 try:
                     from .models import LoyaltyProgram, CustomerLoyaltyPoints, LoyaltyTransaction
-                    tenant = self.context['request'].user.tenant
+                    tenant = get_request_tenant(self.context['request'].user)
                     program = LoyaltyProgram.get_for_tenant(tenant)
                     if program.is_active:
                         points_earned = int(pos_transaction.total * program.points_per_rupee)
@@ -745,7 +740,7 @@ class POSRefundCreateSerializer(serializers.Serializer):
                 'Refunds are only allowed for completed or partially refunded transactions.'
             )
         request = self.context.get('request')
-        if request and txn.tenant != request.user.tenant:
+        if request and txn.tenant != get_request_tenant(request.user):
             raise serializers.ValidationError('Transaction not found.')
         return txn
 

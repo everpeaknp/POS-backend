@@ -104,6 +104,14 @@ class AppearancePreferences(models.Model):
         help_text='App bar position (left or top)'
     )
     
+    # Accent color (optional, hex color code)
+    accent_color = models.CharField(
+        max_length=7,
+        blank=True,
+        null=True,
+        help_text='Custom accent color (hex code, e.g., #3B82F6)'
+    )
+    
     # Metadata
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)

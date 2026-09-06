@@ -139,7 +139,7 @@ class POSSessionViewSet(viewsets.ModelViewSet):
         
         # Calculate session totals from transactions
         transactions = POSTransaction.objects.filter(
-            tenant=request.user.tenant,
+            tenant=get_request_tenant(request.user),
             session=session,
             status='completed'
         )
@@ -272,11 +272,11 @@ class POSDiscountViewSet(viewsets.ModelViewSet):
     
     def get_queryset(self):
         """Filter by current tenant"""
-        return POSDiscount.objects.filter(tenant=self.request.user.tenant)
+        return POSDiscount.objects.filter(tenant=get_request_tenant(self.request.user))
     
     def perform_create(self, serializer):
         """Set tenant when creating discount"""
-        serializer.save(tenant=self.request.user.tenant)
+        serializer.save(tenant=get_request_tenant(self.request.user))
     
     @extend_schema(
         tags=['POS - Discounts'],
@@ -325,7 +325,7 @@ class POSTransactionViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         """Filter by current tenant"""
         return POSTransaction.objects.filter(
-            tenant=self.request.user.tenant
+            tenant=get_request_tenant(self.request.user)
         ).select_related('customer', 'cashier', 'warehouse').prefetch_related('lines__product', 'payments')
     
     def get_serializer_class(self):
@@ -339,7 +339,7 @@ class POSTransactionViewSet(viewsets.ModelViewSet):
         import json
         logger = logging.getLogger(__name__)
         logger.info(f"POS Transaction create request data: {json.dumps(request.data, indent=2)}")
-        logger.info(f"Request user: {request.user}, tenant: {request.user.tenant}")
+        logger.info(f"Request user: {request.user}, tenant: {get_request_tenant(request.user)}")
         
         serializer = self.get_serializer(data=request.data)
         if not serializer.is_valid():
@@ -409,7 +409,7 @@ class POSTransactionViewSet(viewsets.ModelViewSet):
             for line in lines:
                 if pos_transaction.warehouse:
                     stock, _created = Stock.objects.get_or_create(
-                        tenant=request.user.tenant,
+                        tenant=get_request_tenant(request.user),
                         product=line.product,
                         warehouse=pos_transaction.warehouse,
                         defaults={'quantity': Decimal('0.00')}
@@ -418,7 +418,7 @@ class POSTransactionViewSet(viewsets.ModelViewSet):
                     stock.save()
                     
                     StockMovement.objects.create(
-                        tenant=request.user.tenant,
+                        tenant=get_request_tenant(request.user),
                         product=line.product,
                         warehouse=pos_transaction.warehouse,
                         movement_type='in',
@@ -436,7 +436,7 @@ class POSTransactionViewSet(viewsets.ModelViewSet):
                 
                 from sales.models import CustomerLedger
                 CustomerLedger.objects.create(
-                    tenant=request.user.tenant,
+                    tenant=get_request_tenant(request.user),
                     customer=customer,
                     date=timezone.now().date(),
                     transaction_type='adjustment',
@@ -510,7 +510,7 @@ class POSDailySalesReportViewSet(viewsets.ReadOnlyModelViewSet):
     def get_queryset(self):
         """Filter by current tenant"""
         return POSDailySalesReport.objects.filter(
-            tenant=self.request.user.tenant
+            tenant=get_request_tenant(self.request.user)
         ).select_related('cashier', 'warehouse')
     
     @extend_schema(
@@ -561,7 +561,7 @@ class POSDailySalesReportViewSet(viewsets.ReadOnlyModelViewSet):
         
         # Build query filters
         filters = {
-            'tenant': request.user.tenant,
+            'tenant': get_request_tenant(request.user),
             'date__date': report_date,
             'status': 'completed'
         }
@@ -594,7 +594,7 @@ class POSDailySalesReportViewSet(viewsets.ReadOnlyModelViewSet):
         
         # Cancelled transactions (separate query — completed filter is on main aggregates)
         cancelled_filters = {
-            'tenant': request.user.tenant,
+            'tenant': get_request_tenant(request.user),
             'date__date': report_date,
             'status': 'cancelled',
         }
@@ -606,14 +606,14 @@ class POSDailySalesReportViewSet(viewsets.ReadOnlyModelViewSet):
         cancelled_count = POSTransaction.objects.filter(**cancelled_filters).count()
         
         refunded_amount = POSTransaction.objects.filter(
-            tenant=request.user.tenant,
+            tenant=get_request_tenant(request.user),
             date__date=report_date,
             status='refunded'
         ).aggregate(total=Sum('total'))['total'] or Decimal('0.00')
         
         # Create or update report
         report, created = POSDailySalesReport.objects.update_or_create(
-            tenant=request.user.tenant,
+            tenant=get_request_tenant(request.user),
             date=report_date,
             cashier_id=cashier_id,
             warehouse_id=warehouse_id,
@@ -659,7 +659,7 @@ class POSProductSearchViewSet(viewsets.ReadOnlyModelViewSet):
     def get_queryset(self):
         """Filter by current tenant and active products"""
         queryset = Product.objects.filter(
-            tenant=self.request.user.tenant,
+            tenant=get_request_tenant(self.request.user),
             status='active'
         ).select_related('category', 'unit')
         
@@ -696,7 +696,7 @@ class POSProductSearchViewSet(viewsets.ReadOnlyModelViewSet):
         
         try:
             product = Product.objects.get(
-                tenant=request.user.tenant,
+                tenant=get_request_tenant(request.user),
                 sku=barcode,
                 status='active'
             )
@@ -728,7 +728,7 @@ class POSHeldOrderViewSet(viewsets.ModelViewSet):
     ordering = ['-held_at']
 
     def get_queryset(self):
-        qs = POSHeldOrder.objects.filter(tenant=self.request.user.tenant)
+        qs = POSHeldOrder.objects.filter(tenant=get_request_tenant(self.request.user))
         session_id = self.request.query_params.get('session')
         if session_id:
             qs = qs.filter(session_id=session_id)
@@ -740,7 +740,7 @@ class POSHeldOrderViewSet(viewsets.ModelViewSet):
 
     def perform_create(self, serializer):
         serializer.save(
-            tenant=self.request.user.tenant,
+            tenant=get_request_tenant(self.request.user),
             held_by=self.request.user,
         )
 
@@ -782,7 +782,7 @@ class POSCashMovementViewSet(viewsets.ModelViewSet):
     ordering = ['-performed_at']
 
     def get_queryset(self):
-        qs = POSCashMovement.objects.filter(tenant=self.request.user.tenant)
+        qs = POSCashMovement.objects.filter(tenant=get_request_tenant(self.request.user))
         session_id = self.request.query_params.get('session')
         if session_id:
             qs = qs.filter(session_id=session_id)
@@ -794,7 +794,7 @@ class POSCashMovementViewSet(viewsets.ModelViewSet):
             from rest_framework.exceptions import ValidationError
             raise ValidationError({'session': 'Cash movements can only be added to open sessions.'})
         serializer.save(
-            tenant=self.request.user.tenant,
+            tenant=get_request_tenant(self.request.user),
             performed_by=self.request.user,
         )
 
@@ -857,7 +857,7 @@ class POSRefundViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         from .models import POSRefund
-        qs = POSRefund.objects.filter(tenant=self.request.user.tenant)
+        qs = POSRefund.objects.filter(tenant=get_request_tenant(self.request.user))
         txn_id = self.request.query_params.get('transaction')
         if txn_id:
             qs = qs.filter(original_transaction_id=txn_id)
@@ -886,7 +886,7 @@ class POSRefundViewSet(viewsets.ModelViewSet):
         refund_lines_data = data['lines']  # [{original_line, quantity}]
         reason = data.get('reason', '')
         refund_method = data['refund_method']
-        tenant = request.user.tenant
+        tenant = get_request_tenant(request.user)
 
         with db_txn.atomic():
             # Create the refund record

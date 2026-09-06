@@ -988,8 +988,9 @@ def get_appearance_preferences(request):
         'compact_mode': preferences.compact_mode,
         'smooth_animations': preferences.smooth_animations,
         'navbar_position': preferences.navbar_position,
+        'accent_color': preferences.accent_color,
     })
-    
+
     return Response(serializer.data)
 
 
@@ -1025,8 +1026,9 @@ def update_appearance_preferences(request):
         'compact_mode': preferences.compact_mode,
         'smooth_animations': preferences.smooth_animations,
         'navbar_position': preferences.navbar_position,
+        'accent_color': preferences.accent_color,
     })
-    
+
     return Response(response_serializer.data)
 
 

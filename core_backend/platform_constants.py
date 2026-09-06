@@ -5,6 +5,7 @@ AVAILABLE_MODULES = [
     ('inventory', 'Inventory Management'),
     ('sales', 'Sales & Billing'),
     ('purchase', 'Purchase Management'),
+    ('customers', 'Customers'),
     ('reports', 'Reports & Analytics'),
     ('settings', 'Settings'),
     ('pos', 'Point of Sale (POS)'),

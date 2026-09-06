@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import FinanceAccount, FinanceCategory, FinanceTransaction, FinanceBudget, FinanceBill, PartyLender, PartyTransaction, PartyTransactionShare
+from .models import FinanceAccount, FinanceCategory, FinanceTransaction, FinanceBudget, FinanceBill, PartyLender, PartyTransaction, PartyTransactionShare, FinanceLoan
 
 
 class AccountSerializer(serializers.ModelSerializer):
@@ -27,10 +27,10 @@ class CategorySerializer(serializers.ModelSerializer):
     class Meta:
         model = FinanceCategory
         fields = [
-            'id', 'name', 'type', 'type_display', 'description',
+            'id', 'name', 'type', 'type_display', 'description', 'is_system',
             'transaction_count', 'created_at', 'updated_at'
         ]
-        read_only_fields = ['id', 'created_at', 'updated_at']
+        read_only_fields = ['id', 'is_system', 'created_at', 'updated_at']
     
     def get_transaction_count(self, obj):
         return obj.transactions.count()
@@ -226,3 +226,16 @@ class PartyTransactionShareSerializer(serializers.ModelSerializer):
         if obj.party and obj.share_type == 'party_ledger':
             return PartyLenderSerializer(obj.party, context=self.context).data
         return None
+
+
+class LoanSerializer(serializers.ModelSerializer):
+    type_display = serializers.CharField(source='get_type_display', read_only=True)
+
+    class Meta:
+        model = FinanceLoan
+        fields = [
+            'id', 'name', 'type', 'type_display', 'principal', 'emi',
+            'remaining_balance', 'interest_rate', 'start_date',
+            'created_at', 'updated_at'
+        ]
+        read_only_fields = ['id', 'created_at', 'updated_at']

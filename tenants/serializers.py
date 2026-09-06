@@ -126,13 +126,15 @@ class TenantCreateSerializer(serializers.ModelSerializer):
             allowed_personal_modules = {'settings', 'personal_finance'}
             modules = [m for m in modules if m in allowed_personal_modules]
         elif business_type in ('kirana', 'retail'):
-            # Kirana / Retail / Small Retail tenants: Simplified module set
-            # Only Sales, Inventory, Purchase, Expenses, Reports
-            default_retail_modules = ['sales', 'inventory', 'purchase', 'reports', 'settings', 'dashboard', 'accounting', 'pos']
+            # Kirana / Retail / Small Retail tenants: Simplified module set —
+            # kept in sync with getDefaultModulesByAccountType() on the
+            # frontend (lib/modules/catalog.ts), which is what the onboarding
+            # wizard's module picker actually pre-selects and submits.
+            default_retail_modules = ['sales', 'inventory', 'purchase', 'reports', 'settings', 'dashboard', 'accounting', 'pos', 'customers', 'hr']
             if not modules:
                 modules = default_retail_modules
             # Filter to only allow retail-appropriate modules
-            allowed_retail_modules = {'sales', 'inventory', 'purchase', 'reports', 'settings', 'dashboard', 'accounting', 'pos'}
+            allowed_retail_modules = {'sales', 'inventory', 'purchase', 'reports', 'settings', 'dashboard', 'accounting', 'pos', 'customers', 'hr'}
             modules = [m for m in modules if m in allowed_retail_modules]
         else:
             # Retail/Business tenants: Standard business modules (existing behavior)
@@ -158,7 +160,7 @@ class TenantCreateSerializer(serializers.ModelSerializer):
                 data['active_modules'] = ['settings', 'personal_finance']
             elif business_type in ('kirana', 'retail'):
                 # Default kirana/retail modules
-                data['active_modules'] = ['sales', 'inventory', 'purchase', 'reports', 'settings', 'dashboard', 'accounting']
+                data['active_modules'] = ['sales', 'inventory', 'purchase', 'reports', 'settings', 'dashboard', 'accounting', 'customers', 'hr']
             else:
                 data['active_modules'] = normalize_active_modules_for_plan(new_org_plan_code, None)
 
@@ -181,7 +183,13 @@ class TenantCreateSerializer(serializers.ModelSerializer):
             else:
                 validated_data['account_type'] = 'organization'
 
-        return super().create(validated_data)
+        tenant = super().create(validated_data)
+
+        if tenant.account_type == 'personal':
+            from finance.models import seed_default_categories
+            seed_default_categories(tenant)
+
+        return tenant
 
 
 class TenantProfileSerializer(serializers.ModelSerializer):

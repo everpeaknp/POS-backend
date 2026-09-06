@@ -1,5 +1,5 @@
 from django.contrib import admin
-from .models import FinanceAccount, FinanceCategory, FinanceTransaction, FinanceBudget, FinanceBill, PartyLender
+from .models import FinanceAccount, FinanceCategory, FinanceTransaction, FinanceBudget, FinanceBill, PartyLender, FinanceLoan
 
 @admin.register(FinanceAccount)
 class AccountAdmin(admin.ModelAdmin):
@@ -38,3 +38,10 @@ class PartyLenderAdmin(admin.ModelAdmin):
     list_display = ['name', 'pan', 'mobile', 'email', 'tenant', 'created_at']
     list_filter = ['tenant']
     search_fields = ['name', 'pan', 'mobile', 'email']
+
+@admin.register(FinanceLoan)
+class LoanAdmin(admin.ModelAdmin):
+    list_display = ['name', 'type', 'principal', 'emi', 'remaining_balance', 'interest_rate', 'start_date', 'tenant', 'created_at']
+    list_filter = ['type', 'tenant']
+    search_fields = ['name']
+    date_hierarchy = 'start_date'

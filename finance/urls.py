@@ -3,10 +3,14 @@ from .views import (
     PartyLenderViewSet, AccountViewSet, CategoryViewSet,
     TransactionViewSet, BudgetViewSet, BillViewSet,
     PartyTransactionViewSet, PartyTransactionShareViewSet,
-    PublicPartyTransactionShareView, PublicPartyLedgerShareView
+    PublicPartyTransactionShareView, PublicPartyLedgerShareView,
+    personal_finance_dashboard, LoanViewSet
 )
 
 urlpatterns = [
+    # Dashboard
+    path('dashboard/', personal_finance_dashboard, name='personal-finance-dashboard'),
+
     # Parties/Lenders
     path('parties/', PartyLenderViewSet.as_view({'get': 'list', 'post': 'create'}), name='party-list'),
     path('parties/<int:pk>/', PartyLenderViewSet.as_view({'get': 'retrieve', 'put': 'update', 'patch': 'partial_update', 'delete': 'destroy'}), name='party-detail'),
@@ -44,4 +48,8 @@ urlpatterns = [
     path('bills/', BillViewSet.as_view({'get': 'list', 'post': 'create'}), name='bill-list'),
     path('bills/<int:pk>/', BillViewSet.as_view({'get': 'retrieve', 'put': 'update', 'patch': 'partial_update', 'delete': 'destroy'}), name='bill-detail'),
     path('bills/upcoming/', BillViewSet.as_view({'get': 'upcoming'}), name='bill-upcoming'),
+
+    # Loans
+    path('loans/', LoanViewSet.as_view({'get': 'list', 'post': 'create'}), name='loan-list'),
+    path('loans/<int:pk>/', LoanViewSet.as_view({'get': 'retrieve', 'put': 'update', 'patch': 'partial_update', 'delete': 'destroy'}), name='loan-detail'),
 ]

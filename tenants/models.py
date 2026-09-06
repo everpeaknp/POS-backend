@@ -105,14 +105,21 @@ class Tenant(models.Model):
         default=list,
         help_text="List of active module names: ['construction', 'hardware', 'retail']"
     )
-    
+    disabled_features = models.JSONField(
+        default=list,
+        blank=True,
+        help_text="Sidebar sub-feature hrefs turned off within an active module, e.g. ['/dashboard/sales/credit-notes']"
+    )
+
     # Timestamps
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
-    
+
     class Meta:
         db_table = 'tenants'
         ordering = ['-created_at']
+        verbose_name = 'Workplace'
+        verbose_name_plural = 'Workplaces'
     
     def __str__(self):
         return self.name

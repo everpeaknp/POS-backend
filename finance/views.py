@@ -1,26 +1,199 @@
 from rest_framework import viewsets, status
-from rest_framework.decorators import action
+from rest_framework.decorators import action, api_view
 from rest_framework.response import Response
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework.filters import SearchFilter, OrderingFilter
 from drf_spectacular.utils import extend_schema, extend_schema_view
 from django.db import transaction
-from django.db.models import Sum, Q
+from django.db.models import Sum, Q, F
 from django.utils import timezone
 from decimal import Decimal
+from datetime import date, timedelta
+from dateutil.relativedelta import relativedelta
 import secrets
 
 from users.dynamic_permissions import DynamicModulePermission
-from .models import FinanceAccount, FinanceCategory, FinanceTransaction, FinanceBudget, FinanceBill, PartyLender, PartyTransaction, PartyTransactionShare
+from .models import FinanceAccount, FinanceCategory, FinanceTransaction, FinanceBudget, FinanceBill, PartyLender, PartyTransaction, PartyTransactionShare, FinanceLoan
 from .serializers import (
     AccountSerializer, CategorySerializer,
     TransactionListSerializer, TransactionDetailSerializer,
     BudgetSerializer, BillSerializer, PartyLenderSerializer,
-    PartyTransactionSerializer, PartyTransactionShareSerializer
+    PartyTransactionSerializer, PartyTransactionShareSerializer, LoanSerializer
 )
 
 
 FINANCE_FILTER_BACKENDS = [DjangoFilterBackend, SearchFilter, OrderingFilter]
+
+
+@extend_schema(
+    tags=['Personal Finance - Dashboard'],
+    summary='Get personal finance dashboard data',
+    description='Get comprehensive dashboard data including summary, net worth trend, alerts, activities, and top accounts.',
+)
+@api_view(['GET'])
+def personal_finance_dashboard(request):
+    """
+    Personal Finance Dashboard endpoint
+    Returns summary metrics, net worth trend, alerts, activities, and top accounts
+    """
+    tenant = request.user.get_tenant() if request.user and request.user.is_authenticated else None
+
+    if not tenant:
+        return Response({'error': 'Tenant not found'}, status=status.HTTP_403_FORBIDDEN)
+
+    # 1. Summary metrics
+    accounts = FinanceAccount.objects.filter(tenant=tenant)
+    bills = FinanceBill.objects.filter(tenant=tenant)
+
+    total_balance = accounts.filter(type='bank').aggregate(
+        total=Sum('current_balance')
+    )['total'] or Decimal('0.00')
+
+    total_investments = accounts.filter(type='investment').aggregate(
+        total=Sum('current_balance')
+    )['total'] or Decimal('0.00')
+
+    total_debt = accounts.filter(type__in=['credit_card', 'loan']).aggregate(
+        total=Sum('current_balance')
+    )['total'] or Decimal('0.00')
+
+    # Upcoming renewals (bills due in next 30 days)
+    today = date.today()
+    next_month = today + timedelta(days=30)
+    upcoming_renewals = bills.filter(
+        due_date__gte=today,
+        due_date__lte=next_month,
+        status__in=['unpaid', 'pending']
+    ).count()
+
+    # 2. Net Worth Trend (last 6 months)
+    net_worth_trend = []
+    transactions = FinanceTransaction.objects.filter(tenant=tenant)
+
+    for i in range(5, -1, -1):
+        month_date = date.today() - relativedelta(months=i)
+        month_name = month_date.strftime('%b')
+
+        # Calculate cumulative balance up to this month
+        month_end = date(month_date.year, month_date.month, 1) + relativedelta(months=1) - timedelta(days=1)
+
+        income = transactions.filter(
+            type='income',
+            date__lte=month_end
+        ).aggregate(total=Sum('amount'))['total'] or Decimal('0.00')
+
+        expenses = transactions.filter(
+            type='expense',
+            date__lte=month_end
+        ).aggregate(total=Sum('amount'))['total'] or Decimal('0.00')
+
+        net_worth = float(income - expenses)
+        net_worth_trend.append({'month': month_name, 'value': net_worth})
+
+    # 3. Alerts
+    alerts = []
+
+    # Overdue bills
+    overdue_bills = bills.filter(
+        due_date__lt=today,
+        status__in=['unpaid', 'pending']
+    )
+    for bill in overdue_bills[:3]:  # Limit to 3
+        alerts.append({
+            'type': 'bill',
+            'message': f'{bill.name} is overdue',
+            'amount': float(bill.amount),
+            'date': bill.due_date.isoformat()
+        })
+
+    # Upcoming bills
+    upcoming_bills = bills.filter(
+        due_date__gte=today,
+        due_date__lte=next_month,
+        status__in=['unpaid', 'pending']
+    ).order_by('due_date')[:3]
+    for bill in upcoming_bills:
+        days_until = (bill.due_date - today).days
+        alerts.append({
+            'type': 'bill',
+            'message': f'{bill.name} due in {days_until} day{"s" if days_until != 1 else ""}',
+            'amount': float(bill.amount),
+            'date': bill.due_date.isoformat()
+        })
+
+    # Over budget warnings
+    budgets = FinanceBudget.objects.filter(tenant=tenant).select_related('category')
+    for budget in budgets:
+        if not budget.category:
+            continue
+        spent = budget.category.transactions.filter(
+            date__gte=budget.start_date,
+            date__lte=budget.end_date if budget.end_date else budget.start_date,
+            type='expense'
+        ).aggregate(total=Sum('amount'))['total'] or Decimal('0.00')
+        if spent > budget.amount:
+            over_amount = spent - budget.amount
+            over_percentage = int((over_amount / budget.amount) * 100)
+            alerts.append({
+                'type': 'over_budget',
+                'message': f'{budget.name} budget exceeded by {over_percentage}%',
+                'amount': float(over_amount)
+            })
+
+    # 4. Recent Activities
+    activities = []
+
+    # Recent transactions
+    recent_transactions = transactions.order_by('-created_at')[:3]
+    for txn in recent_transactions:
+        activities.append({
+            'type': 'transaction',
+            'action': 'created',
+            'description': f'{"Income" if txn.type == "income" else "Expense"}: {txn.description or txn.category.name if txn.category else "Transaction"}',
+            'timestamp': txn.created_at.isoformat(),
+            'amount': float(txn.amount)
+        })
+
+    # Recent accounts
+    recent_accounts = accounts.order_by('-created_at')[:2]
+    for acc in recent_accounts:
+        activities.append({
+            'type': 'account',
+            'action': 'created',
+            'description': f'Created account: {acc.name}',
+            'timestamp': acc.created_at.isoformat()
+        })
+
+    # Sort by timestamp descending
+    activities.sort(key=lambda x: x['timestamp'], reverse=True)
+    activities = activities[:6]  # Limit to 6
+
+    # 5. Top Accounts by Balance
+    top_accounts = accounts.filter(
+        type__in=['bank', 'cash', 'investment']
+    ).order_by('-current_balance')[:4]
+
+    top_accounts_data = [
+        {
+            'name': acc.name,
+            'balance': float(acc.current_balance),
+            'type': acc.type
+        }
+        for acc in top_accounts
+    ]
+
+    return Response({
+        'summary': {
+            'total_balance': float(total_balance),
+            'total_investments': float(total_investments),
+            'total_debt': float(total_debt),
+            'upcoming_renewals': upcoming_renewals
+        },
+        'netWorthTrend': net_worth_trend,
+        'alerts': alerts,
+        'activities': activities,
+        'topAccounts': top_accounts_data
+    })
 
 
 @extend_schema_view(
@@ -184,8 +357,17 @@ class CategoryViewSet(viewsets.ModelViewSet):
         """Ensure tenant is set when creating"""
         tenant = self.request.user.get_tenant()
         serializer.save(tenant=tenant)
-    
+
+    def perform_update(self, serializer):
+        if serializer.instance.is_system:
+            from rest_framework.exceptions import ValidationError
+            raise ValidationError({'detail': 'System categories cannot be edited.'})
+        serializer.save()
+
     def perform_destroy(self, instance):
+        if instance.is_system:
+            from rest_framework.exceptions import ValidationError
+            raise ValidationError({'detail': 'System categories cannot be deleted.'})
         if instance.transactions.exists():
             from rest_framework.exceptions import ValidationError
             raise ValidationError({'detail': 'Cannot delete a category that has transactions.'})
@@ -263,17 +445,45 @@ class TransactionViewSet(viewsets.ModelViewSet):
                 transaction_number = "TXN-000001"
             
             serializer.save(tenant=tenant, transaction_number=transaction_number)
-    
+
+    def perform_update(self, serializer):
+        """Reverse the old balance effect and apply the new one on edit.
+
+        Uses an atomic F() update on the account row rather than load-mutate-save,
+        because the FK resolved by the serializer's PrimaryKeyRelatedField is a
+        freshly-queried instance distinct from the one cached on the pre-update
+        instance -- mutating both in Python and saving them in sequence silently
+        drops whichever write happens first.
+        """
+        instance = serializer.instance
+        old_account_id = instance.account_id
+        old_amount = instance.amount
+        old_type = instance.type
+
+        with transaction.atomic():
+            updated = serializer.save()
+
+            if old_account_id:
+                delta = -old_amount if old_type == 'income' else old_amount
+                FinanceAccount.objects.filter(pk=old_account_id).update(
+                    current_balance=F('current_balance') + delta
+                )
+
+            if updated.account_id:
+                delta = updated.amount if updated.type == 'income' else -updated.amount
+                FinanceAccount.objects.filter(pk=updated.account_id).update(
+                    current_balance=F('current_balance') + delta
+                )
+
     def perform_destroy(self, instance):
         """Reverse account balance when deleting transaction"""
         with transaction.atomic():
-            # Reverse the balance change
-            if instance.type == 'income':
-                instance.account.current_balance -= instance.amount
-            else:  # expense
-                instance.account.current_balance += instance.amount
-            instance.account.save()
-            
+            if instance.account_id:
+                delta = -instance.amount if instance.type == 'income' else instance.amount
+                FinanceAccount.objects.filter(pk=instance.account_id).update(
+                    current_balance=F('current_balance') + delta
+                )
+
             instance.delete()
     
     @extend_schema(
@@ -647,4 +857,55 @@ class PublicPartyLedgerShareView(APIView):
                 {'error': 'Party ledger not found'},
                 status=HTTP_404_NOT_FOUND
             )
+
+
+@extend_schema_view(
+    list=extend_schema(
+        tags=['Personal Finance - Loans'],
+        summary='List all loans',
+        description='Retrieve a list of all loans for the current tenant.'
+    ),
+    create=extend_schema(
+        tags=['Personal Finance - Loans'],
+        summary='Create a new loan',
+        description='Create a new loan entry with EMI details.'
+    ),
+    retrieve=extend_schema(
+        tags=['Personal Finance - Loans'],
+        summary='Get loan details',
+        description='Retrieve detailed information about a specific loan.'
+    ),
+    update=extend_schema(
+        tags=['Personal Finance - Loans'],
+        summary='Update a loan',
+        description='Update loan details including remaining balance.'
+    ),
+    partial_update=extend_schema(
+        tags=['Personal Finance - Loans'],
+        summary='Partially update a loan',
+        description='Partially update loan details.'
+    ),
+    destroy=extend_schema(
+        tags=['Personal Finance - Loans'],
+        summary='Delete a loan',
+        description='Delete a loan entry.'
+    ),
+)
+class LoanViewSet(viewsets.ModelViewSet):
+    """ViewSet for managing loans"""
+    serializer_class = LoanSerializer
+    permission_classes = [DynamicModulePermission]
+    permission_module = 'personal_finance'
+    filter_backends = FINANCE_FILTER_BACKENDS
+    search_fields = ['name', 'type']
+    ordering_fields = ['start_date', 'principal', 'emi', 'remaining_balance']
+    ordering = ['-start_date']
+
+    def get_queryset(self):
+        tenant = self.request.user.get_tenant()
+        return FinanceLoan.objects.filter(tenant=tenant)
+
+    def perform_create(self, serializer):
+        tenant = self.request.user.get_tenant()
+        serializer.save(tenant=tenant)
 

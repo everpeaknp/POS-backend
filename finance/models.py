@@ -51,7 +51,8 @@ class FinanceCategory(TenantModel):
     name = models.CharField(max_length=255)
     type = models.CharField(max_length=20, choices=TYPE_CHOICES, default='expense')
     description = models.TextField(blank=True)
-    
+    is_system = models.BooleanField(default=False, help_text='Pre-defined category that cannot be edited or deleted')
+
     class Meta:
         db_table = 'finance_categories'
         ordering = ['type', 'name']
@@ -61,6 +62,39 @@ class FinanceCategory(TenantModel):
     
     def __str__(self):
         return f"{self.name} ({self.get_type_display()})"
+
+
+DEFAULT_SYSTEM_CATEGORIES = [
+    ('Salary', 'income'),
+    ('Business Income', 'income'),
+    ('Investment Returns', 'income'),
+    ('Gifts Received', 'income'),
+    ('Other Income', 'income'),
+    ('Food & Groceries', 'expense'),
+    ('Rent', 'expense'),
+    ('Transportation', 'expense'),
+    ('Utilities', 'expense'),
+    ('Healthcare', 'expense'),
+    ('Education', 'expense'),
+    ('Entertainment', 'expense'),
+    ('Shopping', 'expense'),
+    ('Insurance', 'expense'),
+    ('Other Expense', 'expense'),
+]
+
+
+def seed_default_categories(tenant):
+    """Create the standard set of system categories for a personal-finance tenant."""
+    existing = set(
+        FinanceCategory.objects.filter(tenant=tenant).values_list('name', 'type')
+    )
+    to_create = [
+        FinanceCategory(tenant=tenant, name=name, type=type_, is_system=True)
+        for name, type_ in DEFAULT_SYSTEM_CATEGORIES
+        if (name, type_) not in existing
+    ]
+    if to_create:
+        FinanceCategory.objects.bulk_create(to_create)
 
 
 class FinanceTransaction(TenantModel):
@@ -106,7 +140,7 @@ class FinanceTransaction(TenantModel):
         """Update account balance when transaction is saved"""
         is_new = self.pk is None
         
-        if is_new:
+        if is_new and self.account:
             # New transaction - adjust account balance
             if self.type == 'income':
                 self.account.current_balance += self.amount
@@ -251,7 +285,7 @@ class PartyTransaction(TenantModel):
     
     party = models.ForeignKey(
         PartyLender,
-        on_delete=models.PROTECT,
+        on_delete=models.CASCADE,
         related_name='transactions'
     )
     direction = models.CharField(max_length=10, choices=DIRECTION_CHOICES)
@@ -336,3 +370,50 @@ class PartyTransactionShare(TenantModel):
     
     def __str__(self):
         return f"Share - {self.get_share_type_display()}"
+
+
+class FinanceLoan(TenantModel):
+    """Loans with EMI tracking"""
+    LOAN_TYPE_CHOICES = [
+        ('home', 'Home Loan'),
+        ('car', 'Car Loan'),
+        ('personal', 'Personal Loan'),
+        ('education', 'Education Loan'),
+    ]
+
+    name = models.CharField(max_length=255)
+    type = models.CharField(max_length=20, choices=LOAN_TYPE_CHOICES, default='personal')
+    principal = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        validators=[MinValueValidator(Decimal('0.01'))],
+        help_text='Original loan amount'
+    )
+    emi = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        validators=[MinValueValidator(Decimal('0.01'))],
+        help_text='Monthly EMI amount'
+    )
+    remaining_balance = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        validators=[MinValueValidator(Decimal('0'))],
+        help_text='Current remaining balance'
+    )
+    interest_rate = models.DecimalField(
+        max_digits=5,
+        decimal_places=2,
+        validators=[MinValueValidator(Decimal('0'))],
+        help_text='Annual interest rate percentage'
+    )
+    start_date = models.DateField()
+
+    class Meta:
+        db_table = 'finance_loans'
+        ordering = ['-start_date']
+        verbose_name = 'Finance Loan'
+        verbose_name_plural = 'Finance Loans'
+
+    def __str__(self):
+        return f"{self.name} ({self.get_type_display()}) - Rs.{self.principal}"

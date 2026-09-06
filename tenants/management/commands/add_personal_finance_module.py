@@ -50,6 +50,9 @@ class Command(BaseCommand):
                     old_modules = list(tenant.active_modules)
                     tenant.active_modules.append('personal_finance')
                     tenant.save()
+                    if tenant.account_type == 'personal':
+                        from finance.models import seed_default_categories
+                        seed_default_categories(tenant)
                     self.stdout.write(
                         self.style.SUCCESS(
                             f'✓ Added personal_finance to tenant: {tenant.name} ({tenant.slug})'

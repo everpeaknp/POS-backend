@@ -77,6 +77,7 @@ INSTALLED_APPS = [
     'suppliers',
     'accounting',
     'construction',
+    'hardware',
     'reports',
     'hr',
     'pos',
