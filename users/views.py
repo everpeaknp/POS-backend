@@ -2,8 +2,10 @@ from rest_framework import generics, permissions, viewsets, status
 from rest_framework.response import Response
 from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
 from drf_spectacular.utils import extend_schema, extend_schema_view
+import django_filters
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework.filters import SearchFilter, OrderingFilter
+from rest_framework.pagination import PageNumberPagination
 from rest_framework.decorators import api_view, permission_classes, parser_classes
 from rest_framework.parsers import MultiPartParser, FormParser
 from django.db import models
@@ -331,6 +333,21 @@ def get_employee_invite_options(request):
 
 
 
+class AuditLogFilterSet(django_filters.FilterSet):
+    date_from = django_filters.DateTimeFilter(field_name='created_at', lookup_expr='gte')
+    date_to = django_filters.DateTimeFilter(field_name='created_at', lookup_expr='lte')
+
+    class Meta:
+        model = AuditLog
+        fields = ['action', 'module', 'user', 'date_from', 'date_to']
+
+
+class AuditLogPagination(PageNumberPagination):
+    page_size = 25
+    page_size_query_param = 'page_size'
+    max_page_size = 500
+
+
 @extend_schema_view(
     list=extend_schema(tags=['Audit'], summary='List audit logs'),
     retrieve=extend_schema(tags=['Audit'], summary='Get audit log details'),
@@ -343,12 +360,13 @@ class AuditLogViewSet(viewsets.ReadOnlyModelViewSet):
     """
     serializer_class = AuditLogSerializer
     permission_classes = [permissions.IsAuthenticated, CanViewAuditLogs]
+    pagination_class = AuditLogPagination
     filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
-    filterset_fields = ['action', 'module', 'user']
+    filterset_class = AuditLogFilterSet
     search_fields = ['description', 'user__username', 'user__first_name', 'user__last_name']
     ordering_fields = ['created_at', 'action', 'module']
     ordering = ['-created_at']
-    
+
     def get_queryset(self):
         """Filter by current tenant"""
         from tenants.utils import get_request_tenant
@@ -714,6 +732,42 @@ def ensure_current_session(request):
         user_agent=user_agent,
     )
     return Response({'session_id': str(session.id)}, status=status.HTTP_201_CREATED)
+
+
+@extend_schema(
+    tags=['Authentication'],
+    summary='Logout',
+    description='Revoke the current session (blacklists its refresh token) and record a logout audit entry.',
+    responses={200: {'description': 'Logged out successfully'}}
+)
+@api_view(['POST'])
+@permission_classes([drf_permissions.IsAuthenticated])
+def logout(request):
+    """Revoke the current session and write a logout audit entry."""
+    from .session_models import UserSession
+    from .session_utils import revoke_user_session
+    from .audit_utils import audit_log
+    from tenants.utils import get_request_tenant
+
+    current_session_id = request.headers.get('X-Session-Id')
+    if current_session_id:
+        session = UserSession.objects.filter(
+            id=current_session_id,
+            user=request.user,
+            is_revoked=False,
+        ).first()
+        if session:
+            revoke_user_session(session)
+
+    tenant = get_request_tenant(request.user)
+    if tenant:
+        audit_log(
+            request, 'logout', 'settings',
+            f'{request.user.get_full_name() or request.user.username} logged out',
+            tenant=tenant, user=request.user,
+        )
+
+    return Response({'message': 'Logged out successfully'}, status=status.HTTP_200_OK)
 
 
 @api_view(['POST'])

@@ -70,4 +70,13 @@ def issue_tokens_for_user(user, request=None):
         from users.session_utils import record_user_session
         session = record_user_session(user, request, data['refresh'])
         data['session_id'] = str(session.id)
+
+        tenant = user.get_tenant()
+        if tenant:
+            from users.audit_utils import audit_log
+            audit_log(
+                request, 'login', 'settings',
+                f'{user.get_full_name() or user.username} logged in',
+                tenant=tenant, user=user,
+            )
     return data

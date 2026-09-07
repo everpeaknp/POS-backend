@@ -15,6 +15,7 @@ from datetime import datetime, timedelta
 from decimal import Decimal
 
 from users.dynamic_permissions import DynamicModulePermission
+from users.audit_utils import audit_log
 from tenants.utils import get_request_tenant
 from .models import (
     POSSession, POSDiscount, POSTransaction, POSTransactionLine,
@@ -93,10 +94,11 @@ class POSSessionViewSet(viewsets.ModelViewSet):
     def perform_create(self, serializer):
         """Set tenant and cashier when creating session"""
         tenant = get_request_tenant(self.request.user)
-        serializer.save(
+        session = serializer.save(
             tenant=tenant,
             cashier=self.request.user
         )
+        audit_log(self.request, 'create', 'pos', f'Opened POSSession: {session.session_number}')
     
     @extend_schema(
         tags=['POS - Sessions'],
@@ -212,7 +214,9 @@ class POSSessionViewSet(viewsets.ModelViewSet):
         if notes:
             session.notes = notes
         session.save()
-        
+
+        audit_log(request, 'close', 'pos', f'Closed POSSession: {session.session_number}')
+
         serializer = self.get_serializer(session)
         return Response(serializer.data)
 
@@ -276,7 +280,17 @@ class POSDiscountViewSet(viewsets.ModelViewSet):
     
     def perform_create(self, serializer):
         """Set tenant when creating discount"""
-        serializer.save(tenant=get_request_tenant(self.request.user))
+        discount = serializer.save(tenant=get_request_tenant(self.request.user))
+        audit_log(self.request, 'create', 'pos', f'Created POSDiscount: {discount.name}')
+
+    def perform_update(self, serializer):
+        discount = serializer.save()
+        audit_log(self.request, 'update', 'pos', f'Updated POSDiscount: {discount.name}')
+
+    def perform_destroy(self, instance):
+        label = instance.name
+        instance.delete()
+        audit_log(self.request, 'delete', 'pos', f'Deleted POSDiscount: {label}')
     
     @extend_schema(
         tags=['POS - Discounts'],
@@ -367,6 +381,7 @@ class POSTransactionViewSet(viewsets.ModelViewSet):
                 response_data = dict(response_data)
                 response_data['reorder_alerts'] = alerts
             from rest_framework import status as drf_status
+            audit_log(request, 'create', 'pos', f'Created POSTransaction: {instance.transaction_number}')
             return Response(response_data, status=drf_status.HTTP_201_CREATED)
         except Exception as e:
             logger.error(f"POS Transaction creation failed: {str(e)}", exc_info=True)
@@ -973,6 +988,8 @@ class POSRefundViewSet(viewsets.ModelViewSet):
             except Exception as exc:
                 import logging
                 logging.getLogger(__name__).error(f'POS refund GL failed: {exc}')
+
+        audit_log(request, 'refund', 'pos', f'Refunded POSTransaction: {original.transaction_number} (Rs. {refund_total})')
 
         out = POSRefundSerializer(refund)
         return Response(out.data, status=status.HTTP_201_CREATED)

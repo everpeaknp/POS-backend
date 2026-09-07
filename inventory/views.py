@@ -3,6 +3,7 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 from users.dynamic_permissions import DynamicModulePermission
+from users.audit_utils import audit_log
 from rest_framework.filters import SearchFilter, OrderingFilter
 from django_filters.rest_framework import DjangoFilterBackend
 from django.db import transaction, models
@@ -229,7 +230,17 @@ class WarehouseViewSet(viewsets.ModelViewSet):
     
     def perform_create(self, serializer):
         """Ensure tenant is set when creating warehouse"""
-        serializer.save(tenant=self.request.user.tenant)
+        warehouse = serializer.save(tenant=self.request.user.tenant)
+        audit_log(self.request, 'create', 'inventory', f'Created Warehouse: {warehouse.name}')
+
+    def perform_update(self, serializer):
+        warehouse = serializer.save()
+        audit_log(self.request, 'update', 'inventory', f'Updated Warehouse: {warehouse.name}')
+
+    def perform_destroy(self, instance):
+        label = instance.name
+        instance.delete()
+        audit_log(self.request, 'delete', 'inventory', f'Deleted Warehouse: {label}')
 
     @extend_schema(
         tags=['Inventory - Warehouses'],
@@ -350,7 +361,17 @@ class ProductViewSet(viewsets.ModelViewSet):
 
     def perform_create(self, serializer):
         """Ensure tenant is set when creating product"""
-        serializer.save(tenant=self.request.user.tenant)
+        product = serializer.save(tenant=self.request.user.tenant)
+        audit_log(self.request, 'create', 'inventory', f'Created Product: {product.name} ({product.sku})')
+
+    def perform_update(self, serializer):
+        product = serializer.save()
+        audit_log(self.request, 'update', 'inventory', f'Updated Product: {product.name} ({product.sku})')
+
+    def perform_destroy(self, instance):
+        label = f'{instance.name} ({instance.sku})'
+        instance.delete()
+        audit_log(self.request, 'delete', 'inventory', f'Deleted Product: {label}')
     
     @extend_schema(
         tags=['Inventory - Products'],
@@ -548,6 +569,7 @@ class StockOperationsViewSet(viewsets.ViewSet):
                 performed_by=request.user,
                 tenant=tenant,
             )
+            audit_log(request, 'create', 'inventory', f'Stock in: {product.name} +{data["quantity"]} at {warehouse.name}')
             return Response({'message': 'Stock added successfully'}, status=status.HTTP_201_CREATED)
         except ValueError as exc:
             return _operation_error_response(exc)
@@ -584,6 +606,7 @@ class StockOperationsViewSet(viewsets.ViewSet):
                 performed_by=request.user,
                 tenant=tenant,
             )
+            audit_log(request, 'update', 'inventory', f'Stock out: {product.name} -{data["quantity"]} at {warehouse.name}')
             return Response({'message': 'Stock removed successfully'})
         except ValueError as exc:
             return _operation_error_response(exc)
@@ -627,6 +650,10 @@ class StockOperationsViewSet(viewsets.ViewSet):
                 performed_by=request.user,
                 tenant=tenant,
             )
+            audit_log(
+                request, 'update', 'inventory',
+                f'Stock transfer: {product.name} {data["quantity"]} from {from_warehouse.name} to {to_warehouse.name}'
+            )
             return Response({'message': 'Stock transferred successfully'})
         except ValueError as exc:
             return _operation_error_response(exc)
@@ -662,6 +689,7 @@ class StockOperationsViewSet(viewsets.ViewSet):
                 performed_by=request.user,
                 tenant=tenant,
             )
+            audit_log(request, 'adjust', 'inventory', f'Stock adjustment: {product.name} {data["quantity"]} at {warehouse.name}')
             return Response({'message': 'Stock adjusted successfully'})
         except ValueError as exc:
             return _operation_error_response(exc)

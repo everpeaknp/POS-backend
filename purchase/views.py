@@ -6,6 +6,7 @@ from decimal import Decimal
 from django.db import transaction
 from users.dynamic_permissions import DynamicModulePermission
 from users.permissions import CanApprovePurchases
+from users.audit_utils import audit_log
 from drf_spectacular.utils import extend_schema, extend_schema_view
 from django.utils import timezone
 from .models import (
@@ -61,7 +62,17 @@ class SupplierViewSet(viewsets.ModelViewSet):
     
     def perform_create(self, serializer):
         """Ensure tenant is set when creating supplier"""
-        serializer.save(tenant=self.request.user.tenant)
+        supplier = serializer.save(tenant=self.request.user.tenant)
+        audit_log(self.request, 'create', 'purchase', f'Created Supplier: {supplier.name}')
+
+    def perform_update(self, serializer):
+        supplier = serializer.save()
+        audit_log(self.request, 'update', 'purchase', f'Updated Supplier: {supplier.name}')
+
+    def perform_destroy(self, instance):
+        label = instance.name
+        instance.delete()
+        audit_log(self.request, 'delete', 'purchase', f'Deleted Supplier: {label}')
 
 
 
@@ -114,7 +125,17 @@ class PurchaseRequestViewSet(viewsets.ModelViewSet):
     
     def perform_create(self, serializer):
         # Set requested_by to current user and tenant
-        serializer.save(requested_by=self.request.user, tenant=self.request.user.tenant)
+        pr = serializer.save(requested_by=self.request.user, tenant=self.request.user.tenant)
+        audit_log(self.request, 'create', 'purchase', f'Created PurchaseRequest: {pr.request_number}')
+
+    def perform_update(self, serializer):
+        pr = serializer.save()
+        audit_log(self.request, 'update', 'purchase', f'Updated PurchaseRequest: {pr.request_number}')
+
+    def perform_destroy(self, instance):
+        label = instance.request_number
+        instance.delete()
+        audit_log(self.request, 'delete', 'purchase', f'Deleted PurchaseRequest: {label}')
 
     @extend_schema(
         description="Submit a purchase request for approval",
@@ -378,8 +399,18 @@ class PurchaseOrderViewSet(viewsets.ModelViewSet):
         tenant = self.request.user.tenant
         from purchase.numbering import next_document_number
         po_number = next_document_number(tenant, PurchaseOrder, 'po_number', 'PO')
-        serializer.save(created_by=self.request.user, tenant=tenant, po_number=po_number)
-    
+        po = serializer.save(created_by=self.request.user, tenant=tenant, po_number=po_number)
+        audit_log(self.request, 'create', 'purchase', f'Created PurchaseOrder: {po.po_number}')
+
+    def perform_update(self, serializer):
+        po = serializer.save()
+        audit_log(self.request, 'update', 'purchase', f'Updated PurchaseOrder: {po.po_number}')
+
+    def perform_destroy(self, instance):
+        label = instance.po_number
+        instance.delete()
+        audit_log(self.request, 'delete', 'purchase', f'Deleted PurchaseOrder: {label}')
+
     @extend_schema(
         description="Update purchase order status",
         tags=["Purchase - Orders"],
@@ -587,7 +618,12 @@ class PurchaseInvoiceViewSet(viewsets.ModelViewSet):
     ordering = ['-date', '-created_at']
     
     def perform_create(self, serializer):
-        serializer.save(created_by=self.request.user, tenant=self.request.user.tenant)
+        invoice = serializer.save(created_by=self.request.user, tenant=self.request.user.tenant)
+        audit_log(self.request, 'create', 'purchase', f'Created PurchaseInvoice: {invoice.invoice_number}')
+
+    def perform_update(self, serializer):
+        invoice = serializer.save()
+        audit_log(self.request, 'update', 'purchase', f'Updated PurchaseInvoice: {invoice.invoice_number}')
 
     def destroy(self, request, *args, **kwargs):
         invoice = self.get_object()
@@ -596,7 +632,10 @@ class PurchaseInvoiceViewSet(viewsets.ModelViewSet):
                 {'error': 'Cannot delete an invoice with recorded payments'},
                 status=status.HTTP_400_BAD_REQUEST,
             )
-        return super().destroy(request, *args, **kwargs)
+        label = invoice.invoice_number
+        response = super().destroy(request, *args, **kwargs)
+        audit_log(self.request, 'delete', 'purchase', f'Deleted PurchaseInvoice: {label}')
+        return response
     
     @extend_schema(
         description="Record payment for a purchase invoice",
@@ -695,7 +734,12 @@ class DebitNoteViewSet(viewsets.ModelViewSet):
     ordering = ['-date', '-created_at']
     
     def perform_create(self, serializer):
-        serializer.save(created_by=self.request.user, tenant=self.request.user.tenant)
+        debit_note = serializer.save(created_by=self.request.user, tenant=self.request.user.tenant)
+        audit_log(self.request, 'create', 'purchase', f'Created DebitNote: {debit_note.debit_note_number}')
+
+    def perform_update(self, serializer):
+        debit_note = serializer.save()
+        audit_log(self.request, 'update', 'purchase', f'Updated DebitNote: {debit_note.debit_note_number}')
 
     def destroy(self, request, *args, **kwargs):
         debit_note = self.get_object()
@@ -704,4 +748,7 @@ class DebitNoteViewSet(viewsets.ModelViewSet):
                 {'error': 'Cannot delete an issued debit note'},
                 status=status.HTTP_400_BAD_REQUEST,
             )
-        return super().destroy(request, *args, **kwargs)
+        label = debit_note.debit_note_number
+        response = super().destroy(request, *args, **kwargs)
+        audit_log(self.request, 'delete', 'purchase', f'Deleted DebitNote: {label}')
+        return response

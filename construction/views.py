@@ -3,6 +3,7 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 from users.dynamic_permissions import DynamicModulePermission, _effective_role
+from users.audit_utils import audit_log
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework.filters import SearchFilter, OrderingFilter
 from drf_spectacular.utils import extend_schema, extend_schema_view, OpenApiParameter
@@ -58,8 +59,18 @@ class SiteViewSet(viewsets.ModelViewSet):
         return queryset
     
     def perform_create(self, serializer):
-        serializer.save(tenant=self.request.user.tenant)
-    
+        site = serializer.save(tenant=self.request.user.tenant)
+        audit_log(self.request, 'create', 'construction', f'Created Site: {site.name}')
+
+    def perform_update(self, serializer):
+        site = serializer.save()
+        audit_log(self.request, 'update', 'construction', f'Updated Site: {site.name}')
+
+    def perform_destroy(self, instance):
+        label = instance.name
+        instance.delete()
+        audit_log(self.request, 'delete', 'construction', f'Deleted Site: {label}')
+
     @extend_schema(
         tags=['Construction - Sites'],
         summary='Generate site budget report',
@@ -211,13 +222,19 @@ class WorkerViewSet(viewsets.ModelViewSet):
         return Worker.objects.filter(tenant=self.request.user.tenant).select_related('assigned_site')
     
     def perform_create(self, serializer):
-        serializer.save(tenant=self.request.user.tenant)
+        worker = serializer.save(tenant=self.request.user.tenant)
+        audit_log(self.request, 'create', 'construction', f'Created Worker: {worker.name}')
+
+    def perform_update(self, serializer):
+        worker = serializer.save()
+        audit_log(self.request, 'update', 'construction', f'Updated Worker: {worker.name}')
 
     def destroy(self, request, *args, **kwargs):
         """Deactivate worker instead of hard delete to preserve payroll history."""
         worker = self.get_object()
         worker.status = 'inactive'
         worker.save(update_fields=['status', 'updated_at'])
+        audit_log(request, 'delete', 'construction', f'Deactivated Worker: {worker.name}')
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 
@@ -720,9 +737,19 @@ class EquipmentViewSet(viewsets.ModelViewSet):
     
     def get_queryset(self):
         return Equipment.objects.filter(tenant=self.request.user.tenant).select_related('assigned_site')
-    
+
     def perform_create(self, serializer):
-        serializer.save(tenant=self.request.user.tenant)
+        equipment = serializer.save(tenant=self.request.user.tenant)
+        audit_log(self.request, 'create', 'construction', f'Created Equipment: {equipment.name}')
+
+    def perform_update(self, serializer):
+        equipment = serializer.save()
+        audit_log(self.request, 'update', 'construction', f'Updated Equipment: {equipment.name}')
+
+    def perform_destroy(self, instance):
+        label = instance.name
+        instance.delete()
+        audit_log(self.request, 'delete', 'construction', f'Deleted Equipment: {label}')
 
 
 @extend_schema_view(

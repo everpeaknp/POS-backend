@@ -3,6 +3,7 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 from users.dynamic_permissions import DynamicModulePermission
+from users.audit_utils import audit_log
 from tenants.utils import get_request_tenant
 from django.utils import timezone
 from django.db.models import Q, Count, Sum, F
@@ -33,8 +34,18 @@ class VehicleViewSet(viewsets.ModelViewSet):
         return Vehicle.objects.filter(tenant=tenant).select_related('tenant')
 
     def perform_create(self, serializer):
-        serializer.save(tenant=get_request_tenant(self.request.user))
-    
+        vehicle = serializer.save(tenant=get_request_tenant(self.request.user))
+        audit_log(self.request, 'create', 'hardware', f'Created Vehicle: {vehicle.vehicle_number}')
+
+    def perform_update(self, serializer):
+        vehicle = serializer.save()
+        audit_log(self.request, 'update', 'hardware', f'Updated Vehicle: {vehicle.vehicle_number}')
+
+    def perform_destroy(self, instance):
+        label = instance.vehicle_number
+        instance.delete()
+        audit_log(self.request, 'delete', 'hardware', f'Deleted Vehicle: {label}')
+
     @action(detail=False, methods=['get'])
     def available(self, request):
         """Get list of available vehicles"""
@@ -93,7 +104,17 @@ class DeliveryViewSet(viewsets.ModelViewSet):
         return DeliveryListSerializer
     
     def perform_create(self, serializer):
-        serializer.save(tenant=get_request_tenant(self.request.user), created_by=self.request.user)
+        delivery = serializer.save(tenant=get_request_tenant(self.request.user), created_by=self.request.user)
+        audit_log(self.request, 'create', 'hardware', f'Created Delivery: {delivery.delivery_number}')
+
+    def perform_update(self, serializer):
+        delivery = serializer.save()
+        audit_log(self.request, 'update', 'hardware', f'Updated Delivery: {delivery.delivery_number}')
+
+    def perform_destroy(self, instance):
+        label = instance.delivery_number
+        instance.delete()
+        audit_log(self.request, 'delete', 'hardware', f'Deleted Delivery: {label}')
 
     @action(detail=True, methods=['post'])
     def update_status(self, request, pk=None):
@@ -353,7 +374,17 @@ class RentalViewSet(viewsets.ModelViewSet):
         return queryset
 
     def perform_create(self, serializer):
-        serializer.save(tenant=get_request_tenant(self.request.user), created_by=self.request.user)
+        rental = serializer.save(tenant=get_request_tenant(self.request.user), created_by=self.request.user)
+        audit_log(self.request, 'create', 'hardware', f'Created Rental: {rental}')
+
+    def perform_update(self, serializer):
+        rental = serializer.save()
+        audit_log(self.request, 'update', 'hardware', f'Updated Rental: {rental}')
+
+    def perform_destroy(self, instance):
+        label = str(instance)
+        instance.delete()
+        audit_log(self.request, 'delete', 'hardware', f'Deleted Rental: {label}')
 
     @action(detail=False, methods=['get'])
     def overdue(self, request):

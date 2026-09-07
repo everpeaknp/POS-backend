@@ -82,6 +82,7 @@ INSTALLED_APPS = [
     'hr',
     'pos',
     'finance',  # Personal Finance module
+    'helpdesk',
 ]
 
 MIDDLEWARE = [

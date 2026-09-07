@@ -12,6 +12,7 @@ from django.utils import timezone
 from datetime import timedelta, datetime as dt
 from decimal import Decimal
 from users.dynamic_permissions import DynamicModulePermission
+from users.audit_utils import audit_log
 
 from .models import (
     Customer, SalesOrder, SalesOrderLine, Quotation, Invoice, CreditNote,
@@ -53,8 +54,18 @@ class CustomerViewSet(viewsets.ModelViewSet):
     
     def perform_create(self, serializer):
         """Set tenant when creating customer"""
-        serializer.save(tenant=self.request.user.tenant)
-    
+        customer = serializer.save(tenant=self.request.user.tenant)
+        audit_log(self.request, 'create', 'customers', f'Created Customer: {customer.name}')
+
+    def perform_update(self, serializer):
+        customer = serializer.save()
+        audit_log(self.request, 'update', 'customers', f'Updated Customer: {customer.name}')
+
+    def perform_destroy(self, instance):
+        label = instance.name
+        instance.delete()
+        audit_log(self.request, 'delete', 'customers', f'Deleted Customer: {label}')
+
     @extend_schema(
         tags=['Sales - Customers'],
         summary='Get customer ledger',
@@ -339,9 +350,9 @@ class SalesOrderViewSet(viewsets.ModelViewSet):
                     else:
                         order_number = "SO-0001"
                     
-                    serializer.save(
+                    order = serializer.save(
                         tenant=get_request_tenant(self.request.user),
-                        created_by=self.request.user, 
+                        created_by=self.request.user,
                         order_number=order_number
                     )
                     break  # Success, exit loop
@@ -349,7 +360,17 @@ class SalesOrderViewSet(viewsets.ModelViewSet):
                 if attempt == max_retries - 1:
                     raise
                 continue
-    
+        audit_log(self.request, 'create', 'sales', f'Created SalesOrder: {order.order_number}')
+
+    def perform_update(self, serializer):
+        order = serializer.save()
+        audit_log(self.request, 'update', 'sales', f'Updated SalesOrder: {order.order_number}')
+
+    def perform_destroy(self, instance):
+        label = instance.order_number
+        instance.delete()
+        audit_log(self.request, 'delete', 'sales', f'Deleted SalesOrder: {label}')
+
     @extend_schema(
         description="Update sales order status",
         tags=["Sales - Orders"],
@@ -715,8 +736,8 @@ class QuotationViewSet(viewsets.ModelViewSet):
                             continue
                     
                     quotation_number = f"QT-{str(max_num + 1).zfill(4)}"
-                    
-                    serializer.save(
+
+                    quotation = serializer.save(
                         created_by=self.request.user,
                         tenant=self.request.user.tenant,
                         quotation_number=quotation_number
@@ -728,8 +749,18 @@ class QuotationViewSet(viewsets.ModelViewSet):
                     raise
                 # Retry with a new number
                 continue
+        audit_log(self.request, 'create', 'sales', f'Created Quotation: {quotation.quotation_number}')
 
-    
+    def perform_update(self, serializer):
+        quotation = serializer.save()
+        audit_log(self.request, 'update', 'sales', f'Updated Quotation: {quotation.quotation_number}')
+
+    def perform_destroy(self, instance):
+        label = instance.quotation_number
+        instance.delete()
+        audit_log(self.request, 'delete', 'sales', f'Deleted Quotation: {label}')
+
+
     @extend_schema(
         description="Convert quotation to sales order",
         tags=["Sales - Quotations"],
@@ -834,6 +865,7 @@ class InvoiceViewSet(viewsets.ModelViewSet):
         if not tenant:
             raise ValidationError({'detail': 'No tenant in context'})
 
+        invoice = None
         # Auto-generate invoice number if not provided
         if 'invoice_number' not in serializer.validated_data or not serializer.validated_data.get('invoice_number'):
             max_retries = 10
@@ -870,8 +902,8 @@ class InvoiceViewSet(viewsets.ModelViewSet):
                             invoice_number = f"INV-{str(max_num + 2).zfill(4)}"
                         
                         last_attempt_number = invoice_number
-                        
-                        serializer.save(
+
+                        invoice = serializer.save(
                             tenant=self.request.user.tenant,
                             created_by=self.request.user,
                             invoice_number=invoice_number
@@ -891,9 +923,19 @@ class InvoiceViewSet(viewsets.ModelViewSet):
                         # Different integrity error, don't retry
                         raise
         else:
-            serializer.save(tenant=self.request.user.tenant, created_by=self.request.user)
+            invoice = serializer.save(tenant=self.request.user.tenant, created_by=self.request.user)
 
-    
+        audit_log(self.request, 'create', 'sales', f'Created Invoice: {invoice.invoice_number}')
+
+    def perform_update(self, serializer):
+        invoice = serializer.save()
+        audit_log(self.request, 'update', 'sales', f'Updated Invoice: {invoice.invoice_number}')
+
+    def perform_destroy(self, instance):
+        label = instance.invoice_number
+        instance.delete()
+        audit_log(self.request, 'delete', 'sales', f'Deleted Invoice: {label}')
+
     @extend_schema(
         description="Record payment for an invoice",
         tags=["Sales - Invoices"],
@@ -995,7 +1037,8 @@ class CreditNoteViewSet(viewsets.ModelViewSet):
     def perform_create(self, serializer):
         from django.db import transaction
         from django.db.utils import IntegrityError
-        
+
+        credit_note = None
         # Auto-generate credit note number if not provided
         if 'credit_note_number' not in serializer.validated_data or not serializer.validated_data.get('credit_note_number'):
             max_retries = 5
@@ -1015,7 +1058,7 @@ class CreditNoteViewSet(viewsets.ModelViewSet):
                         else:
                             credit_note_number = "CN-0001"
                         
-                        serializer.save(
+                        credit_note = serializer.save(
                             tenant=self.request.user.tenant,
                             created_by=self.request.user,
                             credit_note_number=credit_note_number
@@ -1026,7 +1069,13 @@ class CreditNoteViewSet(viewsets.ModelViewSet):
                         raise
                     continue
         else:
-            serializer.save(tenant=self.request.user.tenant, created_by=self.request.user)
+            credit_note = serializer.save(tenant=self.request.user.tenant, created_by=self.request.user)
+
+        audit_log(self.request, 'create', 'sales', f'Created CreditNote: {credit_note.credit_note_number}')
+
+    def perform_update(self, serializer):
+        credit_note = serializer.save()
+        audit_log(self.request, 'update', 'sales', f'Updated CreditNote: {credit_note.credit_note_number}')
 
     def destroy(self, request, *args, **kwargs):
         credit_note = self.get_object()
@@ -1035,7 +1084,10 @@ class CreditNoteViewSet(viewsets.ModelViewSet):
                 {'error': 'Cannot delete an issued credit note'},
                 status=status.HTTP_400_BAD_REQUEST,
             )
-        return super().destroy(request, *args, **kwargs)
+        label = credit_note.credit_note_number
+        response = super().destroy(request, *args, **kwargs)
+        audit_log(self.request, 'delete', 'sales', f'Deleted CreditNote: {label}')
+        return response
 
 
 
@@ -1117,10 +1169,11 @@ class PaymentReceivedViewSet(viewsets.ModelViewSet):
         for attempt in range(max_retries):
             try:
                 with transaction.atomic():
-                    serializer.save(
+                    payment = serializer.save(
                         tenant=tenant,
                         received_by=self.request.user,
                     )
+                audit_log(self.request, 'create', 'sales', f'Created PaymentReceived: {getattr(payment, "payment_number", payment.pk)}')
                 return
             except IntegrityError:
                 if attempt == max_retries - 1:

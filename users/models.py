@@ -180,6 +180,14 @@ class AuditLog(models.Model):
         ('logout', 'Logout'),
         ('export', 'Export'),
         ('import', 'Import'),
+        ('post', 'Post'),
+        ('reverse', 'Reverse'),
+        ('copy', 'Copy'),
+        ('close', 'Close'),
+        ('approve', 'Approve'),
+        ('reject', 'Reject'),
+        ('refund', 'Refund'),
+        ('adjust', 'Adjust'),
     ]
     
     # Who performed the action
