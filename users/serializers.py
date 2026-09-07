@@ -518,3 +518,22 @@ class AppearancePreferencesSerializer(serializers.Serializer):
         allow_null=True,
         max_length=7
     )
+    sidebar_color = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        allow_null=True,
+        max_length=7
+    )
+    navbar_color = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        allow_null=True,
+        max_length=7
+    )
+    border_radius = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        allow_null=True,
+        max_length=20
+    )
+    high_contrast = serializers.BooleanField(default=False)

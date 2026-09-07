@@ -15,10 +15,25 @@ class TenantViewSet(viewsets.ModelViewSet):
     """
     CORE_MODULES = {'accounting', 'settings', 'dashboard'}
 
+    # Extra modules that are always on (cannot be disabled) for a given
+    # account type, on top of CORE_MODULES — the dedicated dashboard for that
+    # workplace type is built assuming these are always present.
+    ACCOUNT_TYPE_REQUIRED_MODULES = {
+        'construction': {'construction'},
+        'hardware': {'hardware', 'customers'},
+        'retail': {'customers', 'pos'},
+        'kirana': {'customers', 'pos'},
+    }
+
     def _user_is_tenant_admin(self, user, tenant):
         from .utils import is_tenant_admin
 
         return is_tenant_admin(user, tenant)
+
+    def _locked_modules_for_tenant(self, tenant):
+        locked = set(self.CORE_MODULES)
+        locked |= self.ACCOUNT_TYPE_REQUIRED_MODULES.get(tenant.account_type, set())
+        return locked
 
     def _validate_module_name(self, module_name):
         from core_backend.platform_constants import AVAILABLE_MODULES
@@ -324,7 +339,7 @@ class TenantViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST
             )
 
-        if module_name in self.CORE_MODULES:
+        if module_name in self._locked_modules_for_tenant(tenant):
             return Response(
                 {'error': f'{module_name.title()} is a core module and cannot be disabled'},
                 status=status.HTTP_400_BAD_REQUEST,

@@ -989,6 +989,10 @@ def get_appearance_preferences(request):
         'smooth_animations': preferences.smooth_animations,
         'navbar_position': preferences.navbar_position,
         'accent_color': preferences.accent_color,
+        'sidebar_color': preferences.sidebar_color,
+        'navbar_color': preferences.navbar_color,
+        'border_radius': preferences.border_radius,
+        'high_contrast': preferences.high_contrast,
     })
 
     return Response(serializer.data)
@@ -1027,6 +1031,10 @@ def update_appearance_preferences(request):
         'smooth_animations': preferences.smooth_animations,
         'navbar_position': preferences.navbar_position,
         'accent_color': preferences.accent_color,
+        'sidebar_color': preferences.sidebar_color,
+        'navbar_color': preferences.navbar_color,
+        'border_radius': preferences.border_radius,
+        'high_contrast': preferences.high_contrast,
     })
 
     return Response(response_serializer.data)

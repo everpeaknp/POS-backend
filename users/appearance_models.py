@@ -111,7 +111,37 @@ class AppearancePreferences(models.Model):
         null=True,
         help_text='Custom accent color (hex code, e.g., #3B82F6)'
     )
-    
+
+    # Sidebar background color (optional, hex color code)
+    sidebar_color = models.CharField(
+        max_length=7,
+        blank=True,
+        null=True,
+        help_text='Custom sidebar background color (hex code, e.g., #1E2A3B)'
+    )
+
+    # Left/top navbar (icon rail) background color (optional, hex color code)
+    navbar_color = models.CharField(
+        max_length=7,
+        blank=True,
+        null=True,
+        help_text='Custom navbar/icon-rail background color (hex code, e.g., #1E2A3B)'
+    )
+
+    # Global corner radius (optional, raw CSS length e.g. "0.625rem" or "9999px")
+    border_radius = models.CharField(
+        max_length=20,
+        blank=True,
+        null=True,
+        help_text='Custom global border radius (CSS length, e.g. 0.625rem)'
+    )
+
+    # High contrast mode override
+    high_contrast = models.BooleanField(
+        default=False,
+        help_text='Boost border/text contrast for low-vision accessibility'
+    )
+
     # Metadata
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)

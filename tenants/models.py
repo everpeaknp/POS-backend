@@ -138,8 +138,19 @@ class Tenant(models.Model):
             self.slug = slug
         super().save(*args, **kwargs)
     
+    # Extra modules that are always on for a given account type, regardless
+    # of active_modules — mirrors TenantViewSet.ACCOUNT_TYPE_REQUIRED_MODULES.
+    ACCOUNT_TYPE_REQUIRED_MODULES = {
+        'construction': {'construction'},
+        'hardware': {'hardware', 'customers'},
+        'retail': {'customers', 'pos'},
+        'kirana': {'customers', 'pos'},
+    }
+
     def has_module(self, module_name):
         """Check if tenant has access to a specific module"""
+        if module_name in self.ACCOUNT_TYPE_REQUIRED_MODULES.get(self.account_type, ()):
+            return True
         return module_name in self.active_modules
     
     def activate_module(self, module_name):

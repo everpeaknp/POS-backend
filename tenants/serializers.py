@@ -30,6 +30,16 @@ class TenantSerializer(serializers.ModelSerializer):
             'user_role', 'allowed_modules', 'user_limits',
         ]
     
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        required = Tenant.ACCOUNT_TYPE_REQUIRED_MODULES.get(instance.account_type)
+        if required:
+            modules = data.get('active_modules') or []
+            missing = [m for m in required if m not in modules]
+            if missing:
+                data['active_modules'] = [*modules, *missing]
+        return data
+
     def get_user_role(self, obj):
         """Get the current user's role in this specific tenant"""
         request = self.context.get('request')
@@ -160,7 +170,7 @@ class TenantCreateSerializer(serializers.ModelSerializer):
                 data['active_modules'] = ['settings', 'personal_finance']
             elif business_type in ('kirana', 'retail'):
                 # Default kirana/retail modules
-                data['active_modules'] = ['sales', 'inventory', 'purchase', 'reports', 'settings', 'dashboard', 'accounting', 'customers', 'hr']
+                data['active_modules'] = ['sales', 'inventory', 'purchase', 'reports', 'settings', 'dashboard', 'accounting', 'pos', 'customers', 'hr']
             else:
                 data['active_modules'] = normalize_active_modules_for_plan(new_org_plan_code, None)
 
