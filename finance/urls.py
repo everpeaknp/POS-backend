@@ -14,7 +14,8 @@ urlpatterns = [
     # Parties/Lenders
     path('parties/', PartyLenderViewSet.as_view({'get': 'list', 'post': 'create'}), name='party-list'),
     path('parties/<int:pk>/', PartyLenderViewSet.as_view({'get': 'retrieve', 'put': 'update', 'patch': 'partial_update', 'delete': 'destroy'}), name='party-detail'),
-    
+    path('parties/<int:pk>/regenerate-share-link/', PartyLenderViewSet.as_view({'post': 'regenerate_share_link'}), name='party-regenerate-share-link'),
+
     # Party Transactions (In/Out)
     path('party-transactions/', PartyTransactionViewSet.as_view({'get': 'list', 'post': 'create'}), name='party-transaction-list'),
     path('party-transactions/<int:pk>/', PartyTransactionViewSet.as_view({'get': 'retrieve', 'put': 'update', 'patch': 'partial_update', 'delete': 'destroy'}), name='party-transaction-detail'),

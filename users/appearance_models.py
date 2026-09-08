@@ -100,23 +100,25 @@ class AppearancePreferences(models.Model):
     navbar_position = models.CharField(
         max_length=10,
         choices=NAVBAR_POSITION_CHOICES,
-        default='left',
+        default='top',
         help_text='App bar position (left or top)'
     )
     
-    # Accent color (optional, hex color code)
+    # Accent color (optional, hex color code) — defaults to Violet for new users
     accent_color = models.CharField(
         max_length=7,
         blank=True,
         null=True,
+        default='#8B5CF6',
         help_text='Custom accent color (hex code, e.g., #3B82F6)'
     )
 
-    # Sidebar background color (optional, hex color code)
+    # Sidebar background color (optional, hex color code) — defaults to Midnight for new users
     sidebar_color = models.CharField(
         max_length=7,
         blank=True,
         null=True,
+        default='#0F172A',
         help_text='Custom sidebar background color (hex code, e.g., #1E2A3B)'
     )
 
@@ -128,11 +130,12 @@ class AppearancePreferences(models.Model):
         help_text='Custom navbar/icon-rail background color (hex code, e.g., #1E2A3B)'
     )
 
-    # Global corner radius (optional, raw CSS length e.g. "0.625rem" or "9999px")
+    # Global corner radius (optional, raw CSS length e.g. "0.625rem" or "9999px") — defaults to Large for new users
     border_radius = models.CharField(
         max_length=20,
         blank=True,
         null=True,
+        default='1rem',
         help_text='Custom global border radius (CSS length, e.g. 0.625rem)'
     )
 

@@ -1030,7 +1030,7 @@ def get_appearance_preferences(request):
             'date_calendar_system': 'AD',
             'compact_mode': False,
             'smooth_animations': True,
-            'navbar_position': 'left',
+            'navbar_position': 'top',
         }
     )
     

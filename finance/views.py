@@ -250,6 +250,15 @@ class PartyLenderViewSet(viewsets.ModelViewSet):
         tenant = self.request.user.get_tenant()
         serializer.save(tenant=tenant)
 
+    @action(detail=True, methods=['post'], url_path='regenerate-share-link')
+    def regenerate_share_link(self, request, pk=None):
+        """Issue a fresh share_token, invalidating any previously shared link for this party."""
+        import uuid
+        party = self.get_object()
+        party.share_token = uuid.uuid4().hex[:32]
+        party.save(update_fields=['share_token', 'updated_at'])
+        return Response(PartyLenderSerializer(party, context={'request': request}).data)
+
 
 @extend_schema_view(
     list=extend_schema(
@@ -761,102 +770,103 @@ from rest_framework.permissions import AllowAny
 from django.shortcuts import get_object_or_404
 
 class PublicPartyTransactionShareView(APIView):
-    """Public endpoint to view shared party transactions without authentication"""
+    """Public endpoint to view a single shared transaction without authentication"""
     permission_classes = [AllowAny]
-    
+
     def get(self, request, token):
-        """Retrieve transaction/ledger details by share token"""
-        try:
-            share = PartyTransactionShare.objects.get(token=token, is_active=True)
-            
-            # Check if share has expired
-            if share.expires_at and share.expires_at < timezone.now():
-                return Response(
-                    {'error': 'This share link has expired'},
-                    status=HTTP_404_NOT_FOUND
-                )
-            
-            if share.share_type == 'transaction' and share.transaction:
-                serializer = PartyTransactionSerializer(
-                    share.transaction,
-                    context={'request': request}
-                )
-                return Response(serializer.data)
-            elif share.share_type == 'party_ledger' and share.party:
-                serializer = PartyLenderSerializer(
-                    share.party,
-                    context={'request': request}
-                )
-                return Response(serializer.data)
-            else:
-                return Response(
-                    {'error': 'Invalid share data'},
-                    status=HTTP_404_NOT_FOUND
-                )
-        except PartyTransactionShare.DoesNotExist:
-            return Response(
-                {'error': 'Share not found'},
-                status=HTTP_404_NOT_FOUND
+        """Retrieve a transaction by its own share_token."""
+        from django.db import connection
+        from tenants.middleware import set_current_tenant
+        from tenants.models import Tenant
+
+        # Same problem as PublicPartyLedgerShareView: no authenticated
+        # tenant means TenantManager would filter every query to nothing.
+        # Resolve the owning tenant with a raw lookup first, then set it as
+        # current so the normal ORM query below resolves correctly.
+        with connection.cursor() as cursor:
+            cursor.execute(
+                'SELECT tenant_id FROM finance_party_transactions WHERE share_token = %s',
+                [token]
             )
+            row = cursor.fetchone()
+
+        if not row:
+            return Response({'error': 'Share not found'}, status=HTTP_404_NOT_FOUND)
+
+        try:
+            tenant = Tenant.objects.get(id=row[0])
+        except Tenant.DoesNotExist:
+            return Response({'error': 'Share not found'}, status=HTTP_404_NOT_FOUND)
+
+        set_current_tenant(tenant)
+
+        try:
+            transaction = PartyTransaction.objects.select_related('party').get(share_token=token)
+        except PartyTransaction.DoesNotExist:
+            return Response({'error': 'Share not found'}, status=HTTP_404_NOT_FOUND)
+
+        data = PartyTransactionSerializer(transaction, context={'request': request}).data
+        data['tenant'] = {
+            'name': tenant.name,
+            'workspace_name': tenant.workspace_name,
+            'logo_url': request.build_absolute_uri(tenant.logo.url) if getattr(tenant, 'logo', None) else None,
+        }
+        return Response(data)
 
 
 class PublicPartyLedgerShareView(APIView):
     """Public endpoint to view party ledger by share token without authentication"""
     permission_classes = [AllowAny]
-    
+
     def get(self, request, token):
-        """Retrieve party ledger details by share token"""
-        import logging
-        logger = logging.getLogger(__name__)
-        logger.error(f"PublicPartyLedgerShareView.get() called with token: {token}")
-        
-        try:
-            # Bypass tenant filtering for public share - use raw database query
-            from django.db import connection
-            from django.db.models import Model
-            
-            with connection.cursor() as cursor:
-                cursor.execute(
-                    'SELECT * FROM finance_parties_lenders WHERE share_token = %s',
-                    [token]
-                )
-                columns = [col[0] for col in cursor.description]
-                row = cursor.fetchone()
-                logger.error(f"  Raw query result: {row is not None}")
-                
-                if not row:
-                    logger.error(f"  Returning 404 - party not found")
-                    return Response(
-                        {'error': 'Party ledger not found'},
-                        status=HTTP_404_NOT_FOUND
-                    )
-                
-                # Map row to PartyLender instance
-                party_id = row[columns.index('id')]
-                party_data = dict(zip(columns, row))
-                party = PartyLender(**party_data)
-                logger.error(f"  Created PartyLender instance: {party.name}")
-            
-            # Get transactions bypassing tenant filter
-            transactions_qs = PartyTransaction.objects.all().model.objects.filter(party_id=party_id).order_by('-date', '-created_at')
-            logger.error(f"  Found {transactions_qs.count()} transactions")
-            
-            response_data = {
-                'party': PartyLenderSerializer(party, context={'request': request}).data,
-                'transactions': PartyTransactionSerializer(
-                    transactions_qs,
-                    many=True,
-                    context={'request': request}
-                ).data
-            }
-            return Response(response_data)
-        except Exception as e:
-            import logging
-            logging.error(f"Error in PublicPartyLedgerShareView: {e}")
-            return Response(
-                {'error': 'Party ledger not found'},
-                status=HTTP_404_NOT_FOUND
+        """Retrieve party ledger details by share token."""
+        from django.db import connection
+        from tenants.middleware import set_current_tenant
+        from tenants.models import Tenant
+
+        # The requester has no authenticated tenant, so TenantManager would
+        # otherwise filter every query down to nothing (see TenantManager.
+        # get_queryset). Look up just the owning tenant with a raw query
+        # first (bypassing that filter), then set it as the current tenant
+        # for the rest of the request so the normal ORM queries below —
+        # for both the party and its transactions — resolve correctly.
+        with connection.cursor() as cursor:
+            cursor.execute(
+                'SELECT tenant_id FROM finance_parties_lenders WHERE share_token = %s',
+                [token]
             )
+            row = cursor.fetchone()
+
+        if not row:
+            return Response({'error': 'Party ledger not found'}, status=HTTP_404_NOT_FOUND)
+
+        try:
+            tenant = Tenant.objects.get(id=row[0])
+        except Tenant.DoesNotExist:
+            return Response({'error': 'Party ledger not found'}, status=HTTP_404_NOT_FOUND)
+
+        set_current_tenant(tenant)
+
+        try:
+            party = PartyLender.objects.get(share_token=token)
+        except PartyLender.DoesNotExist:
+            return Response({'error': 'Party ledger not found'}, status=HTTP_404_NOT_FOUND)
+
+        transactions_qs = PartyTransaction.objects.filter(party=party).order_by('-date', '-created_at')
+
+        return Response({
+            'tenant': {
+                'name': tenant.name,
+                'workspace_name': tenant.workspace_name,
+                'logo_url': request.build_absolute_uri(tenant.logo.url) if getattr(tenant, 'logo', None) else None,
+            },
+            'party': PartyLenderSerializer(party, context={'request': request}).data,
+            'transactions': PartyTransactionSerializer(
+                transactions_qs,
+                many=True,
+                context={'request': request}
+            ).data,
+        })
 
 
 @extend_schema_view(
