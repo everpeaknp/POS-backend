@@ -1,6 +1,107 @@
 from django.db import models
 
 
+class DefaultAppearanceSettings(models.Model):
+    """
+    Site-wide default appearance settings applied to newly registered users.
+    Singleton model — only one row is ever expected to exist (pk=1).
+    Configured by platform admins via /admin.
+    """
+
+    THEME_CHOICES = [
+        ('light', 'Light'),
+        ('dark', 'Dark'),
+        ('system', 'System'),
+    ]
+
+    NAVBAR_POSITION_CHOICES = [
+        ('left', 'Left'),
+        ('top', 'Top'),
+    ]
+
+    theme = models.CharField(
+        max_length=10,
+        choices=THEME_CHOICES,
+        default='light',
+        help_text='Default interface theme for new users'
+    )
+
+    navbar_position = models.CharField(
+        max_length=10,
+        choices=NAVBAR_POSITION_CHOICES,
+        default='top',
+        help_text='Default app bar position for new users (left or top)'
+    )
+
+    accent_color = models.CharField(
+        max_length=7,
+        blank=True,
+        null=True,
+        default='#8B5CF6',
+        help_text='Default accent color for new users (hex code, e.g., #3B82F6)'
+    )
+
+    sidebar_color = models.CharField(
+        max_length=7,
+        blank=True,
+        null=True,
+        default='#0F172A',
+        help_text='Default sidebar background color for new users (hex code)'
+    )
+
+    navbar_color = models.CharField(
+        max_length=7,
+        blank=True,
+        null=True,
+        help_text='Default navbar/icon-rail background color for new users (hex code)'
+    )
+
+    border_radius = models.CharField(
+        max_length=20,
+        blank=True,
+        null=True,
+        default='1rem',
+        help_text='Default global border radius for new users (CSS length, e.g. 0.625rem)'
+    )
+
+    compact_mode = models.BooleanField(
+        default=False,
+        help_text='Default compact display mode for new users'
+    )
+
+    smooth_animations = models.BooleanField(
+        default=True,
+        help_text='Default smooth animations setting for new users'
+    )
+
+    high_contrast = models.BooleanField(
+        default=False,
+        help_text='Default high contrast mode for new users'
+    )
+
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'default_appearance_settings'
+        verbose_name = 'Default Appearance Settings'
+        verbose_name_plural = 'Default Appearance Settings'
+
+    def save(self, *args, **kwargs):
+        self.pk = 1
+        super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        pass
+
+    @classmethod
+    def get_solo(cls):
+        obj, _ = cls.objects.get_or_create(pk=1)
+        return obj
+
+    def __str__(self):
+        return "Default Appearance Settings"
+
+
 class GoogleOAuthSettings(models.Model):
     """Singleton platform settings for Google sign-in on login and signup."""
 

@@ -1,10 +1,18 @@
 /**
  * KHATA Platform Admin — sidebar accordion (matches dashboard sidebar behavior).
+ *
+ * Loaded once from <head> (see base.html) so Turbo Drive never re-executes
+ * it across navigations — only the `turbo:load` listener below re-runs
+ * init against the fresh #jazzy-navigation Turbo just swapped in. Because
+ * of that, jQuery must be looked up lazily inside initKhataSidebar rather
+ * than captured as a closure argument at parse time: this script's own
+ * <script> tag loads in <head>, before jQuery's <script> tag (still in
+ * <body>) has run.
  */
-(function ($) {
+(function () {
   'use strict';
 
-  function injectAnalyticsLink() {
+  function injectAnalyticsLink($) {
     // The dashboard now lives at /admin/ itself, so this just links home.
     var $nav = $('#jazzy-navigation');
     if (!$nav.length || $nav.find('a[href="/admin/"]').length) return;
@@ -23,10 +31,13 @@
   }
 
   function initKhataSidebar() {
+    var $ = window.jQuery;
+    if (!$) return;
+
     var $nav = $('#jazzy-navigation');
     if (!$nav.length) return;
 
-    injectAnalyticsLink();
+    injectAnalyticsLink($);
 
     $nav.attr('data-accordion', 'true');
 
@@ -69,5 +80,7 @@
     );
   }
 
-  $(initKhataSidebar);
-})(jQuery);
+  // `turbo:load` fires after the initial page load too, not just
+  // subsequent visits, so this is the only listener needed.
+  document.addEventListener('turbo:load', initKhataSidebar);
+})();

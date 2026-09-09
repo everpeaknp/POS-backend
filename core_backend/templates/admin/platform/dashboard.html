@@ -4,6 +4,7 @@
 {% block content_title %}{{ title }}{% endblock %}
 
 {% block extrastyle %}
+{{ block.super }}
 <style>
   .khata-analytics { --green: #22c55e; --green-dim: #16a34a; --slate: #1e2a3b; --muted: #64748b; }
   .khata-analytics .page-header { margin-bottom: 1.5rem; }

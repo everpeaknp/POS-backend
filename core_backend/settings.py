@@ -925,15 +925,16 @@ JAZZMIN_SETTINGS = {
     # Top menu
     "topmenu_links": [
         {"name": "Dashboard", "url": "admin:index", "permissions": ["auth.view_user"]},
-        {"name": "Mail Center", "url": "/admin/mail/dashboard/", "permissions": ["auth.view_user"]},
-        {"name": "Customer App", "url": "http://localhost:3000", "new_window": True},
-        {"name": "API Docs", "url": "/api/docs/", "new_window": True},
     ],
-    
-    # User menu
+
+    # User menu — utility links live here instead of cluttering the top
+    # navbar; only "Dashboard" stays up top since it's core navigation.
     "usermenu_links": [
         {"model": "users.user"},
-        {"name": "API Schema", "url": "/api/schema/", "new_window": True},
+        {"name": "Mail Center", "url": "/admin/mail/dashboard/", "icon": "fas fa-envelope", "permissions": ["auth.view_user"]},
+        {"name": "Customer App", "url": "http://localhost:3000", "icon": "fas fa-external-link-alt", "new_window": True},
+        {"name": "API Docs", "url": "/api/docs/", "icon": "fas fa-code", "new_window": True},
+        {"name": "API Schema", "url": "/api/schema/", "icon": "fas fa-file-code", "new_window": True},
     ],
     
     # Side menu — platform apps only (business apps unregistered in platform_admin.py)
@@ -1001,6 +1002,7 @@ JAZZMIN_SETTINGS = {
         "users.User": "fas fa-user-tie",
         "users.AuditLog": "fas fa-clipboard-list",
         "users.RolePermission": "fas fa-key",
+        "users.DefaultAppearanceSettings": "fas fa-palette",
         "tenants.Tenant": "fas fa-building",
         "tenants.OrganizationInvitation": "fas fa-envelope-open-text",
         "tenants.UserTenantMembership": "fas fa-user-plus",
@@ -1023,8 +1025,14 @@ JAZZMIN_SETTINGS = {
     
     # UI Tweaks
     "related_modal_active": False,
-    "custom_css": "admin/css/adminlte4_fixes.css",
-    "custom_js": "admin/js/admin_sidebar.js",
+    # custom_css / custom_js are NOT set here — Jazzmin renders those as plain
+    # <link>/<script> tags with no cache-busting and no data-turbo-track, so
+    # under Turbo Drive (see core_backend/templates/admin/base.html) an edit
+    # to either file would silently never reach an already-open browser tab
+    # (Turbo reuses <head> elements with an unchanged src/href across soft
+    # navigations). They're loaded from base.html's extrastyle/extrajs
+    # blocks instead, with data-turbo-track="reload" so Turbo detects the
+    # change and forces a real reload.
     "use_google_fonts_cdn": True,
     "show_ui_builder": False,
     

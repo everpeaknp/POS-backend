@@ -1,7 +1,13 @@
 from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin as BaseUserAdmin
+from django.contrib.auth.models import Group
 from .models import User, AuditLog
 from .permission_models import RolePermission
+
+# Groups (django.contrib.auth) are unused — all platform staff are
+# superusers, which bypass Django's permission system entirely, and
+# tenant-level roles/permissions are handled by RolePermission instead.
+admin.site.unregister(Group)
 
 
 @admin.register(RolePermission)
@@ -10,6 +16,7 @@ class RolePermissionAdmin(admin.ModelAdmin):
     list_filter = ['tenant', 'role', 'module', 'action', 'allowed']
     search_fields = ['tenant__name']
     readonly_fields = ['tenant', 'role', 'module', 'action', 'allowed']
+    ordering = ['tenant', 'role', 'module', 'action']
 
     def has_add_permission(self, request):
         return False

@@ -1018,19 +1018,26 @@ def update_permissions(request):
 def get_appearance_preferences(request):
     """Get user appearance preferences"""
     from .appearance_models import AppearancePreferences
+    from setting.models import DefaultAppearanceSettings
     from .serializers import AppearancePreferencesSerializer
-    
-    # Get or create preferences
+
+    # Get or create preferences, seeded from the admin-configured site defaults
+    site_defaults = DefaultAppearanceSettings.get_solo()
     preferences, created = AppearancePreferences.objects.get_or_create(
         user=request.user,
         defaults={
-            'theme': 'light',
+            'theme': site_defaults.theme,
             'language': 'en-US',
             'timezone': 'UTC',
             'date_calendar_system': 'AD',
-            'compact_mode': False,
-            'smooth_animations': True,
-            'navbar_position': 'top',
+            'compact_mode': site_defaults.compact_mode,
+            'smooth_animations': site_defaults.smooth_animations,
+            'navbar_position': site_defaults.navbar_position,
+            'accent_color': site_defaults.accent_color,
+            'sidebar_color': site_defaults.sidebar_color,
+            'navbar_color': site_defaults.navbar_color,
+            'border_radius': site_defaults.border_radius,
+            'high_contrast': site_defaults.high_contrast,
         }
     )
     

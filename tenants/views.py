@@ -466,6 +466,20 @@ class OrganizationInvitationViewSet(viewsets.ModelViewSet):
             metadata={'invitation_id': invitation.id, 'role': invitation.role},
         )
 
+        # Send the actual invite email. A delivery failure shouldn't fail
+        # the whole request — the invitation record is already saved and
+        # can still be resent later (admin action, or once this is exposed
+        # in the tenant UI).
+        import logging
+        from mail.services import dispatch_invitation_email
+
+        try:
+            dispatch_invitation_email(invitation)
+        except Exception:
+            logging.getLogger(__name__).exception(
+                'Failed to send invitation email for invitation %s', invitation.id
+            )
+
     @extend_schema(
         request=InvitationResponseSerializer,
         responses={200: OrganizationInvitationSerializer}

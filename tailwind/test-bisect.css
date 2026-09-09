@@ -1,0 +1,257 @@
+@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap');
+@import "tailwindcss";
+
+/* Content scanning — our own Django template overrides. Jazzmin's own
+   rendered markup (site-packages) is targeted via @apply on its existing
+   Bootstrap class names below instead, since we don't own that HTML. */
+@source "../../core_backend/templates";
+
+/* ============================================================================
+   Design tokens — ported 1:1 from frontend/app/globals.css so the admin
+   uses the exact same radius scale, accent green, and typeface as the
+   customer-facing dashboard.
+   ============================================================================ */
+@theme {
+  --font-sans: "Plus Jakarta Sans", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, monospace;
+
+  /* Base radius 0.625rem, same derivation as frontend/lib/theme.ts */
+  --radius-sm: 0.375rem;
+  --radius-md: 0.5rem;
+  --radius-lg: 0.625rem;
+  --radius-xl: 0.875rem;
+  --radius-2xl: 1.125rem;
+
+  /* Accent green — frontend's var(--color-accent-custom, #22C55E) default */
+  --color-accent-50: #f0fdf4;
+  --color-accent-100: #dcfce7;
+  --color-accent-200: #bbf7d0;
+  --color-accent-300: #86efac;
+  --color-accent-400: #4ade80;
+  --color-accent-500: #22c55e;
+  --color-accent-600: #16a34a;
+  --color-accent-700: #15803d;
+  --color-accent-800: #166534;
+  --color-accent-900: #14532d;
+
+  /* Sidebar navy — frontend's var(--sidebar-bg, #1E2A3B) default */
+  --color-sidebar: #1e2a3b;
+  --color-sidebar-border: rgb(255 255 255 / 0.12);
+  --color-sidebar-hover: rgb(255 255 255 / 0.1);
+  --color-sidebar-surface: rgb(255 255 255 / 0.06);
+  --color-sidebar-surface-strong: rgb(255 255 255 / 0.09);
+}
+
+@layer base {
+  body {
+    letter-spacing: -0.011em;
+  }
+
+  h1, h2, h3, h4, h5, h6 {
+    font-weight: 500;
+    letter-spacing: -0.02em;
+  }
+}
+
+/* ============================================================================
+   Component layer — targets Jazzmin's existing Bootstrap/AdminLTE class
+   names with @apply, so the compiled utility values (radius, colors,
+   spacing) drive the look without needing to rewrite Jazzmin's own
+   templates. This is the actual "port the frontend design system" layer.
+   ============================================================================ */
+@layer components {
+  /* ---- Global type + surface ---- */
+  body,
+  .app-header,
+  .app-sidebar,
+  .btn,
+  .form-control,
+  .form-select,
+  table,
+  .dropdown-menu {
+    font-family: var(--font-sans);
+  }
+
+  body {
+    @apply bg-slate-100;
+  }
+
+  /* ---- Sidebar ---- */
+  .app-sidebar,
+  .app-sidebar .sidebar-wrapper {
+    background: var(--color-sidebar) !important;
+  }
+
+  .app-sidebar .sidebar-brand .brand-link {
+    @apply px-5 py-5;
+    border-bottom: 1px solid var(--color-sidebar-border) !important;
+  }
+
+  .app-sidebar .brand-text {
+    @apply text-white font-medium text-[1.0625rem];
+  }
+
+  .app-sidebar .user-panel {
+    @apply px-1 pb-4;
+    border-bottom: 1px solid var(--color-sidebar-border);
+  }
+
+  .app-sidebar .user-panel .img-circle {
+    border: 2px solid rgb(34 197 94 / 0.4);
+  }
+
+  .app-sidebar .user-panel a {
+    @apply font-medium text-sm text-white/90;
+  }
+
+  #jazzy-navigation {
+    @apply px-3 py-3 space-y-0.5;
+  }
+
+  #jazzy-navigation > .nav-item > .nav-link {
+    @apply flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all;
+    color: rgb(255 255 255 / 0.6) !important;
+  }
+
+  #jazzy-navigation > .nav-item > .nav-link:hover {
+    background: var(--color-sidebar-hover) !important;
+    @apply text-white;
+  }
+
+  #jazzy-navigation > .nav-item > .nav-link.active {
+    background: var(--color-accent-500) !important;
+    @apply text-white shadow-[0_4px_10px_-2px_rgba(34,197,94,0.45)];
+  }
+
+  #jazzy-navigation > .nav-item.has-treeview.menu-open > .nav-link {
+    background: var(--color-sidebar-surface-strong) !important;
+    @apply text-white;
+  }
+
+  #jazzy-navigation .nav-treeview {
+    @apply ml-4 mt-0.5 mb-1 pl-3 space-y-0.5;
+    border-left: 1px solid var(--color-sidebar-border);
+  }
+
+  #jazzy-navigation .nav-treeview > .nav-item > .nav-link {
+    @apply rounded-md px-2.5 py-1.5 text-[13px];
+    color: rgb(255 255 255 / 0.55) !important;
+  }
+
+  #jazzy-navigation .nav-treeview > .nav-item > .nav-link:hover {
+    background: var(--color-sidebar-surface) !important;
+    @apply text-white;
+  }
+
+  #jazzy-navigation .nav-treeview > .nav-item > .nav-link.active {
+    background: var(--color-sidebar-surface) !important;
+    color: var(--color-accent-300) !important;
+    border-left: 2px solid var(--color-accent-500);
+  }
+
+  .app-sidebar .sidebar-wrapper::-webkit-scrollbar {
+    @apply w-1.5;
+  }
+
+  .app-sidebar .sidebar-wrapper::-webkit-scrollbar-thumb {
+    background: rgb(255 255 255 / 0.15);
+    @apply rounded-full;
+  }
+
+  /* ---- Top navbar ---- */
+  .app-header {
+    @apply bg-white border-b border-gray-100 shadow-none min-h-14 px-2;
+  }
+
+  .app-header .nav-link {
+    @apply rounded-lg text-slate-600 transition-colors;
+  }
+
+  .app-header .nav-link:hover {
+    @apply bg-slate-100 text-slate-900;
+  }
+
+  .app-header .brand-link .brand-text {
+    @apply text-slate-900 font-medium tracking-tight;
+  }
+
+  .app-header .input-group {
+    @apply rounded-full overflow-hidden bg-slate-100 transition-colors;
+  }
+
+  .app-header .input-group:focus-within {
+    @apply bg-white ring-2;
+    --tw-ring-color: rgb(34 197 94 / 0.25);
+  }
+
+  .app-header .form-control-navbar {
+    @apply border-none bg-transparent text-[0.8125rem];
+  }
+
+  .app-header .btn-navbar {
+    @apply border-none bg-transparent text-slate-500;
+  }
+
+  /* ---- Dropdown menus ---- */
+  .dropdown-menu {
+    @apply border-0 rounded-xl shadow-lg p-2 ring-1 ring-black/5;
+  }
+
+  .dropdown-item {
+    @apply rounded-lg text-sm px-3 py-2 transition-colors;
+  }
+
+  .dropdown-item:hover,
+  .dropdown-item:focus {
+    @apply bg-accent-50 text-accent-700;
+  }
+
+  .dropdown-item.active,
+  .dropdown-item:active {
+    background: var(--color-accent-500) !important;
+  }
+
+  .dropdown-header {
+    @apply text-[0.6875rem] uppercase tracking-wide font-bold text-slate-400;
+  }
+
+  /* ---- Account dropdown: push Log out to the very end.
+     Jazzmin renders Change password, Log out, usermenu_links, then See
+     Profile in that fixed order with no overridable block around it, not
+     ours to template-override without duplicating all of base.html, so
+     this reorders via flexbox instead: every other item keeps its
+     default order (0, ie its normal DOM position relative to the other
+     order:0 items), only #logout-form is pulled out to the end, robust
+     to however many usermenu_links entries settings.py adds or removes,
+     unlike an nth-child-based reorder would be. -->
+  #jazzy-usermenu.show {
+    @apply flex flex-col;
+  }
+
+  #jazzy-usermenu #logout-form {
+    order: 999;
+    @apply border-t border-gray-100 mt-1 pt-2;
+  }
+
+  #jazzy-usermenu #logout-form + .dropdown-divider {
+    display: none;
+  }
+
+  /* ---- Page header ---- */
+  .app-content-header {
+    @apply bg-transparent border-none py-8 pb-5;
+  }
+
+  .app-content-header h1,
+  .content-header h1 {
+    @apply text-[1.75rem] font-medium text-slate-900 tracking-tight m-0;
+  }
+
+  .breadcrumb-item a {
+    @apply text-slate-500 no-underline;
+  }
+
+  .breadcrumb-item a:hover {
+    color: var(--color-accent-500);
+  }
+}

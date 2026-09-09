@@ -38,7 +38,7 @@ class TenantAdmin(admin.ModelAdmin):
         'name', 'slug', 'business_type', 'plan_type',
         'module_summary', 'is_active', 'member_count', 'created_at',
     ]
-    list_filter = ['business_type', 'plan_type', 'is_active', 'created_from_registration']
+    list_filter = ['account_type', 'plan_type', 'is_active', 'created_from_registration']
     search_fields = ['name', 'slug', 'email', 'owner_name', 'workspace_name']
     readonly_fields = ['slug', 'created_at', 'updated_at', 'member_count', 'subscription_status']
     inlines = [UserTenantMembershipInline, SubscriptionInline]

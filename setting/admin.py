@@ -3,8 +3,149 @@ from django.contrib import admin
 from django.http import HttpResponseRedirect
 from django.urls import reverse
 from django.utils.html import format_html
+from django.utils.safestring import mark_safe
 
-from setting.models import EsewaSettings, GoogleOAuthSettings, SiteSettings
+from setting.models import DefaultAppearanceSettings, EsewaSettings, GoogleOAuthSettings, SiteSettings
+
+
+# Presets mirrored from frontend/app/settings/appearance/page.tsx so the
+# platform admin picks defaults from the same palette users see themselves.
+ACCENT_COLOR_CHOICES = [
+    ("", "— Field default —"),
+    ("#3B82F6", "Blue"),
+    ("#6366F1", "Indigo"),
+    ("#8B5CF6", "Violet"),
+    ("#A855F7", "Purple"),
+    ("#F43F5E", "Rose"),
+    ("#EC4899", "Pink"),
+    ("#F97316", "Orange"),
+    ("#F59E0B", "Amber"),
+    ("#22C55E", "Green"),
+    ("#10B981", "Emerald"),
+    ("#06B6D4", "Cyan"),
+]
+
+SIDEBAR_NAVBAR_COLOR_CHOICES = [
+    ("", "— Field default —"),
+    ("#1E2A3B", "Navy"),
+    ("#1F2937", "Charcoal"),
+    ("#0F172A", "Midnight"),
+    ("#334155", "Slate"),
+    ("#312E81", "Indigo"),
+    ("#4C1D4C", "Plum"),
+    ("#1B4332", "Forest"),
+    ("#4C0519", "Wine"),
+    ("#3B2F2F", "Espresso"),
+    ("#111111", "Black"),
+    ("#FFFFFF", "White"),
+]
+
+BORDER_RADIUS_CHOICES = [
+    ("", "— Field default —"),
+    ("0rem", "Sharp"),
+    ("0.375rem", "Small"),
+    ("0.625rem", "Default"),
+    ("1rem", "Large"),
+    ("1.5rem", "Full"),
+]
+
+
+class ColorSwatchSelect(forms.Select):
+    """A <select> with a live color-swatch preview next to it."""
+
+    def render(self, name, value, attrs=None, renderer=None):
+        attrs = dict(attrs or {})
+        widget_id = attrs.get("id", f"id_{name}")
+        swatch_id = f"{widget_id}_swatch"
+        attrs["onchange"] = (
+            f"document.getElementById('{swatch_id}').style.background="
+            f"this.value || 'transparent';"
+        )
+        select_html = super().render(name, value, attrs, renderer)
+        preview = value or "transparent"
+        swatch = (
+            f'<span id="{swatch_id}" style="display:inline-block;width:28px;height:28px;'
+            f'border-radius:6px;border:1px solid rgba(0,0,0,.25);background:{preview};'
+            f'vertical-align:middle;margin-right:10px;flex-shrink:0;"></span>'
+        )
+        return mark_safe(
+            f'<div style="display:flex;align-items:center;">{swatch}{select_html}</div>'
+        )
+
+
+class RadiusPreviewSelect(forms.Select):
+    """A <select> with a live corner-radius preview box next to it."""
+
+    def render(self, name, value, attrs=None, renderer=None):
+        attrs = dict(attrs or {})
+        widget_id = attrs.get("id", f"id_{name}")
+        preview_id = f"{widget_id}_preview"
+        attrs["onchange"] = (
+            f"document.getElementById('{preview_id}').style.borderRadius="
+            f"this.value || '0.625rem';"
+        )
+        select_html = super().render(name, value, attrs, renderer)
+        preview = value or "0.625rem"
+        box = (
+            f'<span id="{preview_id}" style="display:inline-block;width:28px;height:28px;'
+            f'background:#8B5CF6;border-radius:{preview};'
+            f'vertical-align:middle;margin-right:10px;flex-shrink:0;"></span>'
+        )
+        return mark_safe(
+            f'<div style="display:flex;align-items:center;">{box}{select_html}</div>'
+        )
+
+
+class DefaultAppearanceSettingsForm(forms.ModelForm):
+    accent_color = forms.ChoiceField(
+        choices=ACCENT_COLOR_CHOICES, required=False, widget=ColorSwatchSelect
+    )
+    sidebar_color = forms.ChoiceField(
+        choices=SIDEBAR_NAVBAR_COLOR_CHOICES, required=False, widget=ColorSwatchSelect
+    )
+    navbar_color = forms.ChoiceField(
+        choices=SIDEBAR_NAVBAR_COLOR_CHOICES, required=False, widget=ColorSwatchSelect
+    )
+    border_radius = forms.ChoiceField(
+        choices=BORDER_RADIUS_CHOICES, required=False, widget=RadiusPreviewSelect
+    )
+
+    class Meta:
+        model = DefaultAppearanceSettings
+        fields = "__all__"
+
+
+@admin.register(DefaultAppearanceSettings)
+class DefaultAppearanceSettingsAdmin(admin.ModelAdmin):
+    """
+    Singleton settings controlling the default theme applied to newly
+    registered users on /settings/appearance. Only one row exists.
+    """
+    list_display = ['theme', 'accent_color', 'sidebar_color', 'navbar_color', 'border_radius', 'navbar_position']
+    form = DefaultAppearanceSettingsForm
+    fieldsets = (
+        ('Theme', {
+            'fields': ('theme', 'navbar_position'),
+        }),
+        ('Colors', {
+            'fields': ('accent_color', 'sidebar_color', 'navbar_color'),
+        }),
+        ('Layout', {
+            'fields': ('border_radius', 'compact_mode', 'smooth_animations', 'high_contrast'),
+        }),
+    )
+
+    def has_add_permission(self, request):
+        return not DefaultAppearanceSettings.objects.exists()
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+    def changelist_view(self, request, extra_context=None):
+        settings_obj = DefaultAppearanceSettings.get_solo()
+        return HttpResponseRedirect(
+            reverse('admin:setting_defaultappearancesettings_change', args=(settings_obj.pk,))
+        )
 
 
 class EsewaSettingsAdminForm(forms.ModelForm):

@@ -3,6 +3,7 @@
 {% block content_title %}{{ title }}{% endblock %}
 
 {% block extrastyle %}
+{{ block.super }}
 <style>
   .setting-hub { --green: #22c55e; --muted: #64748b; }
   .setting-hub .subtitle { color: var(--muted); margin: 0 0 1.25rem; font-size: 0.9rem; }

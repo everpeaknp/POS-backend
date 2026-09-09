@@ -1,0 +1,50 @@
+{% extends "admin/base.html" %}
+{% load static %}
+
+<!-- custom_css/custom_js are loaded here (not via Jazzmin's built-in
+   settings) specifically so we can add data-turbo-track="reload" — without
+   it, Turbo Drive reuses the existing <head> <link>/<script> tags across
+   soft navigations whenever the href/src is unchanged, so an edit to
+   either file would never reach an already-open browser tab until a hard
+   reload. With the attribute, Turbo compares each tracked asset's content
+   and forces a real reload automatically when it changes. -->
+{% block extrastyle %}
+{{ block.super }}
+<link rel="stylesheet" href="{% static 'admin/css/adminlte4_fixes.css' %}" data-turbo-track="reload">
+<!-- Compiled from backend/tailwind/src/input.css — ported from the frontend's
+   own design tokens (radius scale, accent green, Plus Jakarta Sans) via a
+   real Tailwind v4 build, not the play-CDN script. Rebuild with
+   `npm run build` inside backend/tailwind after editing input.css. -->
+<link rel="stylesheet" href="{% static 'admin/css/tailwind-admin.css' %}" data-turbo-track="reload">
+{% endblock %}
+
+<!-- Turbo Drive: intercepts link clicks/form submits and swaps <body> via
+   fetch instead of a full page reload, giving the whole admin an SPA-like
+   feel with zero backend changes. Third-party widgets that only init once
+   on page-load (select2, date/time pickers, inline formsets, our own
+   sidebar accordion) are re-triggered on every `turbo:load` by
+   admin_turbo_compat.js / admin_sidebar.js — see those files for why.
+
+   These three scripts MUST live in <head> (extrahead), not <body>
+   (extrajs). Turbo replaces the entire <body> on every visit and
+   re-executes any <script> tag inside it — Turbo's own console warning
+   flags this — so keeping turbo.min.js in <body> meant it re-ran
+   Turbo.start() from scratch on every single navigation (visible as a
+   flash that looked like a full page refresh), and the two compat
+   scripts each piled up a duplicate `turbo:load` listener per visit.
+   <head> content is preserved across Turbo visits (elements are only
+   replaced when their content actually changes, which is what
+   data-turbo-track="reload" is for), so scripts placed here load and
+   execute exactly once for the whole session. -->
+{% block extrahead %}
+{{ block.super }}
+<script src="{% static 'admin/js/vendor/turbo.min.js' %}" data-turbo-track="reload"></script>
+<script src="{% static 'admin/js/admin_sidebar.js' %}" data-turbo-track="reload"></script>
+<script src="{% static 'admin/js/admin_turbo_compat.js' %}" data-turbo-track="reload"></script>
+<!-- htmx: used ONLY for fragment-only changelist filter/sort/pagination
+   (see admin_changelist_ajax.js) — Turbo still owns whole-page navigation
+   everywhere else. Every element htmx takes over gets data-turbo="false"
+   so the two libraries never compete for the same click/submit. -->
+<script src="{% static 'admin/js/vendor/htmx.min.js' %}" data-turbo-track="reload"></script>
+<script src="{% static 'admin/js/admin_changelist_ajax.js' %}" data-turbo-track="reload"></script>
+{% endblock %}
