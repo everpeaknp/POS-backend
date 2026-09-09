@@ -338,12 +338,40 @@ class POSTransactionViewSet(viewsets.ModelViewSet):
         import logging
         import json
         logger = logging.getLogger(__name__)
-        logger.info(f"POS Transaction create request data: {json.dumps(request.data, indent=2)}")
+        
+        # COMPREHENSIVE LOGGING
+        print("\n" + "="*80)
+        print("POS TRANSACTION CREATE REQUEST")
+        print("="*80)
+        print(f"Request method: {request.method}")
+        print(f"Request user: {request.user}")
+        print(f"Request content type: {request.content_type}")
+        print(f"\nFULL REQUEST DATA:")
+        print(json.dumps(dict(request.data), indent=2, default=str))
+        
+        if 'lines' in request.data and request.data['lines']:
+            print(f"\nLINES DETAIL:")
+            for idx, line in enumerate(request.data['lines']):
+                print(f"  Line {idx}:")
+                print(f"    Full line data: {line}")
+                print(f"    product field: {line.get('product')} (type: {type(line.get('product'))})")
+                if hasattr(line.get('product'), '__dict__'):
+                    print(f"    product is object with: {line.get('product').__dict__}")
+        print("="*80 + "\n")
+        
+        logger.info(f"POS Transaction create request data: {json.dumps(request.data, indent=2, default=str)}")
         logger.info(f"Request user: {request.user}, tenant: {request.user.tenant}")
         
         serializer = self.get_serializer(data=request.data)
         if not serializer.is_valid():
-            logger.error(f"POS Transaction validation errors: {json.dumps(serializer.errors, indent=2)}")
+            print("\n" + "="*80)
+            print("VALIDATION FAILED!")
+            print("="*80)
+            print("ERRORS:")
+            print(json.dumps(serializer.errors, indent=2, default=str))
+            print("="*80 + "\n")
+            
+            logger.error(f"POS Transaction validation errors: {json.dumps(serializer.errors, indent=2, default=str)}")
             # Return detailed errors with better structure
             error_response = {
                 'status': 'error',
@@ -351,7 +379,7 @@ class POSTransactionViewSet(viewsets.ModelViewSet):
                 'errors': serializer.errors,
                 'detail': str(serializer.errors),
             }
-            logger.error(f"Returning error response: {json.dumps(error_response, indent=2)}")
+            logger.error(f"Returning error response: {json.dumps(error_response, indent=2, default=str)}")
             return Response(
                 error_response,
                 status=status.HTTP_400_BAD_REQUEST

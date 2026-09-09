@@ -671,6 +671,7 @@ def export_user_data(request):
             'date_calendar_system': appearance_prefs.date_calendar_system,
             'compact_mode': appearance_prefs.compact_mode,
             'smooth_animations': appearance_prefs.smooth_animations,
+            'navbar_position': appearance_prefs.navbar_position,
         },
         'privacy_preferences': PrivacyPreferencesSerializer({
             'profile_visibility': privacy_prefs.profile_visibility,
@@ -971,12 +972,12 @@ def get_appearance_preferences(request):
         user=request.user,
         defaults={
             'theme': 'light',
-            'language': 'en-US',
+            'language': 'en',
             'timezone': 'UTC',
             'date_calendar_system': 'AD',
             'compact_mode': False,
             'smooth_animations': True,
-            'navbar_position': 'left',
+            'navbar_position': 'top',
         }
     )
     

@@ -498,8 +498,8 @@ class AppearancePreferencesSerializer(serializers.Serializer):
         default='light'
     )
     language = serializers.ChoiceField(
-        choices=['en-US', 'en-GB', 'es', 'fr', 'de', 'hi'],
-        default='en-US'
+        choices=['en', 'ne'],
+        default='en'
     )
     timezone = serializers.CharField(default='UTC')
     date_calendar_system = serializers.ChoiceField(
@@ -510,5 +510,5 @@ class AppearancePreferencesSerializer(serializers.Serializer):
     smooth_animations = serializers.BooleanField(default=True)
     navbar_position = serializers.ChoiceField(
         choices=['left', 'top'],
-        default='left'
+        default='top'
     )

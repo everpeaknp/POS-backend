@@ -186,6 +186,55 @@ class BankAccount(TenantModel):
         help_text='Payment QR code for this bank account (Bank QR / Fonepay QR / Mobile Wallet QR)'
     )
     
+    # Digital wallet sub-methods linked to this bank account
+    esewa_enabled = models.BooleanField(
+        default=False,
+        help_text='Accept eSewa payments via this bank account'
+    )
+    esewa_number = models.CharField(
+        max_length=50,
+        blank=True,
+        help_text='eSewa ID/number linked to this bank account'
+    )
+    esewa_qr = models.ImageField(
+        upload_to='bank_qr_codes/esewa/',
+        null=True,
+        blank=True,
+        help_text='eSewa QR code for this bank account'
+    )
+    
+    khalti_enabled = models.BooleanField(
+        default=False,
+        help_text='Accept Khalti payments via this bank account'
+    )
+    khalti_number = models.CharField(
+        max_length=50,
+        blank=True,
+        help_text='Khalti ID/number linked to this bank account'
+    )
+    khalti_qr = models.ImageField(
+        upload_to='bank_qr_codes/khalti/',
+        null=True,
+        blank=True,
+        help_text='Khalti QR code for this bank account'
+    )
+    
+    fonepay_enabled = models.BooleanField(
+        default=False,
+        help_text='Accept FonePay payments via this bank account'
+    )
+    fonepay_number = models.CharField(
+        max_length=50,
+        blank=True,
+        help_text='FonePay ID/number linked to this bank account'
+    )
+    fonepay_qr = models.ImageField(
+        upload_to='bank_qr_codes/fonepay/',
+        null=True,
+        blank=True,
+        help_text='FonePay QR code for this bank account'
+    )
+    
     balance = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal('0.00'))
     last_reconciled = models.DateField(null=True, blank=True)
     status = models.CharField(max_length=10, choices=STATUS_CHOICES, default='active')

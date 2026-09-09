@@ -16,12 +16,8 @@ class AppearancePreferences(models.Model):
     ]
     
     LANGUAGE_CHOICES = [
-        ('en-US', 'English (US)'),
-        ('en-GB', 'English (UK)'),
-        ('es', 'Spanish'),
-        ('fr', 'French'),
-        ('de', 'German'),
-        ('hi', 'Hindi'),
+        ('en', 'English'),
+        ('ne', 'नेपाली'),
     ]
     
     TIMEZONE_CHOICES = [
@@ -100,7 +96,7 @@ class AppearancePreferences(models.Model):
     navbar_position = models.CharField(
         max_length=10,
         choices=NAVBAR_POSITION_CHOICES,
-        default='left',
+        default='top',
         help_text='App bar position (left or top)'
     )
     

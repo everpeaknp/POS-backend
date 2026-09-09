@@ -173,10 +173,21 @@ class TenantViewSet(viewsets.ModelViewSet):
         try:
             delete_tenant(instance)
         except Exception as exc:
-            raise ValidationError(
-                {"detail": "Could not delete organization because related records still exist. "
-                           "Remove transactions and try again, or contact support."}
-            ) from exc
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.error(f"Failed to delete tenant {instance.id} ({instance.slug}): {str(exc)}", exc_info=True)
+            
+            # Show actual error in debug mode for troubleshooting
+            from django.conf import settings
+            if settings.DEBUG:
+                raise ValidationError(
+                    {"detail": f"Could not delete organization: {str(exc)}"}
+                ) from exc
+            else:
+                raise ValidationError(
+                    {"detail": "Could not delete organization because related records still exist. "
+                               "Remove transactions and try again, or contact support."}
+                ) from exc
     
     @extend_schema(
         summary='Get tenant profile by slug',

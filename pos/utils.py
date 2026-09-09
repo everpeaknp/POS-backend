@@ -16,8 +16,10 @@ def get_warehouse_stock(product, warehouse):
         return product.get_total_stock()
     from inventory.models import Stock
 
-    stock = Stock.objects.filter(
-        tenant=product.tenant,
+    # Use _base_manager to bypass tenant filtering, then explicitly filter by tenant
+    # This ensures the query works both in request context and standalone scripts
+    stock = Stock._base_manager.filter(
+        tenant_id=product.tenant_id,
         product=product,
         warehouse=warehouse,
     ).first()

@@ -10,6 +10,7 @@ from drf_spectacular.utils import extend_schema, extend_schema_view, OpenApiPara
 from django.utils import timezone
 from django.db import transaction
 from django.db.models import Sum, Q, Count
+from django.db import models
 from decimal import Decimal
 from datetime import date
 
@@ -943,6 +944,31 @@ class BankAccountViewSet(viewsets.ModelViewSet):
         ).order_by('-date', '-id')
         
         serializer = BankTransactionSerializer(transactions, many=True)
+        return Response(serializer.data)
+
+    @extend_schema(
+        tags=['Accounting - Bank Accounts'],
+        summary='Get active bank accounts for POS',
+        description='Returns active bank accounts with digital wallet information for POS checkout'
+    )
+    @action(detail=False, methods=['get'], url_path='pos-payment-methods')
+    def pos_payment_methods(self, request):
+        """Get bank accounts with enabled digital wallets for POS"""
+        tenant = get_request_tenant(request.user)
+        if not tenant:
+            return Response([], status=status.HTTP_200_OK)
+        
+        bank_accounts = BankAccount.objects.filter(
+            tenant=tenant,
+            status='active'
+        ).filter(
+            # Only return banks that have at least one wallet enabled
+            models.Q(esewa_enabled=True) | 
+            models.Q(khalti_enabled=True) | 
+            models.Q(fonepay_enabled=True)
+        )
+        
+        serializer = self.get_serializer(bank_accounts, many=True)
         return Response(serializer.data)
 
     def destroy(self, request, *args, **kwargs):

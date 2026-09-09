@@ -206,7 +206,12 @@ class BankAccountSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'bank_name', 'account_name', 'account_number', 'type', 'branch',
             'swift_code', 'gl_account', 'gl_account_name', 'gl_account_code',
-            'qr_code_image', 'balance', 'last_reconciled', 'status', 'created_at', 'updated_at'
+            'qr_code_image', 'balance', 'last_reconciled', 'status',
+            # Digital wallet sub-methods
+            'esewa_enabled', 'esewa_number', 'esewa_qr',
+            'khalti_enabled', 'khalti_number', 'khalti_qr',
+            'fonepay_enabled', 'fonepay_number', 'fonepay_qr',
+            'created_at', 'updated_at'
         ]
         read_only_fields = ['id', 'gl_account_name', 'gl_account_code', 'created_at', 'updated_at']
 

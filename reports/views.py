@@ -14,6 +14,7 @@ from construction.models import Site, MaterialConsumption, Attendance
 from inventory.models import Product, Stock
 from accounting.models import JournalEntry
 from users.permissions import ReportsPermission, CanViewFinancials
+from pos.models import POSTransaction
 
 
 def _custom_report_queryset(tenant):
@@ -732,46 +733,97 @@ class ReportViewSet(viewsets.ViewSet):
     )
     @action(detail=False, methods=['get'], url_path='sales-performance')
     def sales_performance(self, request):
-        """Sales performance metrics"""
+        """Sales performance metrics - includes both SalesOrder and POSTransaction"""
         tenant = self.get_tenant()
         start_date, end_date = self.parse_date_params(request)
         
-        # Base queryset
+        # Base queryset for SalesOrder
         sales_qs = SalesOrder.objects.filter(tenant=tenant)
         if start_date:
             sales_qs = sales_qs.filter(date__gte=start_date)
         if end_date:
             sales_qs = sales_qs.filter(date__lte=end_date)
         
-        # Total sales and orders
-        total_sales = sales_qs.aggregate(
+        # POS Transactions
+        pos_qs = POSTransaction.objects.filter(
+            tenant=tenant,
+            status='completed'
+        )
+        if start_date:
+            pos_qs = pos_qs.filter(date__date__gte=start_date)
+        if end_date:
+            pos_qs = pos_qs.filter(date__date__lte=end_date)
+        
+        # Total sales and orders from SalesOrder
+        so_total_sales = sales_qs.aggregate(
             total=Coalesce(Sum('total'), Value(Decimal('0.00')))
         )['total']
+        so_total_orders = sales_qs.count()
         
-        total_orders = sales_qs.count()
+        # Total sales and orders from POSTransaction
+        pos_total_sales = pos_qs.aggregate(
+            total=Coalesce(Sum('total'), Value(Decimal('0.00')))
+        )['total']
+        pos_total_orders = pos_qs.count()
+        
+        # Combined totals
+        total_sales = so_total_sales + pos_total_sales
+        total_orders = so_total_orders + pos_total_orders
         average_order_value = (total_sales / total_orders) if total_orders > 0 else Decimal('0.00')
         
-        # Top customers
-        top_customers_data = sales_qs.values(
+        # Top customers from SalesOrder
+        so_top_customers = sales_qs.values(
             'customer__id', 'customer__name'
         ).annotate(
             total_orders=Count('id'),
             total_amount=Sum('total')
         ).order_by('-total_amount')[:5]
         
-        top_customers = []
-        for item in top_customers_data:
-            top_customers.append({
-                'customer_id': str(item['customer__id']),
-                'customer_name': item['customer__name'],
-                'total_orders': item['total_orders'],
-                'total_amount': item['total_amount'],
-            })
+        # Top customers from POSTransaction
+        pos_top_customers = pos_qs.values(
+            'customer__id', 'customer__name'
+        ).exclude(customer__isnull=True).annotate(
+            total_orders=Count('id'),
+            total_amount=Sum('total')
+        ).order_by('-total_amount')[:5]
+        
+        # Merge top customers
+        top_customers_dict = {}
+        for item in so_top_customers:
+            key = item['customer__id']
+            if key not in top_customers_dict:
+                top_customers_dict[key] = {
+                    'customer_id': str(key),
+                    'customer_name': item['customer__name'],
+                    'total_orders': 0,
+                    'total_amount': Decimal('0.00'),
+                }
+            top_customers_dict[key]['total_orders'] += item['total_orders']
+            top_customers_dict[key]['total_amount'] += item['total_amount']
+        
+        for item in pos_top_customers:
+            key = item['customer__id']
+            if key not in top_customers_dict:
+                top_customers_dict[key] = {
+                    'customer_id': str(key),
+                    'customer_name': item['customer__name'],
+                    'total_orders': 0,
+                    'total_amount': Decimal('0.00'),
+                }
+            top_customers_dict[key]['total_orders'] += item['total_orders']
+            top_customers_dict[key]['total_amount'] += item['total_amount']
+        
+        # Sort and limit to top 5
+        top_customers = sorted(
+            top_customers_dict.values(),
+            key=lambda x: x['total_amount'],
+            reverse=True
+        )[:5]
         
         return Response({
-            'total_sales': total_sales,
+            'total_sales': float(total_sales),
             'total_orders': total_orders,
-            'average_order_value': round(average_order_value, 2),
+            'average_order_value': float(round(average_order_value, 2)),
             'top_customers': top_customers,
             'period': {
                 'start_date': start_date.isoformat() if start_date else None,
@@ -1425,3 +1477,711 @@ class ReportViewSet(viewsets.ViewSet):
                 {'detail': 'Failed to duplicate custom report', 'error': str(e)},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
+
+    @extend_schema(
+        tags=['Reports'],
+        summary='Day Book Report',
+        description='Daily transaction summary combining all financial activities',
+        parameters=[
+            OpenApiParameter('date', str, description='Date (YYYY-MM-DD, defaults to today)'),
+        ]
+    )
+    @action(detail=False, methods=['get'], url_path='day-book')
+    def day_book(self, request):
+        """Day Book - Daily transaction summary (includes both SalesOrder and POSTransaction)"""
+        tenant = self.get_tenant()
+        
+        # Parse date parameter
+        date_str = request.query_params.get('date')
+        if date_str:
+            try:
+                selected_date = datetime.strptime(date_str, '%Y-%m-%d').date()
+            except ValueError:
+                return Response(
+                    {'detail': 'Invalid date format. Use YYYY-MM-DD'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+        else:
+            selected_date = datetime.now().date()
+        
+        transactions = []
+        
+        # 1. POS Transactions (NEW - INCLUDES POS SALES)
+        pos_transactions = POSTransaction.objects.filter(
+            tenant=tenant,
+            date__date=selected_date,
+            status='completed'
+        ).select_related('customer')
+        
+        for txn in pos_transactions:
+            transactions.append({
+                'time': txn.date.strftime('%H:%M') if txn.date else '',
+                'type': 'POS Sale',
+                'reference': txn.transaction_number,
+                'party': txn.customer.name if txn.customer else txn.customer_name or 'Walk-in',
+                'debit': 0,
+                'credit': float(txn.total),
+                'balance_effect': float(txn.total),
+                'description': f'POS Sale {txn.transaction_number}',
+            })
+        
+        # 2. Sales Orders (existing - MANUAL SALES)
+        sales_orders = SalesOrder.objects.filter(
+            tenant=tenant,
+            date=selected_date,
+            status__in=['Confirmed', 'Delivered']
+        ).select_related('customer')
+        
+        for order in sales_orders:
+            transactions.append({
+                'time': order.created_at.strftime('%H:%M') if order.created_at else '',
+                'type': 'Sales',
+                'reference': order.order_number,
+                'party': order.customer.name if order.customer else 'Walk-in Customer',
+                'debit': 0,
+                'credit': float(order.total),
+                'balance_effect': float(order.total),
+                'description': f'Sales Order #{order.order_number}',
+            })
+        
+        # 3. Purchase Invoices
+        from purchase.models import PurchaseInvoice as PIModel
+        purchase_invoices = PIModel.objects.filter(
+            tenant=tenant,
+            date=selected_date
+        ).select_related('supplier')
+        
+        for inv in purchase_invoices:
+            transactions.append({
+                'time': inv.created_at.strftime('%H:%M') if inv.created_at else '',
+                'type': 'Purchase',
+                'reference': inv.invoice_number,
+                'party': inv.supplier.name,
+                'debit': float(inv.amount),
+                'credit': 0,
+                'balance_effect': -float(inv.amount),
+                'description': f'Purchase Invoice #{inv.invoice_number}',
+            })
+        
+        # 4. Payment Received
+        payments_received = PaymentReceived.objects.filter(
+            tenant=tenant,
+            date=selected_date
+        ).select_related('customer')
+        
+        for payment in payments_received:
+            transactions.append({
+                'time': payment.created_at.strftime('%H:%M') if payment.created_at else '',
+                'type': 'Receipt',
+                'reference': payment.payment_number or f'PMT-{payment.id}',
+                'party': payment.customer.name,
+                'debit': 0,
+                'credit': float(payment.amount),
+                'balance_effect': float(payment.amount),
+                'description': f'Payment received from {payment.customer.name}',
+            })
+        
+        # 5. Finance Transactions (if finance module exists)
+        try:
+            from finance.models import FinanceTransaction
+            finance_txns = FinanceTransaction.objects.filter(
+                tenant=tenant,
+                date=selected_date
+            ).select_related('category', 'account')
+            
+            for txn in finance_txns:
+                is_income = txn.type in ['income', 'transfer_in']
+                transactions.append({
+                    'time': txn.created_at.strftime('%H:%M') if txn.created_at else '',
+                    'type': 'Income' if is_income else 'Expense',
+                    'reference': txn.transaction_number,
+                    'party': txn.category.name if txn.category else 'General',
+                    'debit': 0 if is_income else float(txn.amount),
+                    'credit': float(txn.amount) if is_income else 0,
+                    'balance_effect': float(txn.amount) if is_income else -float(txn.amount),
+                    'description': txn.note or f'{txn.get_type_display()}',
+                })
+        except ImportError:
+            pass
+        
+        # Sort by time
+        transactions.sort(key=lambda x: x['time'])
+        
+        # Calculate totals
+        total_debit = sum(t['debit'] for t in transactions)
+        total_credit = sum(t['credit'] for t in transactions)
+        net_cash_flow = total_credit - total_debit
+        
+        return Response({
+            'date': selected_date.isoformat(),
+            'transactions': transactions,
+            'summary': {
+                'total_transactions': len(transactions),
+                'total_debit': round(total_debit, 2),
+                'total_credit': round(total_credit, 2),
+                'net_cash_flow': round(net_cash_flow, 2),
+            }
+        })
+
+    @extend_schema(
+        summary='All Transactions Report',
+        description='Complete transaction history across all modules with date range filtering',
+        parameters=[
+            OpenApiParameter('start_date', str, description='Start date (YYYY-MM-DD)'),
+            OpenApiParameter('end_date', str, description='End date (YYYY-MM-DD)'),
+        ]
+    )
+    @action(detail=False, methods=['get'], url_path='all-transactions')
+    def all_transactions(self, request):
+        """All Transactions - Complete transaction history (includes both SalesOrder and POSTransaction)"""
+        tenant = self.get_tenant()
+        
+        # Parse date parameters
+        start_date_str = request.query_params.get('start_date')
+        end_date_str = request.query_params.get('end_date')
+        
+        if not start_date_str or not end_date_str:
+            # Default to last 30 days
+            end_date = datetime.now().date()
+            start_date = end_date - timedelta(days=30)
+        else:
+            try:
+                start_date = datetime.strptime(start_date_str, '%Y-%m-%d').date()
+                end_date = datetime.strptime(end_date_str, '%Y-%m-%d').date()
+            except ValueError:
+                return Response(
+                    {'detail': 'Invalid date format. Use YYYY-MM-DD'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+        
+        transactions = []
+        
+        # 1. POS Transactions (NEW - INCLUDES POS SALES)
+        pos_transactions = POSTransaction.objects.filter(
+            tenant=tenant,
+            date__date__range=[start_date, end_date],
+            status='completed'
+        ).select_related('customer')
+        
+        for txn in pos_transactions:
+            transactions.append({
+                'date': txn.date.date().isoformat(),
+                'type': 'POS Sale',
+                'reference': txn.transaction_number,
+                'party': txn.customer.name if txn.customer else txn.customer_name or 'Walk-in',
+                'debit': 0,
+                'credit': float(txn.total),
+                'description': f'POS Sale {txn.transaction_number}',
+            })
+        
+        # 2. Sales Orders (existing - MANUAL SALES)
+        sales_orders = SalesOrder.objects.filter(
+            tenant=tenant,
+            date__range=[start_date, end_date],
+            status__in=['Confirmed', 'Delivered']
+        ).select_related('customer')
+        
+        for order in sales_orders:
+            transactions.append({
+                'date': order.date.isoformat() if order.date else order.created_at.date().isoformat(),
+                'type': 'Sales',
+                'reference': order.order_number,
+                'party': order.customer.name if order.customer else 'Walk-in',
+                'debit': 0,
+                'credit': float(order.total),
+                'description': f'Sales Order #{order.order_number}',
+            })
+        
+        # 3. Purchase Invoices
+        from purchase.models import PurchaseInvoice as PIModel
+        purchase_invoices = PIModel.objects.filter(
+            tenant=tenant,
+            date__range=[start_date, end_date]
+        ).select_related('supplier')
+        
+        for inv in purchase_invoices:
+            transactions.append({
+                'date': inv.date.isoformat() if inv.date else inv.created_at.date().isoformat(),
+                'type': 'Purchase',
+                'reference': inv.invoice_number,
+                'party': inv.supplier.name,
+                'debit': float(inv.amount),
+                'credit': 0,
+                'description': f'Purchase Invoice #{inv.invoice_number}',
+            })
+        
+        # 4. Payments Received
+        payments_received = PaymentReceived.objects.filter(
+            tenant=tenant,
+            date__range=[start_date, end_date]
+        ).select_related('customer')
+        
+        for payment in payments_received:
+            transactions.append({
+                'date': payment.date.isoformat() if payment.date else payment.created_at.date().isoformat(),
+                'type': 'Receipt',
+                'reference': payment.payment_number or f'PMT-{payment.id}',
+                'party': payment.customer.name,
+                'debit': 0,
+                'credit': float(payment.amount),
+                'description': f'Payment from {payment.customer.name}',
+            })
+        
+        # 5. Finance Transactions
+        try:
+            from finance.models import FinanceTransaction
+            finance_txns = FinanceTransaction.objects.filter(
+                tenant=tenant,
+                date__range=[start_date, end_date]
+            ).select_related('category')
+            
+            for txn in finance_txns:
+                is_income = txn.type in ['income', 'transfer_in']
+                transactions.append({
+                    'date': txn.date.isoformat() if txn.date else txn.created_at.date().isoformat(),
+                    'type': 'Income' if is_income else 'Expense',
+                    'reference': txn.transaction_number,
+                    'party': txn.category.name if txn.category else 'General',
+                    'debit': 0 if is_income else float(txn.amount),
+                    'credit': float(txn.amount) if is_income else 0,
+                    'description': txn.note or f'{txn.get_type_display()}',
+                })
+        except ImportError:
+            pass
+        
+        # Sort by date (newest first)
+        transactions.sort(key=lambda x: x['date'], reverse=True)
+        
+        # Calculate totals
+        total_debit = sum(t['debit'] for t in transactions)
+        total_credit = sum(t['credit'] for t in transactions)
+        net_flow = total_credit - total_debit
+        
+        return Response({
+            'start_date': start_date.isoformat(),
+            'end_date': end_date.isoformat(),
+            'transactions': transactions,
+            'summary': {
+                'total_transactions': len(transactions),
+                'total_debit': round(total_debit, 2),
+                'total_credit': round(total_credit, 2),
+                'net_flow': round(net_flow, 2),
+            }
+        })
+
+    @extend_schema(
+        summary='Customer Statement',
+        description='Individual customer transaction history and ledger',
+        parameters=[
+            OpenApiParameter('customer_id', int, description='Customer ID'),
+            OpenApiParameter('start_date', str, description='Start date (YYYY-MM-DD)'),
+            OpenApiParameter('end_date', str, description='End date (YYYY-MM-DD)'),
+        ]
+    )
+    @action(detail=False, methods=['get'], url_path='customer-statement')
+    def customer_statement(self, request):
+        """Customer Statement - Individual customer ledger"""
+        tenant = self.get_tenant()
+        customer_id = request.query_params.get('customer_id')
+        
+        if not customer_id:
+            return Response(
+                {'detail': 'customer_id parameter required'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        try:
+            customer = Customer.objects.get(id=customer_id, tenant=tenant)
+        except Customer.DoesNotExist:
+            return Response(
+                {'detail': 'Customer not found'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        # Parse date parameters
+        start_date_str = request.query_params.get('start_date')
+        end_date_str = request.query_params.get('end_date')
+        
+        if not start_date_str or not end_date_str:
+            end_date = datetime.now().date()
+            start_date = end_date - timedelta(days=90)
+        else:
+            try:
+                start_date = datetime.strptime(start_date_str, '%Y-%m-%d').date()
+                end_date = datetime.strptime(end_date_str, '%Y-%m-%d').date()
+            except ValueError:
+                return Response(
+                    {'detail': 'Invalid date format. Use YYYY-MM-DD'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+        
+        transactions = []
+        running_balance = 0
+        
+        # Get all sales orders for this customer
+        sales_orders = SalesOrder.objects.filter(
+            tenant=tenant,
+            customer=customer,
+            date__range=[start_date, end_date],
+            status__in=['Confirmed', 'Delivered']
+        )
+        
+        for order in sales_orders:
+            running_balance += float(order.total)
+            transactions.append({
+                'date': order.date.isoformat() if order.date else order.created_at.date().isoformat(),
+                'type': 'Invoice',
+                'reference': order.order_number,
+                'description': f'Sales Order #{order.order_number}',
+                'debit': 0,
+                'credit': float(order.total),
+                'balance': round(running_balance, 2),
+            })
+        
+        # Get payments received from this customer
+        payments = PaymentReceived.objects.filter(
+            tenant=tenant,
+            customer=customer,
+            date__range=[start_date, end_date]
+        )
+        
+        for payment in payments:
+            running_balance -= float(payment.amount)
+            transactions.append({
+                'date': payment.date.isoformat() if payment.date else payment.created_at.date().isoformat(),
+                'type': 'Payment',
+                'reference': payment.payment_number or f'PMT-{payment.id}',
+                'description': f'Payment received',
+                'debit': float(payment.amount),
+                'credit': 0,
+                'balance': round(running_balance, 2),
+            })
+        
+        # Get credit notes
+        try:
+            from sales.models import CreditNote
+            credit_notes = CreditNote.objects.filter(
+                tenant=tenant,
+                customer=customer,
+                date__range=[start_date, end_date]
+            )
+            
+            for cn in credit_notes:
+                running_balance -= float(cn.total)
+                transactions.append({
+                    'date': cn.date.isoformat() if cn.date else cn.created_at.date().isoformat(),
+                    'type': 'Credit Note',
+                    'reference': cn.number,
+                    'description': f'Credit Note #{cn.number}',
+                    'debit': float(cn.total),
+                    'credit': 0,
+                    'balance': round(running_balance, 2),
+                })
+        except ImportError:
+            pass
+        
+        # Sort by date
+        transactions.sort(key=lambda x: x['date'])
+        
+        # Get current outstanding balance
+        current_balance = 0
+        all_sales = SalesOrder.objects.filter(
+            tenant=tenant,
+            customer=customer,
+            status__in=['Confirmed', 'Delivered']
+        )
+        all_payments = PaymentReceived.objects.filter(tenant=tenant, customer=customer)
+        all_credits = CreditNote.objects.filter(tenant=tenant, customer=customer) if 'CreditNote' in locals() else []
+        
+        current_balance = sum(o.total for o in all_sales) - sum(p.amount for p in all_payments) - sum(c.total for c in all_credits)
+        
+        return Response({
+            'customer_id': customer.id,
+            'customer_name': customer.name,
+            'start_date': start_date.isoformat(),
+            'end_date': end_date.isoformat(),
+            'transactions': transactions,
+            'summary': {
+                'total_transactions': len(transactions),
+                'current_balance': round(current_balance, 2),
+                'total_sales': round(sum(o.total for o in all_sales), 2),
+                'total_payments': round(sum(p.amount for p in all_payments), 2),
+            }
+        })
+
+    @extend_schema(
+        summary='Payables Report',
+        description='Money owed to suppliers - similar to receivables but for suppliers',
+        parameters=[
+            OpenApiParameter('start_date', str, description='Start date (YYYY-MM-DD)'),
+            OpenApiParameter('end_date', str, description='End date (YYYY-MM-DD)'),
+        ]
+    )
+    @action(detail=False, methods=['get'], url_path='payables')
+    def payables(self, request):
+        """Payables - Money owed to suppliers"""
+        tenant = self.get_tenant()
+        
+        # Get date range
+        end_date = datetime.now().date()
+        start_date = end_date - timedelta(days=90)
+        
+        from purchase.models import PurchaseInvoice, Supplier
+        
+        suppliers = Supplier.objects.filter(tenant=tenant)
+        supplier_balances = []
+        
+        for supplier in suppliers:
+            invoices = PurchaseInvoice.objects.filter(
+                tenant=tenant,
+                supplier=supplier,
+                date__range=[start_date, end_date]
+            )
+            
+            total_purchased = sum(inv.amount for inv in invoices)
+            if total_purchased == 0:
+                continue
+            
+            # For now, assume all invoices are outstanding (no payment tracking)
+            outstanding = total_purchased
+            
+            supplier_balances.append({
+                'supplier_id': supplier.id,
+                'supplier_name': supplier.name,
+                'contact': supplier.contact_person or '',
+                'outstanding': round(outstanding, 2),
+                'invoices_count': invoices.count(),
+                'status': 'active' if supplier.is_active else 'inactive',
+            })
+        
+        # Sort by outstanding amount
+        supplier_balances.sort(key=lambda x: x['outstanding'], reverse=True)
+        
+        total_payable = sum(sb['outstanding'] for sb in supplier_balances)
+        
+        return Response({
+            'start_date': start_date.isoformat(),
+            'end_date': end_date.isoformat(),
+            'suppliers': supplier_balances,
+            'summary': {
+                'total_suppliers': len(suppliers),
+                'total_payable': round(total_payable, 2),
+                'suppliers_with_balance': len(supplier_balances),
+            }
+        })
+
+    @extend_schema(
+        summary='Supplier Statement',
+        description='Individual supplier transaction history and ledger',
+        parameters=[
+            OpenApiParameter('supplier_id', int, description='Supplier ID'),
+            OpenApiParameter('start_date', str, description='Start date (YYYY-MM-DD)'),
+            OpenApiParameter('end_date', str, description='End date (YYYY-MM-DD)'),
+        ]
+    )
+    @action(detail=False, methods=['get'], url_path='supplier-statement')
+    def supplier_statement(self, request):
+        """Supplier Statement - Individual supplier ledger"""
+        tenant = self.get_tenant()
+        supplier_id = request.query_params.get('supplier_id')
+        
+        if not supplier_id:
+            return Response(
+                {'detail': 'supplier_id parameter required'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        from purchase.models import PurchaseInvoice, Supplier
+        
+        try:
+            supplier = Supplier.objects.get(id=supplier_id, tenant=tenant)
+        except Supplier.DoesNotExist:
+            return Response(
+                {'detail': 'Supplier not found'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        # Parse date parameters
+        start_date_str = request.query_params.get('start_date')
+        end_date_str = request.query_params.get('end_date')
+        
+        if not start_date_str or not end_date_str:
+            end_date = datetime.now().date()
+            start_date = end_date - timedelta(days=90)
+        else:
+            try:
+                start_date = datetime.strptime(start_date_str, '%Y-%m-%d').date()
+                end_date = datetime.strptime(end_date_str, '%Y-%m-%d').date()
+            except ValueError:
+                return Response(
+                    {'detail': 'Invalid date format. Use YYYY-MM-DD'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+        
+        transactions = []
+        running_balance = 0
+        
+        # Get all purchase invoices for this supplier
+        invoices = PurchaseInvoice.objects.filter(
+            tenant=tenant,
+            supplier=supplier,
+            date__range=[start_date, end_date]
+        )
+        
+        for invoice in invoices:
+            running_balance += float(invoice.amount)
+            transactions.append({
+                'date': invoice.date.isoformat() if invoice.date else invoice.created_at.date().isoformat(),
+                'type': 'Invoice',
+                'reference': invoice.invoice_number,
+                'description': f'Purchase Invoice #{invoice.invoice_number}',
+                'debit': 0,
+                'credit': float(invoice.amount),
+                'balance': round(running_balance, 2),
+            })
+        
+        # Get debit notes (returns)
+        try:
+            from purchase.models import DebitNote
+            debit_notes = DebitNote.objects.filter(
+                tenant=tenant,
+                supplier=supplier,
+                date__range=[start_date, end_date]
+            )
+            
+            for dn in debit_notes:
+                running_balance -= float(dn.total)
+                transactions.append({
+                    'date': dn.date.isoformat() if dn.date else dn.created_at.date().isoformat(),
+                    'type': 'Debit Note',
+                    'reference': dn.number,
+                    'description': f'Debit Note #{dn.number}',
+                    'debit': float(dn.total),
+                    'credit': 0,
+                    'balance': round(running_balance, 2),
+                })
+        except (ImportError, AttributeError):
+            pass
+        
+        # Sort by date
+        transactions.sort(key=lambda x: x['date'])
+        
+        # Get current outstanding balance
+        current_balance = 0
+        all_invoices = PurchaseInvoice.objects.filter(tenant=tenant, supplier=supplier)
+        all_debits = DebitNote.objects.filter(tenant=tenant, supplier=supplier) if 'DebitNote' in locals() else []
+        
+        current_balance = sum(inv.amount for inv in all_invoices) - sum(dn.total for dn in all_debits)
+        
+        return Response({
+            'supplier_id': supplier.id,
+            'supplier_name': supplier.name,
+            'start_date': start_date.isoformat(),
+            'end_date': end_date.isoformat(),
+            'transactions': transactions,
+            'summary': {
+                'total_transactions': len(transactions),
+                'current_balance': round(current_balance, 2),
+                'total_purchases': round(sum(inv.amount for inv in all_invoices), 2),
+            }
+        })
+
+    @extend_schema(
+        summary='Party-wise Profit',
+        description='Profit analysis grouped by customer/party',
+        parameters=[
+            OpenApiParameter('start_date', str, description='Start date (YYYY-MM-DD)'),
+            OpenApiParameter('end_date', str, description='End date (YYYY-MM-DD)'),
+        ]
+    )
+    @action(detail=False, methods=['get'], url_path='party-profit')
+    def party_profit(self, request):
+        """Party-wise Profit - Profit analysis by customer (includes both SalesOrder and POSTransaction)"""
+        tenant = self.get_tenant()
+        
+        # Parse date parameters
+        start_date_str = request.query_params.get('start_date')
+        end_date_str = request.query_params.get('end_date')
+        
+        if not start_date_str or not end_date_str:
+            end_date = datetime.now().date()
+            start_date = end_date - timedelta(days=90)
+        else:
+            try:
+                start_date = datetime.strptime(start_date_str, '%Y-%m-%d').date()
+                end_date = datetime.strptime(end_date_str, '%Y-%m-%d').date()
+            except ValueError:
+                return Response(
+                    {'detail': 'Invalid date format. Use YYYY-MM-DD'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+        
+        customer_profits = {}  # Use dict to aggregate both SO and POS
+        
+        customers = Customer.objects.filter(tenant=tenant)
+        
+        for customer in customers:
+            # Get SalesOrder sales for this customer
+            sales_orders = SalesOrder.objects.filter(
+                tenant=tenant,
+                customer=customer,
+                date__range=[start_date, end_date],
+                status__in=['Confirmed', 'Delivered']
+            )
+            so_revenue = sum(o.total for o in sales_orders)
+            so_orders = sales_orders.count()
+            
+            # Get POSTransaction sales for this customer (if customer exists on transaction)
+            pos_transactions = POSTransaction.objects.filter(
+                tenant=tenant,
+                customer=customer,
+                date__date__range=[start_date, end_date],
+                status='completed'
+            )
+            pos_revenue = sum(t.total for t in pos_transactions)
+            pos_orders = pos_transactions.count()
+            
+            # Combine revenues
+            total_revenue = so_revenue + pos_revenue
+            if total_revenue == 0:
+                continue
+            
+            total_orders = so_orders + pos_orders
+            
+            # Calculate profit (simple: revenue - cost_of_goods_sold)
+            # For now, showing revenue as profit - actual profit calculation would need COGS
+            profit = total_revenue
+            profit_margin = (profit / total_revenue * 100) if total_revenue > 0 else 0
+            
+            customer_profits[customer.id] = {
+                'customer_id': customer.id,
+                'customer_name': customer.name,
+                'orders_count': total_orders,
+                'revenue': round(total_revenue, 2),
+                'profit': round(profit, 2),
+                'profit_margin': round(profit_margin, 2),
+                'avg_order_value': round(total_revenue / total_orders, 2) if total_orders > 0 else 0,
+            }
+        
+        # Sort by profit
+        customer_profits_list = sorted(
+            customer_profits.values(),
+            key=lambda x: x['profit'],
+            reverse=True
+        )
+        
+        total_revenue = sum(cp['revenue'] for cp in customer_profits_list)
+        total_profit = sum(cp['profit'] for cp in customer_profits_list)
+        overall_margin = (total_profit / total_revenue * 100) if total_revenue > 0 else 0
+        
+        return Response({
+            'start_date': start_date.isoformat(),
+            'end_date': end_date.isoformat(),
+            'customers': customer_profits_list,
+            'summary': {
+                'total_customers': len(customer_profits_list),
+                'total_revenue': round(total_revenue, 2),
+                'total_profit': round(total_profit, 2),
+                'overall_margin': round(overall_margin, 2),
+            }
+        })

@@ -30,6 +30,14 @@ urlpatterns = [
     path('tax/', ReportViewSet.as_view({'get': 'tax_reports'}), name='report-tax'),
     path('tax-reports/', ReportViewSet.as_view({'get': 'tax_reports'}), name='report-tax-reports'),
     
+    # Day Book & Transaction Reports
+    path('day-book/', ReportViewSet.as_view({'get': 'day_book'}), name='report-day-book'),
+    path('all-transactions/', ReportViewSet.as_view({'get': 'all_transactions'}), name='report-all-transactions'),
+    path('customer-statement/', ReportViewSet.as_view({'get': 'customer_statement'}), name='report-customer-statement'),
+    path('supplier-statement/', ReportViewSet.as_view({'get': 'supplier_statement'}), name='report-supplier-statement'),
+    path('payables/', ReportViewSet.as_view({'get': 'payables'}), name='report-payables'),
+    path('party-profit/', ReportViewSet.as_view({'get': 'party_profit'}), name='report-party-profit'),
+    
     # Custom Reports
     path('custom-reports/fields/', ReportViewSet.as_view({'get': 'custom_reports_fields'}), name='report-custom-reports-fields'),
     path('custom-reports/', ReportViewSet.as_view({'get': 'custom_reports_list'}), name='report-custom-reports-list'),
