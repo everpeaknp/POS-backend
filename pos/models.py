@@ -700,6 +700,19 @@ class POSSettings(TenantModel):
     fonepay_number = models.CharField(max_length=50, blank=True, null=True)
     
     bank_transfer_enabled = models.BooleanField(default=True)
+    
+    # Link to Accounting BankAccount for bank transfers (recommended)
+    # If set, bank transfer payments will update this account's balance automatically
+    linked_bank_account = models.ForeignKey(
+        'accounting.BankAccount',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='pos_settings',
+        help_text='Link to the bank account in Accounting → Bank Accounts that will receive bank transfer payments'
+    )
+    
+    # Legacy fields (kept for backward compatibility with existing setups)
     bank_qr = models.ImageField(upload_to='pos/qr/', blank=True, null=True)
     bank_name = models.CharField(max_length=100, blank=True)
     bank_account_number = models.CharField(max_length=50, blank=True)

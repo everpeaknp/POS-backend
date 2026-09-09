@@ -81,6 +81,7 @@ def build_dashboard_financials(tenant, from_date: date, to_date: date, *, includ
 
     total_payables = _sum_purchase_payables(tenant)
 
+    # Invoice revenue (Sales module invoices)
     invoice_qs = Invoice.objects.filter(
         tenant=tenant,
         date__gte=from_date,
@@ -91,6 +92,7 @@ def build_dashboard_financials(tenant, from_date: date, to_date: date, *, includ
         total=Coalesce(Sum('amount'), Value(Decimal('0.00')))
     )['total']
 
+    # Sales Order revenue (unbilled sales orders)
     sales_revenue = SalesOrder.objects.filter(
         tenant=tenant,
         status='Delivered',
@@ -99,7 +101,16 @@ def build_dashboard_financials(tenant, from_date: date, to_date: date, *, includ
         invoices__isnull=True,
     ).aggregate(total=Coalesce(Sum('total'), Value(Decimal('0.00'))))['total']
 
-    total_revenue = invoice_revenue + sales_revenue
+    # POS transaction revenue
+    from pos.models import POSTransaction
+    pos_revenue = POSTransaction.objects.filter(
+        tenant=tenant,
+        date__gte=from_date,
+        date__lte=to_date,
+        status='completed',
+    ).aggregate(total=Coalesce(Sum('total'), Value(Decimal('0.00'))))['total']
+
+    total_revenue = invoice_revenue + sales_revenue + pos_revenue
 
     purchase_expenses = PurchaseInvoice.objects.filter(
         tenant=tenant,
@@ -144,6 +155,7 @@ def build_dashboard_financials(tenant, from_date: date, to_date: date, *, includ
         'breakdown': {
             'sales_revenue': float(sales_revenue),
             'invoice_revenue': float(invoice_revenue),
+            'pos_revenue': float(pos_revenue),
             'purchase_expenses': float(purchase_expenses),
             'material_expenses': float(material_expenses),
             'labor_expenses': float(labor_expenses),

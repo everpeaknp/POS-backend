@@ -76,6 +76,8 @@ class POSHeldOrderSerializer(serializers.ModelSerializer):
 # ---------------------------------------------------------------------------
 
 class POSSettingsSerializer(serializers.ModelSerializer):
+    linked_bank_account_details = serializers.SerializerMethodField()
+    
     class Meta:
         model = POSSettings
         fields = [
@@ -85,8 +87,19 @@ class POSSettingsSerializer(serializers.ModelSerializer):
             'esewa_enabled', 'esewa_qr', 'esewa_number', 'esewa_name',
             'khalti_enabled', 'khalti_qr', 'khalti_number', 'khalti_name',
             'fonepay_enabled', 'fonepay_qr', 'fonepay_number',
-            'bank_transfer_enabled', 'bank_qr', 'bank_name', 'bank_account_number', 'bank_account_name',
+            'bank_transfer_enabled', 'linked_bank_account', 'linked_bank_account_details',
+            'bank_qr', 'bank_name', 'bank_account_number', 'bank_account_name',
         ]
+    
+    def get_linked_bank_account_details(self, obj):
+        if obj.linked_bank_account:
+            return {
+                'id': obj.linked_bank_account.id,
+                'bank_name': obj.linked_bank_account.bank_name,
+                'account_number': obj.linked_bank_account.account_number,
+                'account_name': obj.linked_bank_account.account_name,
+            }
+        return None
 
 
 # ---------------------------------------------------------------------------
@@ -164,7 +177,6 @@ class POSDiscountSerializer(serializers.ModelSerializer):
 class POSTransactionLineSerializer(serializers.ModelSerializer):
     """Serializer for POS Transaction Lines"""
     refunded_quantity = serializers.SerializerMethodField()
-    # Don't declare product field - let it use default behavior but we'll override validation
     
     class Meta:
         model = POSTransactionLine
@@ -174,42 +186,13 @@ class POSTransactionLineSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = ['product_name', 'product_sku', 'line_total', 'refunded_quantity']
     
-    def to_internal_value(self, data):
-        """Override to manually look up product by ID"""
-        from inventory.models import Product
-        
-        # If product is an integer ID, look it up
-        if 'product' in data and isinstance(data['product'], (int, str)):
-            product_id = int(data['product'])
-            
-            # Get tenant from context
-            request = self.context.get('request')
-            tenant = request.user.tenant if request and hasattr(request.user, 'tenant') else None
-            
-            # Try to find product
-            try:
-                if tenant:
-                    # Use unfiltered queryset with explicit tenant check
-                    from django.db import models as django_models
-                    product = Product.objects.filter(id=product_id, tenant=tenant).first()
-                else:
-                    product = None
-                
-                if not product:
-                    raise serializers.ValidationError({
-                        'product': f'Invalid pk "{product_id}" - object does not exist.'
-                    })
-                
-                # Replace ID with actual product instance for parent serializer
-                data = data.copy()
-                data['product'] = product
-                
-            except (ValueError, TypeError, Product.DoesNotExist):
-                raise serializers.ValidationError({
-                    'product': f'Invalid pk "{product_id}" - object does not exist.'
-                })
-        
-        return super().to_internal_value(data)
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # Dynamically set product queryset based on tenant from context
+        request = self.context.get('request')
+        if request and hasattr(request.user, 'tenant') and request.user.tenant:
+            from inventory.models import Product
+            self.fields['product'].queryset = Product.objects.filter(tenant=request.user.tenant)
 
     def get_refunded_quantity(self, obj):
         from django.db.models import Sum
@@ -291,15 +274,16 @@ class POSTransactionCreateSerializer(serializers.ModelSerializer):
             if not product:
                 continue
 
-            available = get_warehouse_stock(product, warehouse)
+            # Check total stock across ALL warehouses (not just selected warehouse)
+            available = product.get_total_stock()
             if available <= 0:
                 raise serializers.ValidationError({
-                    'lines': f'{product.name} is out of stock at the selected warehouse.'
+                    'lines': f'{product.name} is out of stock.'
                 })
             if available < quantity:
                 raise serializers.ValidationError({
                     'lines': (
-                        f'Insufficient stock for {product.name} at {warehouse.name}. '
+                        f'Insufficient stock for {product.name}. '
                         f'Available: {available}, Requested: {quantity}'
                     )
                 })
@@ -430,28 +414,70 @@ class POSTransactionCreateSerializer(serializers.ModelSerializer):
                 from inventory.models import Stock, StockMovement
                 warehouse = validated_data.get('warehouse')
                 
+                # Deduct stock intelligently: try selected warehouse first, then other warehouses
+                quantity_to_deduct = line_data['quantity']
+                
+                # Try selected warehouse first if specified
                 if warehouse:
-                    stock, _created = Stock.objects.get_or_create(
+                    stock = Stock.objects.filter(
                         tenant=self.context['request'].user.tenant,
                         product=product,
                         warehouse=warehouse,
-                        defaults={'quantity': Decimal('0.00')}
-                    )
+                        quantity__gt=0
+                    ).first()
                     
-                    stock.quantity -= line_data['quantity']
-                    stock.save()
-                    
-                    StockMovement.objects.create(
+                    if stock and stock.quantity > 0:
+                        deduct_qty = min(stock.quantity, quantity_to_deduct)
+                        stock.quantity -= deduct_qty
+                        stock.save()
+                        
+                        StockMovement.objects.create(
+                            tenant=self.context['request'].user.tenant,
+                            product=product,
+                            warehouse=warehouse,
+                            movement_type='out',
+                            quantity=deduct_qty,
+                            reference_type='POSTransaction',
+                            reference_id=pos_transaction.id,
+                            reason=f'POS Sale - {pos_transaction.transaction_number}',
+                            performed_by=self.context['request'].user
+                        )
+                        
+                        quantity_to_deduct -= deduct_qty
+                
+                # If still need to deduct more, pull from other warehouses with stock
+                if quantity_to_deduct > 0:
+                    other_stocks = Stock.objects.filter(
                         tenant=self.context['request'].user.tenant,
                         product=product,
-                        warehouse=warehouse,
-                        movement_type='out',
-                        quantity=line_data['quantity'],
-                        reference_type='POSTransaction',
-                        reference_id=pos_transaction.id,
-                        reason=f'POS Sale - {pos_transaction.transaction_number}',
-                        performed_by=self.context['request'].user
+                        quantity__gt=0
+                    ).exclude(warehouse=warehouse) if warehouse else Stock.objects.filter(
+                        tenant=self.context['request'].user.tenant,
+                        product=product,
+                        quantity__gt=0
                     )
+                    
+                    for other_stock in other_stocks:
+                        if quantity_to_deduct <= 0:
+                            break
+                        
+                        deduct_qty = min(other_stock.quantity, quantity_to_deduct)
+                        other_stock.quantity -= deduct_qty
+                        other_stock.save()
+                        
+                        StockMovement.objects.create(
+                            tenant=self.context['request'].user.tenant,
+                            product=product,
+                            warehouse=other_stock.warehouse,
+                            movement_type='out',
+                            quantity=deduct_qty,
+                            reference_type='POSTransaction',
+                            reference_id=pos_transaction.id,
+                            reason=f'POS Sale - {pos_transaction.transaction_number} (cross-warehouse)',
+                            performed_by=self.context['request'].user
+                        )
+                        
+                        quantity_to_deduct -= deduct_qty
 
             from sales.accounting_integration import post_pos_sale
             post_pos_sale(pos_transaction, created_lines)

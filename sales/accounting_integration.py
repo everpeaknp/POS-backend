@@ -222,16 +222,91 @@ def post_pos_sale(transaction, lines_with_products):
     """
     Post POS revenue and COGS.
     lines_with_products: iterable of objects with .product and .quantity
+    
+    Payment Method Integration:
+    - eSewa/Khalti/FonePay: Requires a BankAccount with the corresponding wallet enabled
+      (esewa_enabled/khalti_enabled/fonepay_enabled = True). If found, updates that bank
+      account's balance and creates a BankTransaction record.
+    - Bank Transfer: Uses the first active BankAccount found. Updates balance and creates
+      BankTransaction record.
+    - If no matching BankAccount exists for digital wallets/bank transfer, falls back to
+      default Cash account (does NOT auto-create bank accounts - user must set up first).
     """
     # Ensure an open fiscal year exists before posting
     from accounting.fiscal_services import ensure_fiscal_year
     ensure_fiscal_year(transaction.tenant)
     
-    # Determine the account to debit based on payment_method_ref or fallback to Cash
+    # Determine the account to debit based on payment method
+    cash_account = None
+    
+    # Check if payment_method_ref is set (new payment method system)
     if hasattr(transaction, 'payment_method_ref') and transaction.payment_method_ref:
         cash_account = transaction.payment_method_ref.linked_account
-    else:
-        # Fallback to default Cash account for backward compatibility
+    # Check if it's a digital wallet payment (eSewa/Khalti/FonePay) or bank transfer
+    elif transaction.payment_method in ['esewa', 'khalti', 'fonepay', 'bank_transfer']:
+        from accounting.models import BankAccount
+        
+        bank_account = None
+        
+        # For digital wallets, find account with that wallet enabled
+        if transaction.payment_method in ['esewa', 'khalti', 'fonepay']:
+            wallet_field_map = {
+                'esewa': 'esewa_enabled',
+                'khalti': 'khalti_enabled',
+                'fonepay': 'fonepay_enabled',
+            }
+            field_name = wallet_field_map.get(transaction.payment_method)
+            if field_name:
+                bank_account = BankAccount.objects.filter(
+                    tenant=transaction.tenant,
+                    status='active',
+                    **{field_name: True}
+                ).first()
+        
+        # For bank_transfer, check if POSSettings has a linked bank account, otherwise use any active account
+        elif transaction.payment_method == 'bank_transfer':
+            # Try to get the linked bank account from POS Settings first
+            from pos.models import POSSettings
+            pos_settings = POSSettings.get_for_tenant(transaction.tenant)
+            
+            if pos_settings.linked_bank_account and pos_settings.linked_bank_account.status == 'active':
+                bank_account = pos_settings.linked_bank_account
+            else:
+                # Fallback to first active bank account
+                bank_account = BankAccount.objects.filter(
+                    tenant=transaction.tenant,
+                    status='active'
+                ).first()
+        
+        if bank_account:
+            if bank_account.gl_account:
+                cash_account = bank_account.gl_account
+            
+            # Record in bank transactions and update balance
+            from accounting.models import BankTransaction
+            from django.utils import timezone
+            try:
+                BankTransaction.objects.create(
+                    tenant=transaction.tenant,
+                    bank_account=bank_account,
+                    date=transaction.date.date() if hasattr(transaction.date, 'date') else transaction.date,
+                    reference=transaction.transaction_number,
+                    description=f'POS Sale via {transaction.payment_method.replace("_", " ").title()}',
+                    type='Credit',
+                    debit=Decimal('0.00'),
+                    credit=transaction.total,
+                    balance=bank_account.balance + transaction.total,
+                    reconciled=False,
+                )
+                # Update bank account balance
+                bank_account.balance += transaction.total
+                bank_account.save(update_fields=['balance', 'updated_at'])
+            except Exception as e:
+                import logging
+                logging.getLogger(__name__).error(f'Failed to create bank transaction: {e}')
+    
+    # Fallback to default Cash account if no specific account found
+    if not cash_account:
         from accounting.services import get_cash_account
         cash_account = get_cash_account(transaction.tenant)
     
