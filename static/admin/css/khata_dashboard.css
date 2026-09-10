@@ -1,0 +1,116 @@
+/**
+ * KHATA custom dashboard pages (platform dashboard, business analytics,
+ * mail dashboard, settings hub) — styled to sit naturally inside Unfold's
+ * shell. Unfold toggles dark mode via a `.dark` class on <html> (Tailwind's
+ * class strategy), so light/dark here is done the same way instead of the
+ * `[data-bs-theme]` attribute approach used under the old Jazzmin setup —
+ * that mismatch was exactly why light mode never worked right before.
+ */
+
+/* Tokens live on :root (not scoped to .khata-analytics) so every custom
+   admin page — the platform dashboard, business analytics, mail center,
+   and settings hub all use different wrapper class names — can share
+   them without needing the same wrapper class. */
+:root {
+  /* Values below are Unfold's own default design tokens (oklch colors
+     from unfold/settings.py CONFIG_DEFAULTS, converted to hex) so these
+     custom dashboard pages use the exact same palette, radius, and
+     shadow as Unfold's own unfold/components/card.html — not just a
+     similar-looking approximation. */
+  --pink: #ad46ff;       /* primary-600 */
+  --pink-dim: #8200db;   /* primary-700 */
+  --gold: #c27aff;       /* primary-400, used for label/accent text */
+  --muted: #6a7282;      /* base-500 */
+  --fg: #101828;         /* base-900 */
+  --card-bg: #ffffff;
+  --card-border: #e5e7eb; /* base-200 */
+  --overlay: rgba(0, 0, 0, 0.03);
+  --shadow: 0 1px 2px 0 rgb(0 0 0 / 0.05); /* shadow-xs */
+  --radius: 0.375rem;    /* Unfold's --radius-default (6px) */
+  --radius-sm: 0.375rem;
+}
+
+.dark {
+  --gold: #c27aff;
+  --muted: #99a1af;       /* base-400 */
+  --fg: #f3f4f6;           /* base-100 */
+  --card-bg: #101828;      /* base-900, matches dark:bg-base-900 on unfold's card.html */
+  --card-border: #1e2939;  /* base-800, matches dark:border-base-800 */
+  --overlay: rgba(255, 255, 255, 0.03);
+  --shadow: 0 1px 2px 0 rgb(0 0 0 / 0.3);
+}
+
+.khata-analytics {
+  font-family: ui-sans-serif, system-ui, sans-serif;
+}
+
+.khata-analytics .page-header { margin-bottom: 1.5rem; }
+.khata-analytics .page-header h1 { font-size: 1.5rem; font-weight: 700; color: var(--fg); margin: 0 0 0.25rem; letter-spacing: -0.02em; }
+.khata-analytics .page-header p { color: var(--muted); margin: 0; font-size: 0.875rem; }
+
+.kpi-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 1rem; margin-bottom: 1.5rem; }
+.kpi-card {
+  background: var(--card-bg); border: 1px solid var(--card-border); border-radius: var(--radius); padding: 1.25rem;
+  box-shadow: var(--shadow); position: relative; overflow: hidden;
+}
+.kpi-card::before { content: ''; position: absolute; top: 0; left: 0; right: 0; height: 3px; background: var(--pink); }
+.kpi-card.warn::before { background: var(--gold); }
+.kpi-card.danger::before { background: #ef4444; }
+.kpi-card.info::before { background: #8b5cf6; }
+.kpi-label { font-size: 0.6875rem; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; color: var(--gold); }
+.kpi-value { font-size: 1.75rem; font-weight: 700; color: var(--fg); margin-top: 0.35rem; line-height: 1.1; letter-spacing: -0.02em; }
+.kpi-sub { font-size: 0.8rem; color: var(--muted); margin-top: 0.3rem; }
+
+.chart-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 1rem; margin-bottom: 1.5rem; }
+@media (max-width: 1100px) { .chart-grid { grid-template-columns: 1fr; } }
+.chart-card {
+  background: var(--card-bg); border: 1px solid var(--card-border); border-radius: var(--radius); padding: 1.25rem;
+  box-shadow: var(--shadow);
+}
+.chart-card h3 { font-size: 0.9375rem; font-weight: 700; color: var(--fg); margin: 0 0 1rem; letter-spacing: -0.01em; }
+.chart-wrap { position: relative; width: 100%; height: 260px; min-height: 260px; }
+.chart-wrap canvas {
+  display: block !important; width: 100% !important; height: 100% !important;
+  max-width: none !important; max-height: none !important;
+}
+.chart-empty {
+  height: 260px; display: flex; align-items: center; justify-content: center;
+  color: var(--muted); font-size: 0.85rem; text-align: center; padding: 1rem;
+}
+
+.tables-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
+@media (max-width: 900px) { .tables-grid { grid-template-columns: 1fr; } }
+.data-table { width: 100%; border-collapse: separate; border-spacing: 0; font-size: 0.85rem; }
+.data-table th { text-align: left; padding: 0.65rem 0.85rem; background: var(--overlay); color: var(--gold); font-weight: 700; font-size: 0.6875rem; text-transform: uppercase; letter-spacing: .04em; }
+.data-table th:first-child { border-radius: var(--radius-sm) 0 0 0; }
+.data-table th:last-child { border-radius: 0 var(--radius-sm) 0 0; }
+.data-table td { padding: 0.65rem 0.85rem; border-top: 1px solid var(--card-border); color: var(--fg); }
+.data-table tbody tr { transition: background-color 0.12s ease; }
+.data-table tbody tr:hover { background-color: rgba(232, 74, 122, 0.06); }
+.data-table a { color: var(--pink); text-decoration: none; }
+.data-table a:hover { text-decoration: underline; }
+
+.badge { display: inline-block; padding: 0.2rem 0.6rem; border-radius: 9999px; font-size: 0.7rem; font-weight: 700; letter-spacing: 0.01em; }
+.badge-ok { background: rgba(34, 197, 94, .15); color: #16a34a; }
+.badge-warn { background: rgba(212, 165, 116, .18); color: #92400e; }
+.badge-bad { background: rgba(239, 68, 68, .15); color: #dc2626; }
+.badge-muted { background: var(--overlay); color: var(--muted); }
+.dark .badge-ok { color: #86efac; }
+.dark .badge-warn { color: #f4d7b8; }
+.dark .badge-bad { color: #fca5a5; }
+
+/* Matches unfold/components/button.html's own "default" and "primary"
+   variants exactly (rounded-default, shadow-xs, same hover overlay
+   opacity) instead of the pill-shaped buttons used before. */
+.quick-actions { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-bottom: 1.5rem; }
+.quick-actions a, .quick-actions button {
+  display: inline-flex; align-items: center; gap: 0.35rem; padding: 0.5rem 0.75rem;
+  border-radius: var(--radius); font-size: 0.8125rem; font-weight: 500; text-decoration: none;
+  border: 1px solid var(--card-border); background: var(--card-bg); color: var(--fg); cursor: pointer;
+  box-shadow: var(--shadow);
+  transition: background-color 0.15s ease;
+}
+.quick-actions a:hover, .quick-actions button:hover { background: rgb(0 0 0 / 0.04); }
+.dark .quick-actions a:hover, .dark .quick-actions button:hover { background: rgb(255 255 255 / 0.06); }
+.quick-actions .primary { background: var(--pink); color: #fff; border-color: transparent; box-shadow: none; }
+.quick-actions .primary:hover { background: var(--pink-dim); }

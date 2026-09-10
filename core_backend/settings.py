@@ -41,9 +41,9 @@ CORS_ALLOW_HEADERS = (
 
 # Application definition
 INSTALLED_APPS = [
-    # Jazzmin must be before django.contrib.admin
-    'jazzmin',
-    
+    # Unfold must be before django.contrib.admin
+    'unfold',
+
     'django.contrib.admin',
     'django.contrib.auth',
     'django.contrib.contenttypes',
@@ -103,8 +103,8 @@ TEMPLATES = [
     {
         'BACKEND': 'django.template.backends.django.DjangoTemplates',
         # Filesystem loader runs before app_directories, so this lets
-        # core_backend/templates/admin/index.html win over jazzmin's own
-        # admin/index.html even though jazzmin is listed before core_backend
+        # core_backend/templates/admin/index.html win over unfold's own
+        # admin/index.html even though unfold is listed before core_backend
         # in INSTALLED_APPS.
         'DIRS': [BASE_DIR / 'core_backend' / 'templates'],
         'APP_DIRS': True,
@@ -224,17 +224,17 @@ SPECTACULAR_SETTINGS = {
     'DESCRIPTION': '''
 # Khata Business OS - Multi-Tenant ERP API
 
-## 🎯 Overview
+## Overview
 Khata is a comprehensive multi-tenant SaaS ERP platform designed for businesses in Nepal.
 It provides modules for inventory management, sales, purchases, accounting, construction,
 HR, and point-of-sale operations.
 
-## 🔐 Authentication
+## Authentication
 
 ### Getting Started
 1. **Register**: `POST /api/auth/register/` - Create a new account
 2. **Login**: `POST /api/auth/login/` - Get JWT access and refresh tokens
-3. **Authorize**: Click the 🔓 **Authorize** button above and enter: `Bearer <your_access_token>`
+3. **Authorize**: Click the **Authorize** button above and enter: `Bearer <your_access_token>`
 4. **Refresh**: `POST /api/auth/token/refresh/` - Get new token when expired (1 hour lifetime)
 
 ### Token Format
@@ -246,13 +246,13 @@ Authorization: Bearer eyJ0eXAiOiJKV1QiLCJhbGc...
 - **Access Token**: 1 hour
 - **Refresh Token**: 7 days
 
-## 🏢 Multi-Tenancy
+## Multi-Tenancy
 - All data is automatically scoped to your organization (tenant)
 - You can only access data belonging to your organization
 - Tenant is determined from your JWT token
 - No need to pass tenant ID in requests
 
-## 📦 Modules
+## Modules
 
 ### Core Modules
 - **Authentication**: User registration, login, profile management
@@ -269,12 +269,12 @@ Authorization: Bearer eyJ0eXAiOiJKV1QiLCJhbGc...
 - **POS**: Point of sale, sessions, transactions, discounts
 - **Reports**: Sales, purchase, inventory, financial, and custom reports
 
-## 💰 Currency
+## Currency
 All amounts are in **NPR (Nepali Rupees)** with 2 decimal places (paisa precision).
 
 Example: `"amount": "1250.50"` = Rs. 1,250.50
 
-## 📄 Pagination
+## Pagination
 List endpoints return paginated results:
 - **Default**: 25 items per page
 - **Parameters**: `?page=2&page_size=50`
@@ -290,7 +290,7 @@ Example:
 }
 ```
 
-## 🔍 Filtering & Search
+## Filtering & Search
 Most list endpoints support:
 - **Search**: `?search=keyword` - Full-text search
 - **Filtering**: `?field=value` - Filter by field
@@ -301,7 +301,7 @@ Examples:
 - `?category=2&ordering=-created_at`
 - `?customer=5&status=Confirmed`
 
-## ⚠️ Error Handling
+## Error Handling
 The API uses standard HTTP status codes:
 
 | Code | Meaning | Description |
@@ -331,7 +331,7 @@ The API uses standard HTTP status codes:
 }
 ```
 
-## 🎭 Roles & Permissions
+## Roles & Permissions
 - **Admin**: Full access to all modules
 - **Manager**: Manage operations, approve requests
 - **Supervisor**: Manage inventory and operations
@@ -339,7 +339,7 @@ The API uses standard HTTP status codes:
 - **Cashier**: POS operations only
 - **Viewer**: Read-only access
 
-## 🚀 Quick Start Example
+## Quick Start Example
 
 ### 1. Register & Login
 ```bash
@@ -360,8 +360,8 @@ curl -X GET http://localhost:8000/api/inventory/products/ \\
   -H "Authorization: Bearer <your_access_token>"
 ```
 
-## 📚 Additional Resources
-- **Swagger UI**: Interactive API testing (this page)
+## Additional Resources
+- **Swagger UI**: Interactive API testing at `/api/docs/`
 - **ReDoc**: Alternative documentation view at `/api/redoc/`
 - **OpenAPI Schema**: Download at `/api/schema/`
     ''',
@@ -824,6 +824,27 @@ View audit logs of all system activities.
             'theme': 'monokai'
         },
     },
+    'REDOC_UI_SETTINGS': {
+        # Endpoint path next to the description (not off in the far-right
+        # code-sample column) reads far more naturally top-to-bottom.
+        'pathInMiddlePanel': True,
+        'hideHostname': True,
+        'expandResponses': '200,201',
+        'jsonSampleExpandLevel': 2,
+        'hideDownloadButton': False,
+        'requiredPropsFirst': True,
+        'sortPropsAlphabetically': False,
+        'theme': {
+            'colors': {
+                'primary': {'main': '#7c5cff'},
+            },
+            'typography': {
+                'fontSize': '15px',
+                'headings': {'fontWeight': '600'},
+                'code': {'fontSize': '13px'},
+            },
+        },
+    },
     'SECURITY': [
         {
             'bearerAuth': []
@@ -906,178 +927,216 @@ View audit logs of all system activities.
 
 
 # ============================================================================
-# JAZZMIN ADMIN THEME - Clean & Minimal Configuration
+# UNFOLD ADMIN THEME - Clean & Minimal Configuration
 # ============================================================================
 
-JAZZMIN_SETTINGS = {
-    # Site branding — platform control plane, not the customer product
-    "site_title": "KHATA Platform",
-    "site_header": "KHATA Platform",
-    "site_brand": "KHATA Platform Admin",
-    "site_logo": None,
-    "site_icon": None,
-    "welcome_sign": "KHATA platform operations — manage organizations and users",
-    "copyright": "KHATA © 2026",
-    
-    # Search
-    "search_model": ["users.User", "tenants.Tenant"],
-    
-    # Top menu
-    "topmenu_links": [
-        {"name": "Dashboard", "url": "admin:index", "permissions": ["auth.view_user"]},
-    ],
+from django.urls import reverse_lazy  # noqa: E402
+from django.utils.translation import gettext_lazy as _unfold_lazy  # noqa: E402
 
-    # User menu — utility links live here instead of cluttering the top
-    # navbar; only "Dashboard" stays up top since it's core navigation.
-    "usermenu_links": [
-        {"model": "users.user"},
-        {"name": "Mail Center", "url": "/admin/mail/dashboard/", "icon": "fas fa-envelope", "permissions": ["auth.view_user"]},
-        {"name": "Customer App", "url": "http://localhost:3000", "icon": "fas fa-external-link-alt", "new_window": True},
-        {"name": "API Docs", "url": "/api/docs/", "icon": "fas fa-code", "new_window": True},
-        {"name": "API Schema", "url": "/api/schema/", "icon": "fas fa-file-code", "new_window": True},
-    ],
-    
-    # Side menu — platform apps only (business apps unregistered in platform_admin.py)
-    "show_sidebar": True,
-    "navigation_expanded": False,
-    "hide_apps": [
-        "inventory", "sales", "purchase", "accounting",
-        "construction", "hr", "pos", "reports", "suppliers",
-        "token_blacklist",
-    ],
-    "hide_models": [],
-
-    "custom_links": {
-        "setting": [
+UNFOLD = {
+    "SITE_TITLE": "KHATA Platform",
+    "SITE_HEADER": "KHATA Platform Admin",
+    "SITE_SUBHEADER": "Platform operations",
+    "SITE_URL": "/",
+    "SHOW_HISTORY": True,
+    "SHOW_VIEW_ON_SITE": True,
+    "SHOW_LANGUAGES": False,
+    "SHOW_BACK_BUTTON": False,
+    # Unfold's own built-in light/dark toggle lives in the navbar and
+    # works correctly out of the box (unlike the hand-rolled CSS this
+    # replaces, which only themed some surfaces and left others stuck
+    # dark regardless of mode).
+    # No COLORS override — this intentionally keeps Unfold's own default
+    # violet palette so the admin matches the reference look at
+    # https://demo.unfoldadmin.com/en/admin/ instead of a custom brand.
+    # Links shown in the user dropdown (bottom-left, below the
+    # light/dark/system theme switch). Setting this replaces Unfold's
+    # default "Change password" link, so it's listed explicitly here
+    # alongside the new API docs / customer app links.
+    "ACCOUNT": {
+        "navigation": [
             {
-                "name": "Platform settings",
-                "url": "/admin/setting/",
-                "icon": "fas fa-sliders-h",
-                "permissions": ["auth.view_user"],
+                # A callable (not reverse_lazy) so it resolves per-request
+                # to *this* logged-in user's own change form — the full
+                # profile page (avatar, name, email, phone, password link)
+                # rather than just the password-change form.
+                "title": _unfold_lazy("Account settings"),
+                "link": lambda request: reverse_lazy(
+                    "admin:users_user_change", args=[request.user.pk]
+                ),
             },
-        ],
-        "mail": [
             {
-                "name": "Mail Center",
-                "url": "/admin/mail/dashboard/",
-                "icon": "fas fa-chart-line",
-                "permissions": ["auth.view_user"],
+                "title": _unfold_lazy("API docs"),
+                "link": "/api/docs/",
+            },
+            {
+                # FRONTEND_URL itself is defined further down this file, so
+                # it's re-read here directly rather than referencing the
+                # not-yet-assigned module-level name.
+                "title": _unfold_lazy("Customer app"),
+                "link": config("FRONTEND_URL", default="http://localhost:3000"),
             },
         ],
     },
-
-    # App ordering
-    "order_with_respect_to": [
-        "tenants",
-        "setting",
-        "billing",
-        "mail",
-        "users",
-        "auth",
-        "setting.googleoauthsettings",
-        "setting.esewasettings",
-        "setting.sitesettings",
-        "billing.subscriptionplan",
-        "billing.usersubscription",
-        "billing.subscription",
-        "billing.billingpayment",
-        "mail center",
-        "mail.smtpsettings",
-        "mail.emailbranding",
-        "mail.emailtemplate",
-        "mail.marketingcampaign",
-        "mail.emailqueue",
-        "mail.emaillog",
-    ],
-    
-    # Icons for models
-    "icons": {
-        "tenants": "fas fa-building",
-        "setting": "fas fa-sliders-h",
-        "billing": "fas fa-file-invoice-dollar",
-        "mail": "fas fa-envelope",
-        "users": "fas fa-users",
-        "auth": "fas fa-shield-alt",
-        "auth.Group": "fas fa-users-cog",
-        "users.User": "fas fa-user-tie",
-        "users.AuditLog": "fas fa-clipboard-list",
-        "users.RolePermission": "fas fa-key",
-        "users.DefaultAppearanceSettings": "fas fa-palette",
-        "tenants.Tenant": "fas fa-building",
-        "tenants.OrganizationInvitation": "fas fa-envelope-open-text",
-        "tenants.UserTenantMembership": "fas fa-user-plus",
-        "billing.Subscription": "fas fa-file-invoice-dollar",
-        "billing.SubscriptionPlan": "fas fa-tags",
-        "billing.BillingPayment": "fas fa-wallet",
-        "setting.EsewaSettings": "fas fa-cog",
-        "setting.GoogleOAuthSettings": "fab fa-google",
-        "setting.SiteSettings": "fas fa-globe",
-        "mail.SmtpSettings": "fas fa-server",
-        "mail.EmailBranding": "fas fa-palette",
-        "mail.EmailTemplate": "fas fa-file-code",
-        "mail.MarketingCampaign": "fas fa-bullhorn",
-        "mail.EmailQueue": "fas fa-inbox",
-        "mail.EmailLog": "fas fa-envelope",
+    "SIDEBAR": {
+        "show_search": True,
+        "show_all_applications": False,
+        "navigation": [
+            {
+                "title": _unfold_lazy("Platform"),
+                "separator": True,
+                "collapsible": True,
+                "items": [
+                    {
+                        "title": _unfold_lazy("Dashboard"),
+                        "icon": "dashboard",
+                        "link": reverse_lazy("admin:index"),
+                    },
+                ],
+            },
+            {
+                "title": _unfold_lazy("Tenants"),
+                "collapsible": True,
+                "items": [
+                    {
+                        "title": _unfold_lazy("Workplaces"),
+                        "icon": "apartment",
+                        "link": reverse_lazy("admin:tenants_tenant_changelist"),
+                    },
+                    {
+                        "title": _unfold_lazy("Business Analytics"),
+                        "icon": "bar_chart",
+                        "link": reverse_lazy("admin_tenants_business_analytics"),
+                    },
+                    {
+                        "title": _unfold_lazy("Organization Invitations"),
+                        "icon": "mail",
+                        "link": reverse_lazy("admin:tenants_organizationinvitation_changelist"),
+                    },
+                    {
+                        "title": _unfold_lazy("User Tenant Memberships"),
+                        "icon": "group_add",
+                        "link": reverse_lazy("admin:tenants_usertenantmembership_changelist"),
+                    },
+                ],
+            },
+            {
+                "title": _unfold_lazy("Setting"),
+                "collapsible": True,
+                "items": [
+                    {
+                        "title": _unfold_lazy("Platform Settings"),
+                        "icon": "tune",
+                        "link": reverse_lazy("admin_setting_hub"),
+                    },
+                    {
+                        "title": _unfold_lazy("Site Settings"),
+                        "icon": "language",
+                        "link": reverse_lazy("admin:setting_sitesettings_changelist"),
+                    },
+                    {
+                        "title": _unfold_lazy("eSewa Integration"),
+                        "icon": "payments",
+                        "link": reverse_lazy("admin:setting_esewasettings_changelist"),
+                    },
+                    {
+                        "title": _unfold_lazy("Google Sign-in"),
+                        "icon": "key",
+                        "link": reverse_lazy("admin:setting_googleoauthsettings_changelist"),
+                    },
+                    {
+                        "title": _unfold_lazy("Default Appearance"),
+                        "icon": "palette",
+                        "link": reverse_lazy("admin:setting_defaultappearancesettings_changelist"),
+                    },
+                ],
+            },
+            {
+                "title": _unfold_lazy("Billing"),
+                "collapsible": True,
+                "items": [
+                    {
+                        "title": _unfold_lazy("Subscription Plans"),
+                        "icon": "sell",
+                        "link": reverse_lazy("admin:billing_subscriptionplan_changelist"),
+                    },
+                    {
+                        "title": _unfold_lazy("Subscriptions"),
+                        "icon": "receipt_long",
+                        "link": reverse_lazy("admin:billing_subscription_changelist"),
+                    },
+                    {
+                        "title": _unfold_lazy("Payments"),
+                        "icon": "account_balance_wallet",
+                        "link": reverse_lazy("admin:billing_billingpayment_changelist"),
+                    },
+                ],
+            },
+            {
+                "title": _unfold_lazy("Mail"),
+                "collapsible": True,
+                "items": [
+                    {
+                        "title": _unfold_lazy("Mail Center"),
+                        "icon": "forward_to_inbox",
+                        "link": reverse_lazy("admin_mail_dashboard"),
+                    },
+                    {
+                        "title": _unfold_lazy("SMTP Settings"),
+                        "icon": "dns",
+                        "link": reverse_lazy("admin:mail_smtpsettings_changelist"),
+                    },
+                    {
+                        "title": _unfold_lazy("Email Templates"),
+                        "icon": "description",
+                        "link": reverse_lazy("admin:mail_emailtemplate_changelist"),
+                    },
+                    {
+                        "title": _unfold_lazy("Email Queue"),
+                        "icon": "outbox",
+                        "link": reverse_lazy("admin:mail_emailqueue_changelist"),
+                    },
+                    {
+                        "title": _unfold_lazy("Email Log"),
+                        "icon": "history",
+                        "link": reverse_lazy("admin:mail_emaillog_changelist"),
+                    },
+                ],
+            },
+            {
+                "title": _unfold_lazy("Users"),
+                "collapsible": True,
+                "items": [
+                    {
+                        "title": _unfold_lazy("Users"),
+                        "icon": "people",
+                        "link": reverse_lazy("admin:users_user_changelist"),
+                    },
+                    {
+                        "title": _unfold_lazy("Audit Log"),
+                        "icon": "fact_check",
+                        "link": reverse_lazy("admin:users_auditlog_changelist"),
+                    },
+                    {
+                        "title": _unfold_lazy("Role Permissions"),
+                        "icon": "admin_panel_settings",
+                        "link": reverse_lazy("admin:users_rolepermission_changelist"),
+                    },
+                ],
+            },
+            {
+                "title": _unfold_lazy("Helpdesk"),
+                "collapsible": True,
+                "items": [
+                    {
+                        "title": _unfold_lazy("Support Tickets"),
+                        "icon": "support_agent",
+                        "link": reverse_lazy("admin:helpdesk_supportticket_changelist"),
+                    },
+                ],
+            },
+        ],
     },
-    
-    "default_icon_parents": "fas fa-folder",
-    "default_icon_children": "fas fa-circle",
-    
-    # UI Tweaks
-    "related_modal_active": False,
-    # custom_css / custom_js are NOT set here — Jazzmin renders those as plain
-    # <link>/<script> tags with no cache-busting and no data-turbo-track, so
-    # under Turbo Drive (see core_backend/templates/admin/base.html) an edit
-    # to either file would silently never reach an already-open browser tab
-    # (Turbo reuses <head> elements with an unchanged src/href across soft
-    # navigations). They're loaded from base.html's extrastyle/extrajs
-    # blocks instead, with data-turbo-track="reload" so Turbo detects the
-    # change and forces a real reload.
-    "use_google_fonts_cdn": True,
-    "show_ui_builder": False,
-    
-    # Change form format
-    "changeform_format": "horizontal_tabs",
-    "changeform_format_overrides": {
-        "auth.user": "horizontal_tabs",
-        "users.user": "horizontal_tabs",
-        "setting.esewasettings": "horizontal_tabs",
-        "setting.googleoauthsettings": "horizontal_tabs",
-        "setting.sitesettings": "horizontal_tabs",
-    },
-    
-    "language_chooser": False,
-}
-
-JAZZMIN_UI_TWEAKS = {
-    "navbar_small_text": False,
-    "footer_small_text": False,
-    "body_small_text": False,
-    "brand_small_text": False,
-    "accent": "accent-primary",
-    "no_navbar_border": False,
-    "navbar_fixed": True,
-    "layout_boxed": False,
-    "footer_fixed": False,
-    "sidebar_fixed": True,
-    "sidebar": "sidebar-dark-primary",
-    "sidebar_nav_small_text": False,
-    "sidebar_disable_expand": False,
-    "sidebar_nav_child_indent": True,
-    "sidebar_nav_compact_style": False,
-    "sidebar_nav_legacy_style": False,
-    "sidebar_nav_flat_style": False,
-    "theme": "flatly",
-    "default_theme_mode": "light",
-    "button_classes": {
-        "primary": "btn-primary",
-        "secondary": "btn-secondary",
-        "info": "btn-info",
-        "warning": "btn-warning",
-        "danger": "btn-danger",
-        "success": "btn-success"
-    },
-    "actions_sticky_top": False
 }
 
 # ============================================================================

@@ -1,11 +1,11 @@
-"""Helpers for custom pages that use the Jazzmin admin shell."""
+"""Helpers for custom pages that use the Unfold admin shell."""
 
 from django.contrib import admin
 from django.template.response import TemplateResponse
 
 
 def admin_render(request, template_name: str, context: dict | None = None):
-    """Render inside the Django admin / Jazzmin layout (sidebar, apps, permissions)."""
+    """Render inside the Django admin / Unfold layout (sidebar, apps, permissions)."""
     ctx = {
         **admin.site.each_context(request),
         'is_popup': False,

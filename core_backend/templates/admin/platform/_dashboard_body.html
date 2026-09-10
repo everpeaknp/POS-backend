@@ -54,11 +54,15 @@
   <div class="chart-grid">
     <div class="chart-card">
       <h3>New organizations (30 days)</h3>
-      <div class="chart-wrap"><canvas id="chartSignups"></canvas></div>
+      <!-- Unfold's own native chart canvas (unfold/components/chart/line.html) —
+           its app.js auto-initializes any canvas.chart on page load using
+           the exact same theme-aware defaults as demo.unfoldadmin.com,
+           so no custom Chart.js call is needed for this one. -->
+      <div class="chart-wrap"><canvas class="chart" data-type="line" data-value="{{ stats.charts.signups_unfold }}"></canvas></div>
     </div>
     <div class="chart-card">
       <h3>Revenue (30 days)</h3>
-      <div class="chart-wrap"><canvas id="chartRevenue"></canvas></div>
+      <div class="chart-wrap"><canvas class="chart" data-type="line" data-value="{{ stats.charts.revenue_unfold }}"></canvas></div>
     </div>
     <div class="chart-card">
       <h3>Subscription status</h3>
@@ -70,7 +74,7 @@
     </div>
     <div class="chart-card">
       <h3>Module adoption</h3>
-      <div class="chart-wrap"><canvas id="chartModules"></canvas></div>
+      <div class="chart-wrap"><canvas class="chart" data-type="bar" data-value="{{ stats.charts.modules_unfold }}"></canvas></div>
     </div>
     <div class="chart-card">
       <h3>Business types</h3>

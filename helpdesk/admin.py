@@ -1,10 +1,13 @@
 from django import forms
-from django.contrib import admin
+from django.contrib import admin, messages
 from django.http import HttpResponseRedirect, JsonResponse
 from django.urls import path
 from django.utils import timezone
 from django.utils.html import format_html, format_html_join
 from django.utils.safestring import mark_safe
+
+from unfold.admin import ModelAdmin as UnfoldModelAdmin
+from unfold.decorators import display
 
 from .models import SupportTicket, SupportTicketMessage
 
@@ -24,7 +27,7 @@ class SupportTicketAdminForm(forms.ModelForm):
 
 
 @admin.register(SupportTicket)
-class SupportTicketAdmin(admin.ModelAdmin):
+class SupportTicketAdmin(UnfoldModelAdmin):
     form = SupportTicketAdminForm
     list_display = ['id', 'subject', 'tenant', 'user', 'category', 'priority', 'status', 'message_count', 'created_at']
     list_filter = ['status', 'priority', 'category']
@@ -98,8 +101,8 @@ class SupportTicketAdmin(admin.ModelAdmin):
             if m.message_type != SupportTicketMessage.TYPE_MESSAGE:
                 bubbles.append(format_html(
                     '<div style="text-align:center;margin:10px 0;">'
-                    '<span style="font-size:11px;color:#6b7280;background:#f3f4f6;padding:4px 12px;'
-                    'border-radius:9999px;">{} · {}</span></div>',
+                    '<span style="font-size:11px;padding:4px 12px;border-radius:9999px;" '
+                    'class="text-base-500 dark:text-base-400 bg-base-100 dark:bg-base-800">{} · {}</span></div>',
                     m.body or f'Status changed to {m.new_status}',
                     timezone.localtime(m.created_at).strftime('%b %d, %Y %I:%M %p'),
                 ))
@@ -121,16 +124,20 @@ class SupportTicketAdmin(admin.ModelAdmin):
                     m.attachment.url, fname,
                 )
 
+            bubble_classes = (
+                'bg-primary-600 text-white'
+                if is_staff
+                else 'bg-base-100 text-base-900 dark:bg-base-800 dark:text-base-100'
+            )
             bubbles.append(format_html(
                 '<div style="display:flex;justify-content:{};margin:6px 0;">'
                 '<div style="max-width:70%;">'
-                '<div style="background:{};color:{};padding:10px 14px;'
+                '<div class="{}" style="padding:10px 14px;'
                 'border-radius:{};font-size:13px;white-space:pre-wrap;word-break:break-word;">{}{}</div>'
-                '<div style="font-size:11px;color:#9ca3af;margin-top:3px;text-align:{};">{} · {}</div>'
+                '<div class="text-base-400 dark:text-base-500" style="font-size:11px;margin-top:3px;text-align:{};">{} · {}</div>'
                 '</div></div>',
                 'flex-end' if is_staff else 'flex-start',
-                '#22C55E' if is_staff else '#f3f4f6',
-                '#fff' if is_staff else '#111827',
+                bubble_classes,
                 '18px 18px 4px 18px' if is_staff else '18px 18px 18px 4px',
                 m.body, attachment_html,
                 'right' if is_staff else 'left',
@@ -138,44 +145,58 @@ class SupportTicketAdmin(admin.ModelAdmin):
             ))
 
         thread_html = mark_safe(''.join(bubbles)) if bubbles else format_html(
-            '<div style="color:#9ca3af;font-size:13px;">No messages yet.</div>'
+            '<div class="text-base-400 dark:text-base-500" style="font-size:13px;">No messages yet.</div>'
         )
 
         timeline_html = format_html_join(
             '',
-            '<div style="display:flex;gap:8px;padding:6px 0;border-bottom:1px solid #f3f4f6;">'
-            '<span style="color:#9ca3af;">●</span>'
-            '<div><div style="font-size:12px;color:#111827;">{}</div>'
-            '<div style="font-size:11px;color:#9ca3af;">{}</div></div></div>',
+            '<div class="border-base-100 dark:border-base-800" style="display:flex;gap:8px;padding:6px 0;border-bottom:1px solid;">'
+            '<span class="text-base-400 dark:text-base-500">●</span>'
+            '<div><div class="text-base-900 dark:text-base-100" style="font-size:12px;">{}</div>'
+            '<div class="text-base-400 dark:text-base-500" style="font-size:11px;">{}</div></div></div>',
             ((label, timezone.localtime(ts).strftime('%b %d, %Y %I:%M %p')) for label, ts in timeline_rows),
         )
 
         return thread_html, timeline_html, last_id
 
-    @admin.display(description='')
+    @display(description='', wrapper_class='max-w-none w-full')
     def conversation_view(self, obj):
         if not obj or not obj.pk:
-            return format_html('<span style="color:#9ca3af;">Save the ticket first to see the conversation.</span>')
+            return format_html('<span class="text-base-400 dark:text-base-500">Save the ticket first to see the conversation.</span>')
 
         thread_html, timeline_html, last_id = self._build_thread_and_timeline(obj)
         fragment_url = f'/admin/helpdesk/supportticket/{obj.pk}/thread-fragment/'
         status_label = obj.get_status_display()
-        composer = format_html(
-            '<div style="border-top:1px solid #e5e7eb;padding:12px;background:#fff;">'
-            '<div id="admin-reply-preview" style="display:none;align-items:center;gap:8px;'
-            'margin-bottom:8px;padding:8px 10px;border:1px solid #e5e7eb;border-radius:8px;background:#f9fafb;">'
-            '<span style="font-size:12px;color:#374151;flex:1;" id="admin-reply-preview-name"></span>'
+
+        if obj.status == 'closed':
+            composer = format_html(
+                '<div class="border-base-200 dark:border-base-800 bg-white dark:bg-base-900 '
+                'text-base-400 dark:text-base-500" '
+                'style="border-top:1px solid;padding:16px;text-align:center;font-size:13px;">'
+                'This ticket is closed and no longer accepts new messages. '
+                'Change the status above and save to reopen it.'
+                '</div>'
+            )
+        else:
+            composer = format_html(
+            '<div class="border-base-200 dark:border-base-800 bg-white dark:bg-base-900" '
+            'style="border-top:1px solid;padding:12px;">'
+            '<div id="admin-reply-preview" class="border-base-200 dark:border-base-700 bg-base-50 dark:bg-base-800" '
+            'style="display:none;align-items:center;gap:8px;'
+            'margin-bottom:8px;padding:8px 10px;border:1px solid;border-radius:8px;">'
+            '<span class="text-base-600 dark:text-base-300" style="font-size:12px;flex:1;" id="admin-reply-preview-name"></span>'
             '<span onclick="'
             'document.getElementById(\'id_reply_attachment\').value=\'\';'
             'document.getElementById(\'admin-reply-preview\').style.display=\'none\';'
-            '" style="cursor:pointer;color:#9ca3af;font-size:14px;">✕</span>'
+            '" class="text-base-400 dark:text-base-500" style="cursor:pointer;font-size:14px;">✕</span>'
             '</div>'
             '<div style="display:flex;align-items:flex-end;gap:8px;">'
-            '<label for="id_reply_attachment" title="Attach a file (image or PDF)" style="cursor:pointer;'
-            'width:38px;height:38px;border:1px solid #d1d5db;background:#f9fafb;border-radius:10px;'
+            '<label for="id_reply_attachment" title="Attach a file (image or PDF)" '
+            'class="border-base-300 dark:border-base-700 bg-base-50 dark:bg-base-800 text-base-500 dark:text-base-400" '
+            'style="cursor:pointer;width:38px;height:38px;border:1px solid;border-radius:10px;'
             'display:flex;align-items:center;justify-content:center;flex-shrink:0;">'
             '<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" '
-            'stroke="#4b5563" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">'
+            'stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">'
             '<path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"/>'
             '</svg></label>'
             '<input type="file" name="reply_attachment" id="id_reply_attachment" style="display:none;" '
@@ -187,7 +208,8 @@ class SupportTicketAdmin(admin.ModelAdmin):
             'else{{p.style.display=\'none\';}}'
             '">'
             '<textarea name="reply_body" id="id_reply_body" rows="1" placeholder="Type a message..." '
-            'style="flex:1;resize:none;border:1px solid #e5e7eb;border-radius:10px;padding:10px 12px;'
+            'class="border-base-200 dark:border-base-700 bg-white dark:bg-base-800 text-base-900 dark:text-base-100" '
+            'style="flex:1;resize:none;border:1px solid;border-radius:10px;padding:10px 12px;'
             'font-size:13px;font-family:inherit;max-height:120px;" '
             'oninput="this.style.height=\'auto\';this.style.height=this.scrollHeight+\'px\';" '
             'onkeydown="if(event.key===\'Enter\'&&!event.shiftKey){{event.preventDefault();'
@@ -200,7 +222,7 @@ class SupportTicketAdmin(admin.ModelAdmin):
             '<path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/>'
             '</svg></button>'
             '</div>'
-            '<p style="font-size:11px;color:#9ca3af;margin:6px 2px 0;">'
+            '<p class="text-base-400 dark:text-base-500" style="font-size:11px;margin:6px 2px 0;">'
             'Sends as a message in this ticket\'s thread · status shown to user: {}'
             '</p>'
             '</div>',
@@ -227,12 +249,15 @@ class SupportTicketAdmin(admin.ModelAdmin):
             '{}'
             '<div id="helpdesk-conversation-root" data-last-id="{}" data-fragment-url="{}" '
             'style="display:flex;gap:16px;align-items:stretch;width:100%;height:calc(100vh - 300px);min-height:520px;">'
-            '<div style="flex:1;min-width:0;background:#fff;border:1px solid #e5e7eb;border-radius:12px;'
+            '<div class="bg-white dark:bg-base-900 border-base-200 dark:border-base-800" '
+            'style="flex:1;min-width:0;border:1px solid;border-radius:12px;'
             'overflow:hidden;display:flex;flex-direction:column;">'
-            '<div id="helpdesk-thread-scroll" style="flex:1;min-height:0;overflow-y:auto;padding:16px;">{}</div>{}</div>'
-            '<div style="width:280px;flex-shrink:0;background:#fff;border:1px solid #e5e7eb;'
+            '<div id="helpdesk-thread-scroll" style="flex:1;min-height:0;overflow-y:auto;padding:16px;'
+            'display:flex;flex-direction:column;justify-content:flex-end;gap:0;">{}</div>{}</div>'
+            '<div class="bg-white dark:bg-base-900 border-base-200 dark:border-base-800" '
+            'style="width:280px;flex-shrink:0;border:1px solid;'
             'border-radius:12px;padding:14px;overflow-y:auto;">'
-            '<div style="font-size:12px;font-weight:600;color:#111827;margin-bottom:8px;">Timeline</div>'
+            '<div class="text-base-900 dark:text-base-100" style="font-size:12px;font-weight:600;margin-bottom:8px;">Timeline</div>'
             '<div id="helpdesk-timeline">{}</div></div>'
             '</div>'
             '<script>'
@@ -304,7 +329,7 @@ class SupportTicketAdmin(admin.ModelAdmin):
 
         reply_body = (form.cleaned_data.get('reply_body') or '').strip()
         reply_attachment = form.cleaned_data.get('reply_attachment')
-        if reply_body or reply_attachment:
+        if (reply_body or reply_attachment) and obj.status != 'closed':
             SupportTicketMessage.objects.create(
                 ticket=obj,
                 author=request.user,
@@ -313,3 +338,5 @@ class SupportTicketAdmin(admin.ModelAdmin):
                 body=reply_body,
                 attachment=reply_attachment,
             )
+        elif (reply_body or reply_attachment) and obj.status == 'closed':
+            messages.warning(request, 'This ticket is closed — the reply was not sent. Reopen it first.')

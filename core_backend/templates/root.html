@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex, nofollow">
+  <title>{{ api_title }}</title>
+  <style>
+    :root {
+      --bg: #0b0d12;
+      --surface: #12151c;
+      --border: #23262f;
+      --text: #e6e8eb;
+      --muted: #8b90a0;
+      --accent: #7c5cff;
+      --ok: #22c55e;
+      --radius: 10px;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      line-height: 1.5;
+      -webkit-font-smoothing: antialiased;
+    }
+    .wrap {
+      max-width: 760px;
+      margin: 0 auto;
+      padding: 4rem 1.5rem 3rem;
+    }
+    header {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 0.75rem;
+      margin-bottom: 2.5rem;
+    }
+    .brand h1 {
+      margin: 0;
+      font-size: 1.375rem;
+      font-weight: 700;
+      letter-spacing: -0.01em;
+    }
+    .brand p {
+      margin: 0.2rem 0 0;
+      color: var(--muted);
+      font-size: 0.9rem;
+    }
+    .status {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.45rem;
+      padding: 0.35rem 0.7rem;
+      border: 1px solid var(--border);
+      border-radius: 9999px;
+      font-size: 0.8rem;
+      color: var(--muted);
+      white-space: nowrap;
+    }
+    .status .dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: var(--ok);
+      box-shadow: 0 0 0 3px rgba(34, 197, 94, 0.15);
+    }
+    section {
+      margin-bottom: 2rem;
+    }
+    h2 {
+      font-size: 0.75rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--muted);
+      margin: 0 0 0.85rem;
+    }
+    .info-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 1px;
+      background: var(--border);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      overflow: hidden;
+    }
+    .info-grid div {
+      background: var(--surface);
+      padding: 0.9rem 1rem;
+    }
+    .info-grid dt {
+      margin: 0 0 0.25rem;
+      font-size: 0.75rem;
+      color: var(--muted);
+    }
+    .info-grid dd {
+      margin: 0;
+      font-size: 0.9rem;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      word-break: break-all;
+    }
+    .links {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.6rem;
+    }
+    .links a {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.4rem;
+      padding: 0.55rem 0.9rem;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      color: var(--text);
+      text-decoration: none;
+      font-size: 0.875rem;
+      font-weight: 500;
+    }
+    .links a:hover,
+    .links a:focus-visible {
+      border-color: var(--accent);
+      color: var(--accent);
+    }
+    .modules {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.5rem;
+    }
+    .modules span {
+      padding: 0.4rem 0.75rem;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      font-size: 0.82rem;
+      color: var(--muted);
+    }
+    footer {
+      margin-top: 3rem;
+      padding-top: 1.5rem;
+      border-top: 1px solid var(--border);
+      color: var(--muted);
+      font-size: 0.8rem;
+    }
+    @media (max-width: 480px) {
+      .wrap { padding: 2.5rem 1.25rem 2rem; }
+      header { flex-direction: column; align-items: flex-start; }
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <div class="brand">
+        <h1>{{ api_title }}</h1>
+        <p>Backend API &amp; Services</p>
+      </div>
+      <span class="status"><span class="dot"></span>API Operational</span>
+    </header>
+
+    <section>
+      <h2>API Information</h2>
+      <dl class="info-grid">
+        <div>
+          <dt>Version</dt>
+          <dd>{{ api_version|default:"—" }}</dd>
+        </div>
+        <div>
+          <dt>Framework</dt>
+          <dd>Django REST Framework</dd>
+        </div>
+        <div>
+          <dt>Authentication</dt>
+          <dd>JWT (Bearer)</dd>
+        </div>
+        <div>
+          <dt>API base URL</dt>
+          <dd>{{ api_base_url }}</dd>
+        </div>
+      </dl>
+    </section>
+
+    <section>
+      <h2>Quick Links</h2>
+      <div class="links">
+        <a href="{% url 'swagger-ui' %}">Swagger UI</a>
+        <a href="{% url 'redoc' %}">ReDoc</a>
+        <a href="{% url 'schema' %}">OpenAPI Schema</a>
+        <a href="{% url 'admin:index' %}">Django Admin</a>
+      </div>
+    </section>
+
+    <section>
+      <h2>API Modules</h2>
+      <div class="modules">
+        {% for label, prefix in modules %}
+          <span>{{ label }}</span>
+        {% endfor %}
+      </div>
+    </section>
+
+    <footer>
+      This server hosts the backend API only. The product frontend runs separately.
+    </footer>
+  </div>
+</body>
+</html>

@@ -1,5 +1,6 @@
 """Platform operations analytics for KHATA admin dashboard."""
 
+import json
 from collections import Counter
 from datetime import timedelta
 from decimal import Decimal
@@ -18,6 +19,40 @@ from tenants.models import Tenant
 def _last_n_days(n: int = 30):
     start = timezone.now().date() - timedelta(days=n - 1)
     return start
+
+
+def unfold_line_chart(labels, values, color='#ad46ff'):
+    """
+    Build a JSON string ready for Unfold's own native chart canvas
+    (unfold/components/chart/line.html: <canvas class="chart"
+    data-type="line" data-value="...">) — Unfold's own JS applies its
+    theme-aware default options automatically when no data-options is
+    given, so this only needs to supply labels/datasets, not styling.
+    """
+    return json.dumps({
+        'labels': labels,
+        'datasets': [{
+            'data': values,
+            'borderColor': color,
+            'backgroundColor': color,
+            'fill': False,
+            'tension': 0.35,
+            'pointRadius': 0,
+            'borderWidth': 2,
+        }],
+    })
+
+
+def unfold_bar_chart(labels, values, color='#ad46ff'):
+    """Same as unfold_line_chart but for a horizontal/vertical bar canvas."""
+    return json.dumps({
+        'labels': labels,
+        'datasets': [{
+            'data': values,
+            'backgroundColor': color,
+            'borderRadius': 4,
+        }],
+    })
 
 
 def platform_dashboard_stats() -> dict:
@@ -156,6 +191,10 @@ def platform_dashboard_stats() -> dict:
         'charts': {
             'signups': {'labels': signup_labels, 'values': signup_values},
             'revenue': {'labels': revenue_labels, 'values': revenue_values},
+            # Unfold-native <canvas class="chart" data-type="line"
+            # data-value="..."> payloads — see unfold_line_chart().
+            'signups_unfold': unfold_line_chart(signup_labels, signup_values),
+            'revenue_unfold': unfold_line_chart(revenue_labels, revenue_values, color='#22c55e'),
             'subscriptions_status': {
                 'labels': [k.replace('_', ' ').title() for k in subs_by_status.keys()],
                 'values': list(subs_by_status.values()),
@@ -169,6 +208,7 @@ def platform_dashboard_stats() -> dict:
                 'values': list(payments_by_status.values()),
             },
             'modules': {'labels': module_labels, 'values': module_values},
+            'modules_unfold': unfold_bar_chart(module_labels, module_values),
             'business_types': {'labels': biz_labels, 'values': biz_values},
             'plan_types': {'labels': plan_type_labels, 'values': plan_type_values},
         },

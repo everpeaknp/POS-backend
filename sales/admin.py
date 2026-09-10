@@ -1,11 +1,14 @@
 from django.contrib import admin
+
+from unfold.admin import ModelAdmin as UnfoldModelAdmin
+from unfold.admin import TabularInline as UnfoldTabularInline
 from .models import (
     Customer, SalesOrder, SalesOrderLine, Quotation, QuotationLine, Invoice, CreditNote,
     CustomerLedger, PaymentReceived
 )
 
 
-class CustomerLedgerInline(admin.TabularInline):
+class CustomerLedgerInline(UnfoldTabularInline):
     """Inline display of customer ledger entries (read-only)"""
     model = CustomerLedger
     extra = 0
@@ -18,7 +21,7 @@ class CustomerLedgerInline(admin.TabularInline):
         return False
 
 
-class PaymentReceivedInline(admin.TabularInline):
+class PaymentReceivedInline(UnfoldTabularInline):
     """Inline display of payments received from customer"""
     model = PaymentReceived
     extra = 0
@@ -28,7 +31,7 @@ class PaymentReceivedInline(admin.TabularInline):
 
 
 @admin.register(Customer)
-class CustomerAdmin(admin.ModelAdmin):
+class CustomerAdmin(UnfoldModelAdmin):
     list_display = [
         'name', 'phone', 'email', 'type', 'status_badge', 
         'credit_limit', 'current_balance', 'outstanding_balance', 
@@ -141,7 +144,7 @@ class CustomerAdmin(admin.ModelAdmin):
     export_to_csv.short_description = 'Export selected customers to CSV'
 
 
-class SalesOrderLineInline(admin.TabularInline):
+class SalesOrderLineInline(UnfoldTabularInline):
     model = SalesOrderLine
     extra = 1
     fields = ['product', 'description', 'quantity', 'unit_price', 'discount_percent', 'tax_percent', 'amount']
@@ -149,7 +152,7 @@ class SalesOrderLineInline(admin.TabularInline):
 
 
 @admin.register(SalesOrder)
-class SalesOrderAdmin(admin.ModelAdmin):
+class SalesOrderAdmin(UnfoldModelAdmin):
     list_display = ['order_number', 'date', 'customer', 'payment_type', 'status', 'total', 'created_at']
     list_filter = ['status', 'payment_type', 'date']
     search_fields = ['order_number', 'customer__name', 'reference']
@@ -157,7 +160,7 @@ class SalesOrderAdmin(admin.ModelAdmin):
     inlines = [SalesOrderLineInline]
 
 
-class QuotationLineInline(admin.TabularInline):
+class QuotationLineInline(UnfoldTabularInline):
     model = QuotationLine
     extra = 1
     fields = ['product', 'description', 'quantity', 'unit_price', 'discount_percent', 'tax_percent', 'amount']
@@ -165,7 +168,7 @@ class QuotationLineInline(admin.TabularInline):
 
 
 @admin.register(Quotation)
-class QuotationAdmin(admin.ModelAdmin):
+class QuotationAdmin(UnfoldModelAdmin):
     list_display = ['quotation_number', 'date', 'customer', 'valid_until', 'total', 'status', 'created_at']
     list_filter = ['status', 'date']
     search_fields = ['quotation_number', 'customer__name']
@@ -174,7 +177,7 @@ class QuotationAdmin(admin.ModelAdmin):
 
 
 @admin.register(Invoice)
-class InvoiceAdmin(admin.ModelAdmin):
+class InvoiceAdmin(UnfoldModelAdmin):
     list_display = ['invoice_number', 'date', 'due_date', 'customer', 'amount', 'paid_amount', 'status', 'created_at']
     list_filter = ['status', 'date']
     search_fields = ['invoice_number', 'customer__name']
@@ -182,7 +185,7 @@ class InvoiceAdmin(admin.ModelAdmin):
 
 
 @admin.register(CreditNote)
-class CreditNoteAdmin(admin.ModelAdmin):
+class CreditNoteAdmin(UnfoldModelAdmin):
     list_display = ['credit_note_number', 'date', 'customer', 'invoice', 'amount', 'status', 'created_at']
     list_filter = ['status', 'date']
     search_fields = ['credit_note_number', 'customer__name']
@@ -191,7 +194,7 @@ class CreditNoteAdmin(admin.ModelAdmin):
 
 
 @admin.register(CustomerLedger)
-class CustomerLedgerAdmin(admin.ModelAdmin):
+class CustomerLedgerAdmin(UnfoldModelAdmin):
     list_display = ['customer', 'date', 'transaction_type', 'reference_number', 'debit_amount', 'credit_amount', 'running_balance', 'tenant']
     list_filter = ['transaction_type', 'date', 'tenant']
     search_fields = ['customer__name', 'reference_number', 'description']
@@ -208,7 +211,7 @@ class CustomerLedgerAdmin(admin.ModelAdmin):
 
 
 @admin.register(PaymentReceived)
-class PaymentReceivedAdmin(admin.ModelAdmin):
+class PaymentReceivedAdmin(UnfoldModelAdmin):
     list_display = ['payment_number', 'customer', 'date', 'amount', 'payment_method', 'received_by', 'tenant']
     list_filter = ['payment_method', 'date', 'tenant']
     search_fields = ['payment_number', 'customer__name', 'reference_number']

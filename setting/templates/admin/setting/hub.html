@@ -1,31 +1,32 @@
 {% extends "admin/base_site.html" %}
+{% load static %}
 
 {% block content_title %}{{ title }}{% endblock %}
 
 {% block extrastyle %}
 {{ block.super }}
+<link rel="stylesheet" href="{% static 'admin/css/khata_dashboard.css' %}">
 <style>
-  .setting-hub { --green: #22c55e; --muted: #64748b; }
   .setting-hub .subtitle { color: var(--muted); margin: 0 0 1.25rem; font-size: 0.9rem; }
   .setting-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 1rem; }
   .setting-card {
-    background: #fff; border: 1px solid #e2e8f0; border-radius: 12px; padding: 1.25rem;
-    box-shadow: 0 1px 3px rgba(0,0,0,.04);
+    background: var(--card-bg); border: 1px solid var(--card-border); border-radius: 16px; padding: 1.25rem;
+    box-shadow: var(--shadow);
   }
-  .setting-card h2 { margin: 0 0 0.5rem; font-size: 1rem; font-weight: 700; color: #0f172a; }
+  .setting-card h2 { margin: 0 0 0.5rem; font-size: 1rem; font-weight: 700; color: var(--fg); }
   .setting-card p { margin: 0 0 1rem; font-size: 0.85rem; color: var(--muted); line-height: 1.5; }
   .setting-card .status { font-size: 0.75rem; font-weight: 600; margin-bottom: 0.75rem; }
   .setting-card .status.on { color: #16a34a; }
-  .setting-card .status.off { color: #6b7280; }
+  .setting-card .status.off { color: var(--muted); }
   .setting-card a {
-    display: inline-block; padding: 0.5rem 1rem; border-radius: 8px; font-size: 0.85rem; font-weight: 500;
-    background: var(--green); color: #fff; text-decoration: none;
+    display: inline-block; padding: 0.5rem 1rem; border-radius: 9999px; font-size: 0.85rem; font-weight: 600;
+    background: var(--pink); color: #fff; text-decoration: none;
   }
 </style>
 {% endblock %}
 
 {% block content %}
-<div class="setting-hub col-12">
+<div class="setting-hub px-4 sm:px-6 lg:px-8 pt-6">
   <p class="subtitle">Site identity, integrations, and authentication.</p>
 
   <div class="setting-grid">
@@ -53,6 +54,13 @@
       </p>
       <p>Google OAuth for /auth/login and /auth/signup — client ID and secret from Google Cloud Console.</p>
       <a href="{% url 'admin:setting_googleoauthsettings_change' 1 %}">Configure Google</a>
+    </div>
+
+    <div class="setting-card">
+      <h2>Default appearance</h2>
+      <p class="status on">{{ appearance.get_theme_display }}</p>
+      <p>Default theme, accent color, sidebar/navbar color, and layout applied to newly registered users.</p>
+      <a href="{% url 'admin:setting_defaultappearancesettings_change' 1 %}">Configure appearance</a>
     </div>
   </div>
 </div>

@@ -803,7 +803,9 @@ class ReportViewSet(viewsets.ViewSet):
             from django.utils import timezone
             now = timezone.now().date()
 
-            if date_range == 'week':
+            if date_range == 'today':
+                start_date = now
+            elif date_range == 'week':
                 start_date = now - timedelta(days=now.weekday() + 1)
             elif date_range == 'quarter':
                 quarter_month = ((now.month - 1) // 3) * 3 + 1

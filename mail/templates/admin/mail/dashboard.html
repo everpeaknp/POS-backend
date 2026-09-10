@@ -1,31 +1,32 @@
 {% extends "admin/base_site.html" %}
+{% load static %}
 
 {% block content_title %}{{ title }}{% endblock %}
 
 {% block extrastyle %}
 {{ block.super }}
+<link rel="stylesheet" href="{% static 'admin/css/khata_dashboard.css' %}">
 <style>
-  .mail-dash { --green: #22c55e; --muted: #64748b; }
   .mail-dash .subtitle { color: var(--muted); margin: 0 0 1.25rem; font-size: 0.9rem; }
   .mail-kpi-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 1rem; margin-bottom: 1.25rem; }
-  .mail-kpi { background: #fff; border: 1px solid #e2e8f0; border-radius: 12px; padding: 1.25rem; box-shadow: 0 1px 3px rgba(0,0,0,.04); }
+  .mail-kpi { background: var(--card-bg); border: 1px solid var(--card-border); border-radius: 16px; padding: 1.25rem; box-shadow: var(--shadow); }
   .mail-kpi strong { display: block; font-size: 0.75rem; text-transform: uppercase; color: var(--muted); letter-spacing: .04em; }
-  .mail-kpi .val { font-size: 1.75rem; font-weight: 800; color: #0f172a; margin-top: 0.35rem; }
+  .mail-kpi .val { font-size: 1.75rem; font-weight: 800; color: var(--fg); margin-top: 0.35rem; }
   .mail-actions { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-bottom: 1.25rem; }
   .mail-actions button, .mail-actions a.btn-link {
-    padding: 0.5rem 1rem; border-radius: 8px; font-size: 0.85rem; font-weight: 500; border: 1px solid #e2e8f0;
-    background: #fff; cursor: pointer; text-decoration: none; color: #334155;
+    padding: 0.5rem 1rem; border-radius: 9999px; font-size: 0.85rem; font-weight: 500; border: 1px solid var(--card-border);
+    background: var(--overlay); cursor: pointer; text-decoration: none; color: var(--fg);
   }
-  .mail-actions .primary { background: var(--green); color: #fff; border-color: var(--green); }
+  .mail-actions .primary { background: var(--pink); color: #fff; border-color: transparent; }
   .mail-table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
-  .mail-table th { text-align: left; padding: 0.6rem 0.75rem; background: #f8fafc; color: var(--muted); font-size: 0.7rem; text-transform: uppercase; }
-  .mail-table td { padding: 0.6rem 0.75rem; border-top: 1px solid #f1f5f9; }
-  .mail-status { display: inline-block; padding: 0.15rem 0.5rem; border-radius: 9999px; font-size: 0.7rem; font-weight: 600; background: #f1f5f9; }
+  .mail-table th { text-align: left; padding: 0.6rem 0.75rem; background: var(--overlay); color: var(--muted); font-size: 0.7rem; text-transform: uppercase; }
+  .mail-table td { padding: 0.6rem 0.75rem; border-top: 1px solid var(--card-border); color: var(--fg); }
+  .mail-status { display: inline-block; padding: 0.15rem 0.5rem; border-radius: 9999px; font-size: 0.7rem; font-weight: 600; background: var(--overlay); }
 </style>
 {% endblock %}
 
 {% block content %}
-<div class="mail-dash col-12">
+<div class="mail-dash px-4 sm:px-6 lg:px-8 pt-6">
   <p class="subtitle">
     SMTP {% if smtp_enabled %}enabled{% else %}disabled{% endif %}
     · Queue {% if queue_paused %}paused{% else %}active{% endif %}

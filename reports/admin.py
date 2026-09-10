@@ -1,9 +1,11 @@
 from django.contrib import admin
+
+from unfold.admin import ModelAdmin as UnfoldModelAdmin
 from .models import CustomReport
 
 
 @admin.register(CustomReport)
-class CustomReportAdmin(admin.ModelAdmin):
+class CustomReportAdmin(UnfoldModelAdmin):
     """Admin interface for Custom Reports"""
     list_display = ['name', 'module', 'report_type', 'created_by', 'schedule', 'last_run', 'created_at']
     list_filter = ['module', 'report_type', 'schedule', 'created_at']

@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    {% block head %}
+    <title>{{ title|default:"Swagger" }}</title>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><rect width=%22100%22 height=%22100%22 rx=%2222%22 fill=%22%237c5cff%22/></svg>">
+    <link rel="stylesheet" href="{{ swagger_ui_css }}">
+    <style>
+      html { box-sizing: border-box; overflow-y: scroll; }
+      *, *:after, *:before { box-sizing: inherit; }
+      body { background: #fafafa; margin: 0; }
+
+      /* A thin branded bar above the stock Swagger UI — real-world API
+         docs (Stripe, GitHub, Twilio) wrap the interactive tool in their
+         own nav rather than reskinning Swagger UI itself, which stays
+         familiar to any developer who has used it before. */
+      #khata-docs-bar {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 1rem;
+        padding: 0.65rem 1.25rem;
+        background: #0b0d12;
+        border-bottom: 1px solid #23262f;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+        font-size: 0.875rem;
+      }
+      #khata-docs-bar .brand {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        color: #e6e8eb;
+        font-weight: 600;
+        text-decoration: none;
+      }
+      #khata-docs-bar .brand .dot {
+        width: 7px;
+        height: 7px;
+        border-radius: 50%;
+        background: #22c55e;
+        box-shadow: 0 0 0 3px rgba(34, 197, 94, 0.15);
+        flex-shrink: 0;
+      }
+      #khata-docs-bar nav {
+        display: flex;
+        gap: 1.25rem;
+        flex-wrap: wrap;
+      }
+      #khata-docs-bar nav a {
+        color: #8b90a0;
+        text-decoration: none;
+      }
+      #khata-docs-bar nav a:hover,
+      #khata-docs-bar nav a:focus-visible {
+        color: #e6e8eb;
+      }
+    </style>
+    {% endblock head %}
+  </head>
+  <body>
+    {% block body %}
+    <div id="khata-docs-bar">
+      <a class="brand" href="/"><span class="dot"></span>{{ title|default:"API Docs" }}</a>
+      <nav>
+        <a href="/">Overview</a>
+        <a href="/api/redoc/">ReDoc</a>
+        <a href="/api/schema/">OpenAPI Schema</a>
+        <a href="/admin/">Django Admin</a>
+      </nav>
+    </div>
+    <div id="swagger-ui"></div>
+    <script src="{{ swagger_ui_bundle }}"></script>
+    <script src="{{ swagger_ui_standalone }}"></script>
+    {% if script_url %}
+    <script src="{{ script_url }}"></script>
+    {% else %}
+    <script>
+    {% include template_name_js %}
+    </script>
+    {% endif %}
+    {% endblock %}
+  </body>
+</html>

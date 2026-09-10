@@ -1,6 +1,10 @@
 from django.contrib import admin, messages
 from django.utils.html import format_html
 
+from unfold.admin import ModelAdmin as UnfoldModelAdmin
+from unfold.admin import StackedInline as UnfoldStackedInline
+from unfold.admin import TabularInline as UnfoldTabularInline
+
 from billing.account_limits import count_tenant_members
 from billing.models import Subscription
 from billing.plans import get_plan_type_to_code_map, get_plan
@@ -11,7 +15,7 @@ from .invitation_models import OrganizationInvitation
 from .membership_models import UserTenantMembership
 
 
-class UserTenantMembershipInline(admin.TabularInline):
+class UserTenantMembershipInline(UnfoldTabularInline):
     model = UserTenantMembership
     extra = 0
     fields = ['user', 'role', 'joined_at']
@@ -19,7 +23,7 @@ class UserTenantMembershipInline(admin.TabularInline):
     autocomplete_fields = ['user']
 
 
-class SubscriptionInline(admin.StackedInline):
+class SubscriptionInline(UnfoldStackedInline):
     model = Subscription
     extra = 0
     max_num = 1
@@ -32,7 +36,7 @@ class SubscriptionInline(admin.StackedInline):
 
 
 @admin.register(Tenant)
-class TenantAdmin(admin.ModelAdmin):
+class TenantAdmin(UnfoldModelAdmin):
     form = TenantAdminForm
     list_display = [
         'name', 'slug', 'business_type', 'plan_type',
@@ -130,7 +134,7 @@ class TenantAdmin(admin.ModelAdmin):
 
 
 @admin.register(OrganizationInvitation)
-class OrganizationInvitationAdmin(admin.ModelAdmin):
+class OrganizationInvitationAdmin(UnfoldModelAdmin):
     list_display = [
         'recipient_display', 'tenant', 'role', 'status_display',
         'invited_by', 'created_at', 'expires_at', 'token',
@@ -202,7 +206,7 @@ class OrganizationInvitationAdmin(admin.ModelAdmin):
 
 
 @admin.register(UserTenantMembership)
-class UserTenantMembershipAdmin(admin.ModelAdmin):
+class UserTenantMembershipAdmin(UnfoldModelAdmin):
     list_display = ['user', 'tenant', 'role', 'is_active', 'joined_at']
     list_filter = ['role', 'is_active', 'joined_at', 'tenant']
     search_fields = ['user__email', 'user__username', 'tenant__name']

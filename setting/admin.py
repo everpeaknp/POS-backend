@@ -2,8 +2,15 @@ from django import forms
 from django.contrib import admin
 from django.http import HttpResponseRedirect
 from django.urls import reverse
-from django.utils.html import format_html
+from django.utils.html import format_html, format_html_join
 from django.utils.safestring import mark_safe
+
+from unfold.admin import ModelAdmin as UnfoldModelAdmin
+from unfold.widgets import (
+    UnfoldAdminPasswordWidget,
+    UnfoldAdminSelectWidget,
+    UnfoldAdminTextInputWidget,
+)
 
 from setting.models import DefaultAppearanceSettings, EsewaSettings, GoogleOAuthSettings, SiteSettings
 
@@ -50,8 +57,14 @@ BORDER_RADIUS_CHOICES = [
 ]
 
 
-class ColorSwatchSelect(forms.Select):
-    """A <select> with a live color-swatch preview next to it."""
+class ColorSwatchSelect(UnfoldAdminSelectWidget):
+    """A <select> with a live color-swatch preview next to it.
+
+    Extends Unfold's own UnfoldAdminSelectWidget (not plain forms.Select)
+    so the <select> itself gets Unfold's Tailwind classes and styled
+    template — a bare forms.Select renders Django's unstyled default
+    template, which is why this looked like plain unstyled text before.
+    """
 
     def render(self, name, value, attrs=None, renderer=None):
         attrs = dict(attrs or {})
@@ -73,7 +86,7 @@ class ColorSwatchSelect(forms.Select):
         )
 
 
-class RadiusPreviewSelect(forms.Select):
+class RadiusPreviewSelect(UnfoldAdminSelectWidget):
     """A <select> with a live corner-radius preview box next to it."""
 
     def render(self, name, value, attrs=None, renderer=None):
@@ -116,10 +129,16 @@ class DefaultAppearanceSettingsForm(forms.ModelForm):
 
 
 @admin.register(DefaultAppearanceSettings)
-class DefaultAppearanceSettingsAdmin(admin.ModelAdmin):
+class DefaultAppearanceSettingsAdmin(UnfoldModelAdmin):
     """
     Singleton settings controlling the default theme applied to newly
     registered users on /settings/appearance. Only one row exists.
+
+    Uses unfold.admin.ModelAdmin (not vanilla admin.ModelAdmin) so plain
+    choice fields (theme, navbar_position) get Unfold's styled select
+    widget automatically — vanilla ModelAdmin leaves Select fields as
+    Django's bare, unstyled <select>, which is why this page's dropdowns
+    rendered as plain text with no visible input box.
     """
     list_display = ['theme', 'accent_color', 'sidebar_color', 'navbar_color', 'border_radius', 'navbar_position']
     form = DefaultAppearanceSettingsForm
@@ -163,7 +182,7 @@ class EsewaSettingsAdminForm(forms.ModelForm):
 
 
 @admin.register(EsewaSettings)
-class EsewaSettingsAdmin(admin.ModelAdmin):
+class EsewaSettingsAdmin(UnfoldModelAdmin):
     """Singleton admin for eSewa payment gateway configuration."""
 
     form = EsewaSettingsAdminForm
@@ -236,14 +255,11 @@ class EsewaSettingsAdmin(admin.ModelAdmin):
             checks.append(('Secret key set', '#16a34a'))
         else:
             checks.append(('Missing secret key', '#dc2626'))
-        badges = ''.join(
-            format_html(
-                '<span style="display:inline-block;margin:0 6px 6px 0;padding:4px 10px;border-radius:9999px;'
-                'font-size:12px;font-weight:600;color:#fff;background:{};">{}</span>',
-                color,
-                label,
-            )
-            for label, color in checks
+        badges = format_html_join(
+            '',
+            '<span style="display:inline-block;margin:0 6px 6px 0;padding:4px 10px;border-radius:9999px;'
+            'font-size:12px;font-weight:600;color:#fff;background:{};">{}</span>',
+            ((color, label) for label, color in checks),
         )
         return format_html('<div>{}</div>', badges)
 
@@ -265,10 +281,11 @@ class EsewaSettingsAdmin(admin.ModelAdmin):
 
     def _url_preview(self, url: str):
         if not url:
-            return format_html('<span style="color:#9ca3af;">Not configured</span>')
+            return format_html('<span class="text-base-400 dark:text-base-500">Not configured</span>')
         return format_html(
-            '<code style="display:block;padding:8px 12px;background:#f3f4f6;border-radius:6px;'
-            'font-size:12px;word-break:break-all;">{}</code>',
+            '<code class="block p-3 rounded-default border border-base-200 bg-base-50 '
+            'text-font-default-light dark:border-base-800 dark:bg-base-900 dark:text-font-default-dark '
+            'text-xs break-all">{}</code>',
             url,
         )
 
@@ -288,7 +305,7 @@ class EsewaSettingsAdmin(admin.ModelAdmin):
 class GoogleOAuthSettingsAdminForm(forms.ModelForm):
     client_secret = forms.CharField(
         required=False,
-        widget=forms.PasswordInput(render_value=True, attrs={'class': 'vTextField', 'style': 'width: 100%; max-width: 640px;'}),
+        widget=UnfoldAdminPasswordWidget(render_value=True, attrs={'style': 'width: 100%; max-width: 640px;'}),
         label='Client secret',
         help_text='Leave blank to keep the current secret.',
     )
@@ -298,7 +315,7 @@ class GoogleOAuthSettingsAdminForm(forms.ModelForm):
         fields = '__all__'
         exclude = ['client_secret_encrypted']
         widgets = {
-            'client_id': forms.TextInput(attrs={'style': 'width: 100%; max-width: 640px;'}),
+            'client_id': UnfoldAdminTextInputWidget(attrs={'style': 'width: 100%; max-width: 640px;'}),
         }
 
     def __init__(self, *args, **kwargs):
@@ -317,7 +334,7 @@ class GoogleOAuthSettingsAdminForm(forms.ModelForm):
 
 
 @admin.register(GoogleOAuthSettings)
-class GoogleOAuthSettingsAdmin(admin.ModelAdmin):
+class GoogleOAuthSettingsAdmin(UnfoldModelAdmin):
     """Singleton admin for Google OAuth on login and signup."""
 
     form = GoogleOAuthSettingsAdminForm
@@ -357,14 +374,11 @@ class GoogleOAuthSettingsAdmin(admin.ModelAdmin):
             checks.append(('Client secret set', '#16a34a'))
         else:
             checks.append(('Client secret optional', '#6b7280'))
-        badges = ''.join(
-            format_html(
-                '<span style="display:inline-block;margin:0 6px 6px 0;padding:4px 10px;border-radius:9999px;'
-                'font-size:12px;font-weight:600;color:#fff;background:{};">{}</span>',
-                color,
-                label,
-            )
-            for label, color in checks
+        badges = format_html_join(
+            '',
+            '<span style="display:inline-block;margin:0 6px 6px 0;padding:4px 10px;border-radius:9999px;'
+            'font-size:12px;font-weight:600;color:#fff;background:{};">{}</span>',
+            ((color, label) for label, color in checks),
         )
         return format_html('<div>{}</div>', badges)
 
@@ -373,12 +387,14 @@ class GoogleOAuthSettingsAdmin(admin.ModelAdmin):
         from django.conf import settings as django_settings
         frontend = getattr(django_settings, 'FRONTEND_URL', 'http://localhost:3000').rstrip('/')
         return format_html(
-            '<div style="padding:12px 14px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;'
-            'font-size:13px;line-height:1.7;color:#334155;">'
-            '<p style="margin:0 0 8px;"><strong>Authorized JavaScript origins</strong></p>'
-            '<code style="display:block;padding:8px;background:#fff;border-radius:6px;margin-bottom:12px;">{}</code>'
-            '<p style="margin:0 0 8px;">ID-token flow — redirect URIs are not required.</p>'
-            '<p style="margin:0;">After saving, the Google button appears on login and signup when enabled.</p>'
+            '<div class="p-3.5 rounded-default border border-base-200 bg-base-50 '
+            'text-font-default-light dark:border-base-800 dark:bg-base-900 dark:text-font-default-dark '
+            'text-[13px] leading-relaxed">'
+            '<p class="m-0 mb-2"><strong>Authorized JavaScript origins</strong></p>'
+            '<code class="block p-2 rounded-default border border-base-200 bg-white mb-3 '
+            'dark:border-base-700 dark:bg-base-800">{}</code>'
+            '<p class="m-0 mb-2">ID-token flow — redirect URIs are not required.</p>'
+            '<p class="m-0">After saving, the Google button appears on login and signup when enabled.</p>'
             '</div>',
             frontend,
         )
@@ -397,7 +413,7 @@ class GoogleOAuthSettingsAdmin(admin.ModelAdmin):
 
 
 @admin.register(SiteSettings)
-class SiteSettingsAdmin(admin.ModelAdmin):
+class SiteSettingsAdmin(UnfoldModelAdmin):
     """Singleton admin for site identity, branding, and SEO."""
 
     readonly_fields = [
@@ -448,31 +464,31 @@ class SiteSettingsAdmin(admin.ModelAdmin):
     def logo_preview(self, obj):
         if obj and obj.logo:
             return format_html(
-                '<img src="{}" alt="Logo" style="max-height:48px;max-width:200px;border:1px solid #e5e7eb;'
-                'border-radius:8px;padding:8px;background:#fff;">',
+                '<img src="{}" alt="Logo" class="max-h-12 max-w-[200px] p-2 rounded-default '
+                'border border-base-200 bg-white dark:border-base-700 dark:bg-base-800">',
                 obj.logo.url,
             )
-        return format_html('<span style="color:#9ca3af;">No logo uploaded</span>')
+        return format_html('<span class="text-base-400 dark:text-base-500">No logo uploaded</span>')
 
     @admin.display(description='Favicon preview')
     def favicon_preview(self, obj):
         if obj and obj.favicon:
             return format_html(
-                '<img src="{}" alt="Favicon" style="width:32px;height:32px;border:1px solid #e5e7eb;'
-                'border-radius:6px;padding:4px;background:#fff;">',
+                '<img src="{}" alt="Favicon" class="w-8 h-8 p-1 rounded-default '
+                'border border-base-200 bg-white dark:border-base-700 dark:bg-base-800">',
                 obj.favicon.url,
             )
-        return format_html('<span style="color:#9ca3af;">No favicon uploaded</span>')
+        return format_html('<span class="text-base-400 dark:text-base-500">No favicon uploaded</span>')
 
     @admin.display(description='Open Graph preview')
     def og_image_preview(self, obj):
         if obj and obj.og_image:
             return format_html(
-                '<img src="{}" alt="OG image" style="max-width:280px;border:1px solid #e5e7eb;'
-                'border-radius:8px;background:#fff;">',
+                '<img src="{}" alt="OG image" class="max-w-[280px] p-2 rounded-default '
+                'border border-base-200 bg-white dark:border-base-700 dark:bg-base-800">',
                 obj.og_image.url,
             )
-        return format_html('<span style="color:#9ca3af;">No OG image uploaded</span>')
+        return format_html('<span class="text-base-400 dark:text-base-500">No OG image uploaded</span>')
 
     def has_add_permission(self, request):
         return not SiteSettings.objects.exists()

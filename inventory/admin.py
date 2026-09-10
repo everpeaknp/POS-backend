@@ -1,46 +1,48 @@
 from django.contrib import admin
+
+from unfold.admin import ModelAdmin as UnfoldModelAdmin
 from .models import Category, UnitOfMeasure, Warehouse, Product, Stock, StockMovement
 from .bulk_pricing_models import BulkPricing
 from .pricing_models import CustomerSpecificPrice, PriceHistory
 
 
 @admin.register(Category)
-class CategoryAdmin(admin.ModelAdmin):
+class CategoryAdmin(UnfoldModelAdmin):
     list_display = ['name', 'parent', 'tenant', 'created_at']
     list_filter = ['tenant', 'parent']
     search_fields = ['name', 'description']
 
 
 @admin.register(UnitOfMeasure)
-class UnitOfMeasureAdmin(admin.ModelAdmin):
+class UnitOfMeasureAdmin(UnfoldModelAdmin):
     list_display = ['name', 'abbreviation', 'type', 'tenant']
     list_filter = ['type', 'tenant']
     search_fields = ['name', 'abbreviation']
 
 
 @admin.register(Warehouse)
-class WarehouseAdmin(admin.ModelAdmin):
+class WarehouseAdmin(UnfoldModelAdmin):
     list_display = ['name', 'location', 'manager', 'is_active', 'tenant']
     list_filter = ['is_active', 'tenant']
     search_fields = ['name', 'location']
 
 
 @admin.register(Product)
-class ProductAdmin(admin.ModelAdmin):
+class ProductAdmin(UnfoldModelAdmin):
     list_display = ['name', 'sku', 'category', 'cost_price', 'selling_price', 'status', 'tenant']
     list_filter = ['status', 'category', 'tenant']
     search_fields = ['name', 'sku', 'description']
 
 
 @admin.register(Stock)
-class StockAdmin(admin.ModelAdmin):
+class StockAdmin(UnfoldModelAdmin):
     list_display = ['product', 'warehouse', 'quantity', 'tenant']
     list_filter = ['warehouse', 'tenant']
     search_fields = ['product__name', 'product__sku']
 
 
 @admin.register(StockMovement)
-class StockMovementAdmin(admin.ModelAdmin):
+class StockMovementAdmin(UnfoldModelAdmin):
     list_display = ['product', 'warehouse', 'movement_type', 'quantity', 'performed_by', 'created_at']
     list_filter = ['movement_type', 'warehouse', 'created_at']
     search_fields = ['product__name', 'reason']
@@ -48,7 +50,7 @@ class StockMovementAdmin(admin.ModelAdmin):
 
 
 @admin.register(BulkPricing)
-class BulkPricingAdmin(admin.ModelAdmin):
+class BulkPricingAdmin(UnfoldModelAdmin):
     list_display = ['product', 'min_quantity', 'max_quantity', 'unit_price', 'discount_percent', 'is_active', 'tenant']
     list_filter = ['is_active', 'tenant', 'product__category']
     search_fields = ['product__name', 'product__sku']
@@ -75,7 +77,7 @@ class BulkPricingAdmin(admin.ModelAdmin):
 
 
 @admin.register(CustomerSpecificPrice)
-class CustomerSpecificPriceAdmin(admin.ModelAdmin):
+class CustomerSpecificPriceAdmin(UnfoldModelAdmin):
     list_display = ['customer', 'product', 'unit_price', 'min_quantity', 'valid_from', 'valid_until', 'is_active', 'tenant']
     list_filter = ['is_active', 'tenant', 'valid_from', 'valid_until']
     search_fields = ['customer__name', 'product__name', 'product__sku', 'notes']
@@ -109,7 +111,7 @@ class CustomerSpecificPriceAdmin(admin.ModelAdmin):
 
 
 @admin.register(PriceHistory)
-class PriceHistoryAdmin(admin.ModelAdmin):
+class PriceHistoryAdmin(UnfoldModelAdmin):
     list_display = [
         'product', 
         'change_type', 

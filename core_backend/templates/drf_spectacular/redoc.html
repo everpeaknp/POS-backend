@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    {% block head %}
+    <title>{{ title|default:"Redoc" }}</title>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><rect width=%22100%22 height=%22100%22 rx=%2222%22 fill=%22%237c5cff%22/></svg>">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Montserrat:wght@300;400;700&family=Roboto:wght@300;400;700&display=swap">
+    <style>
+      {# Redoc doesn't change outer page styles. #}
+      body { margin: 0; padding: 0; }
+
+      /* Same thin branded bar used on /api/docs/ — keeps navigation
+         consistent across both docs views without touching ReDoc's own
+         rendering. */
+      #khata-docs-bar {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 1rem;
+        padding: 0.65rem 1.25rem;
+        background: #0b0d12;
+        border-bottom: 1px solid #23262f;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+        font-size: 0.875rem;
+      }
+      #khata-docs-bar .brand {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        color: #e6e8eb;
+        font-weight: 600;
+        text-decoration: none;
+      }
+      #khata-docs-bar .brand .dot {
+        width: 7px;
+        height: 7px;
+        border-radius: 50%;
+        background: #22c55e;
+        box-shadow: 0 0 0 3px rgba(34, 197, 94, 0.15);
+        flex-shrink: 0;
+      }
+      #khata-docs-bar nav {
+        display: flex;
+        gap: 1.25rem;
+        flex-wrap: wrap;
+      }
+      #khata-docs-bar nav a {
+        color: #8b90a0;
+        text-decoration: none;
+      }
+      #khata-docs-bar nav a:hover,
+      #khata-docs-bar nav a:focus-visible {
+        color: #e6e8eb;
+      }
+    </style>
+    {% endblock head %}
+  </head>
+  <body>
+    {% block body %}
+    <div id="khata-docs-bar">
+      <a class="brand" href="/"><span class="dot"></span>{{ title|default:"API Docs" }}</a>
+      <nav>
+        <a href="/">Overview</a>
+        <a href="/api/docs/">Swagger UI</a>
+        <a href="/api/schema/">OpenAPI Schema</a>
+        <a href="/admin/">Django Admin</a>
+      </nav>
+    </div>
+    {% if settings %}
+    <div id="redoc-container"></div>
+    <script src="{{ redoc_standalone }}"></script>
+    <script>
+      const redocSettings = {{ settings|safe }};
+      Redoc.init("{{ schema_url }}", redocSettings, document.getElementById('redoc-container'))
+    </script>
+    {% else %}
+    <redoc spec-url="{{ schema_url }}"></redoc>
+    <script src="{{ redoc_standalone }}"></script>
+    {% endif %}
+    {% endblock body %}
+  </body>
+</html>

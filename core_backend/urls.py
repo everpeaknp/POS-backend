@@ -16,13 +16,25 @@ from core_backend.admin_views import (
     legacy_google_oauth_settings_change,
     platform_dashboard,
 )
+from core_backend.views import root
 from setting.admin_views import setting_hub
+from tenants.admin_views import business_analytics
 
 urlpatterns = [
-    # Admin — custom dashboards must use admin_view for full Jazzmin shell (sidebar)
+    # Backend/API landing page — this project's actual user-facing
+    # frontend is the separate Next.js app; this root just orients anyone
+    # (or any uptime check) who hits the Django server directly.
+    path('', root, name='root'),
+
+    # Admin — custom dashboards must use admin_view for full Unfold shell (sidebar)
     path('admin/platform/', admin.site.admin_view(platform_dashboard), name='admin_platform_dashboard'),
     path('admin/mail/dashboard/', admin.site.admin_view(mail_dashboard), name='admin_mail_dashboard'),
     path('admin/setting/', admin.site.admin_view(setting_hub), name='admin_setting_hub'),
+    path(
+        'admin/tenants/business-analytics/',
+        admin.site.admin_view(business_analytics),
+        name='admin_tenants_business_analytics',
+    ),
     path(
         'admin/billing/googleoauthsettings/<path:object_id>/change/',
         admin.site.admin_view(legacy_google_oauth_settings_change),

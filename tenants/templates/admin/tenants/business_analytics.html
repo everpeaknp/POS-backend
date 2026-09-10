@@ -1,0 +1,206 @@
+{% extends "admin/base_site.html" %}
+{% load static %}
+
+{% block content_title %}{{ title }}{% endblock %}
+
+{% block extrastyle %}
+{{ block.super }}
+<link rel="stylesheet" href="{% static 'admin/css/khata_dashboard.css' %}">
+{% endblock %}
+
+{% block content %}
+<div class="khata-analytics px-4 sm:px-6 lg:px-8 pt-6">
+  <div class="page-header">
+    <p>Businesses (workplaces) — growth, segmentation, and top performers.</p>
+  </div>
+
+  <div class="quick-actions">
+    <a href="{% url 'admin:tenants_tenant_changelist' %}" class="primary">All workplaces</a>
+    <a href="{% url 'admin:tenants_usertenantmembership_changelist' %}">Memberships</a>
+    <a href="{% url 'admin:index' %}">Platform dashboard</a>
+  </div>
+
+  <div class="kpi-grid">
+    <div class="kpi-card">
+      <div class="kpi-label">Businesses</div>
+      <div class="kpi-value">{{ stats.kpis.total_businesses }}</div>
+      <div class="kpi-sub">{{ stats.kpis.active_businesses }} active · {{ stats.kpis.new_businesses_month }} new this month</div>
+    </div>
+    <div class="kpi-card {% if stats.kpis.inactive_businesses %}warn{% endif %}">
+      <div class="kpi-label">Inactive</div>
+      <div class="kpi-value">{{ stats.kpis.inactive_businesses }}</div>
+      <div class="kpi-sub">of {{ stats.kpis.total_businesses }} total</div>
+    </div>
+    <div class="kpi-card info">
+      <div class="kpi-label">Organization accounts</div>
+      <div class="kpi-value">{{ stats.kpis.organization_businesses }}</div>
+      <div class="kpi-sub">{{ stats.kpis.personal_businesses }} personal</div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-label">Revenue from businesses</div>
+      <div class="kpi-value">Rs. {{ stats.kpis.revenue_from_businesses|floatformat:0 }}</div>
+      <div class="kpi-sub">{{ stats.kpis.businesses_with_payment }} paying businesses</div>
+    </div>
+  </div>
+
+  <div class="chart-grid">
+    <div class="chart-card">
+      <h3>New businesses (30 days)</h3>
+      <div class="chart-wrap"><canvas class="chart" data-type="line" data-value="{{ stats.charts.growth_unfold }}"></canvas></div>
+    </div>
+    <div class="chart-card">
+      <h3>Personal vs organization</h3>
+      <div class="chart-wrap"><canvas id="chartAccountTypes"></canvas></div>
+    </div>
+    <div class="chart-card">
+      <h3>Business type</h3>
+      <div class="chart-wrap"><canvas id="chartBusinessTypes"></canvas></div>
+    </div>
+    <div class="chart-card">
+      <h3>Plan distribution</h3>
+      <div class="chart-wrap"><canvas id="chartPlanTypes"></canvas></div>
+    </div>
+    <div class="chart-card">
+      <h3>Module adoption</h3>
+      <div class="chart-wrap"><canvas class="chart" data-type="bar" data-value="{{ stats.charts.modules_unfold }}"></canvas></div>
+    </div>
+  </div>
+
+  <div class="tables-grid">
+    <div class="chart-card">
+      <h3>Top businesses by members</h3>
+      <table class="data-table">
+        <thead><tr><th>Name</th><th>Type</th><th>Plan</th><th>Members</th></tr></thead>
+        <tbody>
+        {% for t in stats.top_by_members %}
+          <tr>
+            <td><a href="{% url 'admin:tenants_tenant_change' t.id %}">{{ t.name }}</a></td>
+            <td>{{ t.business_type|title }}</td>
+            <td>{{ t.plan_type|title }}</td>
+            <td>{{ t.member_count }}</td>
+          </tr>
+        {% empty %}
+          <tr><td colspan="4" style="color:#9ca3af;">No businesses yet</td></tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    <div class="chart-card">
+      <h3>Top businesses by revenue</h3>
+      <table class="data-table">
+        <thead><tr><th>Name</th><th>Type</th><th>Revenue</th></tr></thead>
+        <tbody>
+        {% for t in stats.top_by_revenue %}
+          <tr>
+            <td><a href="{% url 'admin:tenants_tenant_change' t.id %}">{{ t.name }}</a></td>
+            <td>{{ t.business_type|title }}</td>
+            <td>Rs. {{ t.total|floatformat:0 }}</td>
+          </tr>
+        {% empty %}
+          <tr><td colspan="3" style="color:#9ca3af;">No payments yet</td></tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+{{ charts|json_script:"business-charts" }}
+
+<!-- Unfold already loads Chart.js globally (a standard UMD build
+   exposing window.Chart), so this relies on that instead of loading a
+   second copy. There's no extrajs-equivalent block in Unfold's base
+   template (only extrastyle/extrahead, both in <head>), so the script
+   lives here in `content` instead of its own block. -->
+<script>
+(function () {
+  function showEmpty(id, message) {
+    var canvas = document.getElementById(id);
+    if (!canvas || !canvas.parentNode) return;
+    canvas.parentNode.innerHTML = '<div class="chart-empty">' + message + '</div>';
+  }
+
+  function getCanvas(id) {
+    var canvas = document.getElementById(id);
+    if (!canvas) return null;
+    var wrap = canvas.parentNode;
+    if (wrap) {
+      wrap.style.height = '260px';
+      wrap.style.minHeight = '260px';
+      wrap.style.position = 'relative';
+    }
+    canvas.style.display = 'block';
+    canvas.style.width = '100%';
+    canvas.style.height = '100%';
+    canvas.removeAttribute('height');
+    canvas.removeAttribute('width');
+    return canvas;
+  }
+
+  function initCharts() {
+    if (typeof Chart === 'undefined') {
+      ['chartAccountTypes', 'chartBusinessTypes', 'chartPlanTypes']
+        .forEach(function (id) { showEmpty(id, 'Chart library failed to load. Hard-refresh the page.'); });
+      return;
+    }
+
+    var el = document.getElementById('business-charts');
+    if (!el) return;
+
+    var charts;
+    try {
+      charts = JSON.parse(el.textContent);
+    } catch (err) {
+      console.error('Business charts JSON failed', err);
+      return;
+    }
+
+    var palette = ['#ad46ff', '#8b5cf6', '#c27aff', '#3b82f6', '#22c55e', '#06b6d4', '#f59e0b', '#9ca3af'];
+
+    Chart.defaults.font.family = "'Plus Jakarta Sans', system-ui, sans-serif";
+    Chart.defaults.color = '#9ca3af';
+
+    function doughnut(id, labels, values, emptyMessage) {
+      if (!labels || !labels.length) {
+        showEmpty(id, emptyMessage || 'No data yet');
+        return;
+      }
+      var canvas = getCanvas(id);
+      if (!canvas) return;
+      try {
+        new Chart(canvas, {
+          type: 'doughnut',
+          data: {
+            labels: labels,
+            datasets: [{ data: values, backgroundColor: palette.slice(0, labels.length), borderWidth: 0 }],
+          },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            cutout: '62%',
+            plugins: { legend: { position: 'bottom', labels: { boxWidth: 10, padding: 12, font: { size: 11 } } } },
+          },
+        });
+      } catch (err) {
+        console.error(id, err);
+        showEmpty(id, 'Could not render chart');
+      }
+    }
+
+    doughnut('chartAccountTypes', charts.account_types.labels, charts.account_types.values, 'No businesses yet');
+    doughnut('chartBusinessTypes', charts.business_types.labels, charts.business_types.values, 'No businesses yet');
+    doughnut('chartPlanTypes', charts.plan_types.labels, charts.plan_types.values, 'No businesses yet');
+  }
+
+  // No SPA-navigation re-init hook is needed here: this project no
+  // longer uses Turbo Drive (removed along with Jazzmin in favor of
+  // Unfold), so every admin page load is a genuine full page load and
+  // this script just runs once, normally.
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', initCharts);
+  } else {
+    initCharts();
+  }
+})();
+</script>
+{% endblock %}

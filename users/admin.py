@@ -1,6 +1,10 @@
 from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin as BaseUserAdmin
 from django.contrib.auth.models import Group
+
+from unfold.admin import ModelAdmin as UnfoldModelAdmin
+from unfold.forms import AdminPasswordChangeForm, UserChangeForm, UserCreationForm
+
 from .models import User, AuditLog
 from .permission_models import RolePermission
 
@@ -11,7 +15,7 @@ admin.site.unregister(Group)
 
 
 @admin.register(RolePermission)
-class RolePermissionAdmin(admin.ModelAdmin):
+class RolePermissionAdmin(UnfoldModelAdmin):
     list_display = ['tenant', 'role', 'module', 'action', 'allowed']
     list_filter = ['tenant', 'role', 'module', 'action', 'allowed']
     search_fields = ['tenant__name']
@@ -29,7 +33,14 @@ class RolePermissionAdmin(admin.ModelAdmin):
 
 
 @admin.register(User)
-class UserAdmin(BaseUserAdmin):
+class UserAdmin(UnfoldModelAdmin, BaseUserAdmin):
+    # Unfold's own styled forms for the add/change/password-change pages —
+    # UnfoldModelAdmin alone doesn't retrofit these since BaseUserAdmin
+    # sets its own `form`/`add_form`/`change_password_form` defaults.
+    form = UserChangeForm
+    add_form = UserCreationForm
+    change_password_form = AdminPasswordChangeForm
+
     list_display = [
         'username', 'email', 'tenant', 'role',
         'is_active', 'is_superuser', 'date_joined',
@@ -40,7 +51,7 @@ class UserAdmin(BaseUserAdmin):
 
     fieldsets = (
         (None, {'fields': ('username', 'password')}),
-        ('Personal info', {'fields': ('first_name', 'last_name', 'email', 'phone')}),
+        ('Personal info', {'fields': ('first_name', 'last_name', 'email', 'phone', 'avatar')}),
         ('Customer application', {
             'fields': ('tenant', 'role'),
             'description': (
@@ -74,7 +85,7 @@ class UserAdmin(BaseUserAdmin):
 
 
 @admin.register(AuditLog)
-class AuditLogAdmin(admin.ModelAdmin):
+class AuditLogAdmin(UnfoldModelAdmin):
     list_display = ['created_at', 'user', 'tenant', 'action', 'module', 'description']
     list_filter = ['action', 'module', 'tenant', 'created_at']
     search_fields = ['description', 'user__username', 'user__email', 'tenant__name']

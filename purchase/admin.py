@@ -1,4 +1,7 @@
 from django.contrib import admin
+
+from unfold.admin import ModelAdmin as UnfoldModelAdmin
+from unfold.admin import TabularInline as UnfoldTabularInline
 from .models import (
     Supplier, PurchaseRequest, PurchaseRequestLine,
     PurchaseOrder, PurchaseOrderLine, PurchaseInvoice, DebitNote
@@ -6,14 +9,14 @@ from .models import (
 
 
 @admin.register(Supplier)
-class SupplierAdmin(admin.ModelAdmin):
+class SupplierAdmin(UnfoldModelAdmin):
     list_display = ['name', 'phone', 'email', 'type', 'status', 'credit_limit', 'created_at']
     list_filter = ['status', 'type', 'payment_terms']
     search_fields = ['name', 'phone', 'email', 'pan']
     ordering = ['-created_at']
 
 
-class PurchaseRequestLineInline(admin.TabularInline):
+class PurchaseRequestLineInline(UnfoldTabularInline):
     model = PurchaseRequestLine
     extra = 1
     fields = ['product', 'description', 'quantity', 'estimated_unit_price', 'estimated_amount']
@@ -21,7 +24,7 @@ class PurchaseRequestLineInline(admin.TabularInline):
 
 
 @admin.register(PurchaseRequest)
-class PurchaseRequestAdmin(admin.ModelAdmin):
+class PurchaseRequestAdmin(UnfoldModelAdmin):
     list_display = ['request_number', 'date', 'requested_by', 'department', 'status', 'priority', 'estimated_amount', 'created_at']
     list_filter = ['status', 'priority', 'department']
     search_fields = ['request_number', 'requested_by__username', 'department']
@@ -29,7 +32,7 @@ class PurchaseRequestAdmin(admin.ModelAdmin):
     inlines = [PurchaseRequestLineInline]
 
 
-class PurchaseOrderLineInline(admin.TabularInline):
+class PurchaseOrderLineInline(UnfoldTabularInline):
     model = PurchaseOrderLine
     extra = 1
     fields = ['product', 'description', 'quantity', 'unit_price', 'tax_percent', 'amount', 'received_quantity']
@@ -37,7 +40,7 @@ class PurchaseOrderLineInline(admin.TabularInline):
 
 
 @admin.register(PurchaseOrder)
-class PurchaseOrderAdmin(admin.ModelAdmin):
+class PurchaseOrderAdmin(UnfoldModelAdmin):
     list_display = ['po_number', 'date', 'supplier', 'status', 'total', 'expected_delivery_date', 'created_at']
     list_filter = ['status', 'date']
     search_fields = ['po_number', 'supplier__name', 'reference']
@@ -46,7 +49,7 @@ class PurchaseOrderAdmin(admin.ModelAdmin):
 
 
 @admin.register(PurchaseInvoice)
-class PurchaseInvoiceAdmin(admin.ModelAdmin):
+class PurchaseInvoiceAdmin(UnfoldModelAdmin):
     list_display = ['invoice_number', 'date', 'due_date', 'supplier', 'amount', 'paid_amount', 'status', 'created_at']
     list_filter = ['status', 'date']
     search_fields = ['invoice_number', 'supplier__name']
@@ -54,7 +57,7 @@ class PurchaseInvoiceAdmin(admin.ModelAdmin):
 
 
 @admin.register(DebitNote)
-class DebitNoteAdmin(admin.ModelAdmin):
+class DebitNoteAdmin(UnfoldModelAdmin):
     list_display = ['debit_note_number', 'date', 'supplier', 'invoice', 'amount', 'reason', 'status', 'created_at']
     list_filter = ['status', 'reason', 'date']
     search_fields = ['debit_note_number', 'supplier__name']

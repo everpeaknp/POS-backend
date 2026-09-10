@@ -3,11 +3,14 @@ POS Admin Configuration
 """
 
 from django.contrib import admin
+
+from unfold.admin import ModelAdmin as UnfoldModelAdmin
+from unfold.admin import TabularInline as UnfoldTabularInline
 from .models import POSSession, POSDiscount, POSTransaction, POSTransactionLine, POSDailySalesReport
 
 
 @admin.register(POSSession)
-class POSSessionAdmin(admin.ModelAdmin):
+class POSSessionAdmin(UnfoldModelAdmin):
     list_display = ['session_number', 'cashier', 'opened_at', 'closed_at', 'status', 'total_sales', 'cash_variance', 'tenant']
     list_filter = ['status', 'cashier', 'opened_at', 'tenant']
     search_fields = ['session_number', 'cashier__username']
@@ -38,7 +41,7 @@ class POSSessionAdmin(admin.ModelAdmin):
 
 
 @admin.register(POSDiscount)
-class POSDiscountAdmin(admin.ModelAdmin):
+class POSDiscountAdmin(UnfoldModelAdmin):
     list_display = ['name', 'code', 'discount_type', 'discount_value', 'apply_to', 'is_active', 'tenant']
     list_filter = ['discount_type', 'apply_to', 'is_active', 'tenant']
     search_fields = ['name', 'code', 'description']
@@ -64,7 +67,7 @@ class POSDiscountAdmin(admin.ModelAdmin):
     )
 
 
-class POSTransactionLineInline(admin.TabularInline):
+class POSTransactionLineInline(UnfoldTabularInline):
     model = POSTransactionLine
     extra = 0
     readonly_fields = ['product_name', 'product_sku', 'line_total']
@@ -72,7 +75,7 @@ class POSTransactionLineInline(admin.TabularInline):
 
 
 @admin.register(POSTransaction)
-class POSTransactionAdmin(admin.ModelAdmin):
+class POSTransactionAdmin(UnfoldModelAdmin):
     list_display = ['transaction_number', 'date', 'customer_display', 'total', 'payment_method', 'status', 'cashier', 'tenant']
     list_filter = ['status', 'payment_method', 'date', 'tenant']
     search_fields = ['transaction_number', 'customer__name', 'customer_name']
@@ -113,7 +116,7 @@ class POSTransactionAdmin(admin.ModelAdmin):
 
 
 @admin.register(POSDailySalesReport)
-class POSDailySalesReportAdmin(admin.ModelAdmin):
+class POSDailySalesReportAdmin(UnfoldModelAdmin):
     list_display = ['date', 'cashier', 'warehouse', 'total_transactions', 'net_sales', 'tenant']
     list_filter = ['date', 'cashier', 'warehouse', 'tenant']
     search_fields = ['cashier__username', 'warehouse__name']

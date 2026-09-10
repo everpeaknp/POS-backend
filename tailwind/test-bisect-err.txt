@@ -1,3 +1,0 @@
-[3m[1m[34m≈[39m[22m[23m tailwindcss [34mv4.3.3[39m
-
-Done in [32m44ms[39m

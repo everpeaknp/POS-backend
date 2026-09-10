@@ -4,6 +4,9 @@ from django.http import HttpResponseRedirect
 from django.urls import reverse
 from django.utils.html import format_html
 
+from unfold.admin import ModelAdmin as UnfoldModelAdmin
+from unfold.widgets import UnfoldAdminCheckboxSelectMultipleWidget, UnfoldAdminTextareaWidget
+
 from core_backend.platform_constants import AVAILABLE_MODULES
 from billing.models import BillingPayment, Subscription, SubscriptionPlan, UserSubscription
 from billing import services as billing_services
@@ -12,14 +15,14 @@ from billing import services as billing_services
 class SubscriptionPlanAdminForm(forms.ModelForm):
     features_text = forms.CharField(
         required=False,
-        widget=forms.Textarea(attrs={'rows': 8, 'style': 'width: 100%; max-width: 640px;'}),
+        widget=UnfoldAdminTextareaWidget(attrs={'rows': 8, 'style': 'width: 100%; max-width: 640px;'}),
         label='Features',
         help_text='One feature per line. Shown on /settings/billing.',
     )
     module_choices = forms.MultipleChoiceField(
         choices=AVAILABLE_MODULES,
         required=False,
-        widget=forms.CheckboxSelectMultiple,
+        widget=UnfoldAdminCheckboxSelectMultipleWidget,
         label='Included modules',
         help_text='Modules enabled when a customer subscribes to this plan.',
     )
@@ -52,7 +55,7 @@ class SubscriptionPlanAdminForm(forms.ModelForm):
 
 
 @admin.register(SubscriptionPlan)
-class SubscriptionPlanAdmin(admin.ModelAdmin):
+class SubscriptionPlanAdmin(UnfoldModelAdmin):
     form = SubscriptionPlanAdminForm
     list_display = [
         'name', 'code', 'price', 'max_users_display', 'max_orgs_display',
@@ -107,11 +110,13 @@ class SubscriptionPlanAdmin(admin.ModelAdmin):
         popular = ' · Most popular' if obj.is_popular else ''
         modules = ', '.join(obj.modules or []) or '—'
         return format_html(
-            '<div style="padding:12px 14px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;'
+            '<div class="border-base-200 dark:border-base-800 bg-base-50 dark:bg-base-900 '
+            'text-font-default-light dark:text-font-default-dark" '
+            'style="padding:12px 14px;border:1px solid;border-radius:8px;'
             'font-size:13px;line-height:1.6;">'
             '<strong>{}</strong> — NPR {}/month<br>'
-            '<span style="color:#64748b;">{}</span><br>'
-            '<span style="color:#64748b;">Modules: {}</span>'
+            '<span class="text-base-500 dark:text-base-400">{}</span><br>'
+            '<span class="text-base-500 dark:text-base-400">Modules: {}</span>'
             '</div>',
             obj.name,
             '0' if obj.price == 0 else f'{obj.price:,.2f}',
@@ -121,7 +126,7 @@ class SubscriptionPlanAdmin(admin.ModelAdmin):
 
 
 @admin.register(UserSubscription)
-class UserSubscriptionAdmin(admin.ModelAdmin):
+class UserSubscriptionAdmin(UnfoldModelAdmin):
     list_display = [
         'account_user', 'account_email', 'plan_code', 'status',
         'current_period_end', 'auto_renew', 'updated_at',
@@ -144,7 +149,7 @@ class UserSubscriptionAdmin(admin.ModelAdmin):
 
 
 @admin.register(Subscription)
-class SubscriptionAdmin(admin.ModelAdmin):
+class SubscriptionAdmin(UnfoldModelAdmin):
     list_display = ['account_holder', 'workspace_name', 'plan_code', 'status', 'current_period_end', 'auto_renew']
     list_filter = ['status', 'plan_code']
     search_fields = ['tenant__name', 'tenant__created_by__email', 'tenant__created_by__username']
@@ -193,7 +198,7 @@ class SubscriptionAdmin(admin.ModelAdmin):
 
 
 @admin.register(BillingPayment)
-class BillingPaymentAdmin(admin.ModelAdmin):
+class BillingPaymentAdmin(UnfoldModelAdmin):
     list_display = [
         'transaction_uuid', 'account_holder', 'plan_code', 'amount',
         'status', 'payment_method', 'completed_at',

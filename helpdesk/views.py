@@ -12,7 +12,7 @@ from .serializers import (
     validate_attachment_file,
 )
 
-REOPENABLE_STATUSES = ('resolved', 'closed')
+REOPENABLE_STATUSES = ('resolved',)
 
 
 class SupportTicketViewSet(viewsets.ModelViewSet):
@@ -88,6 +88,12 @@ class SupportTicketViewSet(viewsets.ModelViewSet):
             msgs = ticket.messages.select_related('author').order_by('created_at')
             serializer = SupportTicketMessageSerializer(msgs, many=True, context={'request': request})
             return Response(serializer.data)
+
+        if ticket.status == 'closed':
+            return Response(
+                {'detail': 'This ticket is closed and no longer accepts new messages.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         create_serializer = SupportTicketMessageCreateSerializer(data=request.data)
         create_serializer.is_valid(raise_exception=True)

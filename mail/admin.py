@@ -7,6 +7,8 @@ from django.shortcuts import get_object_or_404, render
 from django.urls import path, reverse
 from django.utils.html import escape, format_html
 
+from unfold.admin import ModelAdmin as UnfoldModelAdmin
+
 from mail.models import (
     EmailBranding, EmailLog, EmailQueue, EmailTemplate,
     MarketingCampaign, SmtpSettings,
@@ -43,7 +45,7 @@ class SmtpSettingsAdminForm(forms.ModelForm):
 
 
 @admin.register(SmtpSettings)
-class SmtpSettingsAdmin(admin.ModelAdmin):
+class SmtpSettingsAdmin(UnfoldModelAdmin):
     form = SmtpSettingsAdminForm
     change_form_template = 'admin/mail/smtp_change_form.html'
 
@@ -68,9 +70,9 @@ class SmtpSettingsAdmin(admin.ModelAdmin):
     @admin.display(description='Connection status')
     def smtp_health(self, obj):
         if not obj.enabled:
-            return format_html('<span style="color:#6b7280;">SMTP disabled</span>')
+            return format_html('<span class="text-base-500 dark:text-base-400">SMTP disabled</span>')
         return format_html(
-            '<span style="color:#6b7280;">Use <strong>Test SMTP connection</strong> below to verify.</span>'
+            '<span class="text-base-500 dark:text-base-400">Use <strong>Test SMTP connection</strong> below to verify.</span>'
         )
 
     def get_urls(self):
@@ -110,7 +112,7 @@ class SmtpSettingsAdmin(admin.ModelAdmin):
 
 
 @admin.register(EmailBranding)
-class EmailBrandingAdmin(admin.ModelAdmin):
+class EmailBrandingAdmin(UnfoldModelAdmin):
     readonly_fields = ['updated_at']
     fieldsets = (
         ('Brand', {'fields': ('company_name', 'logo_url', 'primary_color', 'secondary_color')}),
@@ -130,7 +132,7 @@ class EmailBrandingAdmin(admin.ModelAdmin):
 
 
 @admin.register(EmailTemplate)
-class EmailTemplateAdmin(admin.ModelAdmin):
+class EmailTemplateAdmin(UnfoldModelAdmin):
     change_form_template = 'admin/mail/emailtemplate_change_form.html'
     list_display = ['name', 'slug', 'category', 'is_active', 'is_system', 'updated_at']
     list_filter = ['category', 'is_active', 'is_system']
@@ -154,19 +156,20 @@ class EmailTemplateAdmin(admin.ModelAdmin):
     def email_preview(self, obj):
         if not obj or not obj.pk:
             return format_html(
-                '<p style="color:#6b7280;margin:0;">Save the template to see a live preview with sample data.</p>'
+                '<p class="text-base-500 dark:text-base-400" style="margin:0;">Save the template to see a live preview with sample data.</p>'
             )
         preview_url = reverse('admin:mail_emailtemplate_preview', args=[obj.pk])
         return format_html(
             '<div id="email-template-preview" data-preview-url="{}">'
-            '<p style="margin:0 0 8px;color:#374151;font-size:13px;">'
+            '<p class="text-base-600 dark:text-base-300" style="margin:0 0 8px;font-size:13px;">'
             '<strong>Subject:</strong> <span id="email-preview-subject">—</span></p>'
             '<p style="margin:0 0 10px;">'
             '<button type="button" class="button" id="email-preview-refresh">Refresh preview</button>'
-            '<span style="margin-left:10px;color:#6b7280;font-size:12px;">'
+            '<span class="text-base-500 dark:text-base-400" style="margin-left:10px;font-size:12px;">'
             'Renders current editor content with sample placeholder data</span></p>'
             '<iframe id="email-preview-frame" title="Email preview" '
-            'style="width:100%;min-height:520px;border:1px solid #d1d5db;border-radius:8px;background:#fff;">'
+            'class="border-base-300 dark:border-base-700" '
+            'style="width:100%;min-height:520px;border:1px solid;border-radius:8px;background:#fff;">'
             '</iframe></div>',
             preview_url,
         )
@@ -242,7 +245,7 @@ class EmailTemplateAdmin(admin.ModelAdmin):
 
 
 @admin.register(MarketingCampaign)
-class MarketingCampaignAdmin(admin.ModelAdmin):
+class MarketingCampaignAdmin(UnfoldModelAdmin):
     list_display = ['name', 'template', 'segment', 'status', 'scheduled_at', 'sent_at', 'created_at']
     list_filter = ['status', 'segment']
     search_fields = ['name']
@@ -298,7 +301,7 @@ class MarketingCampaignAdmin(admin.ModelAdmin):
 
 
 @admin.register(EmailQueue)
-class EmailQueueAdmin(admin.ModelAdmin):
+class EmailQueueAdmin(UnfoldModelAdmin):
     list_display = ['to_email', 'subject', 'status', 'retry_count', 'scheduled_for', 'sent_at']
     list_filter = ['status']
     search_fields = ['to_email', 'subject']
@@ -316,7 +319,7 @@ class EmailQueueAdmin(admin.ModelAdmin):
 
 
 @admin.register(EmailLog)
-class EmailLogAdmin(admin.ModelAdmin):
+class EmailLogAdmin(UnfoldModelAdmin):
     list_display = ['to_email', 'subject', 'status', 'template_slug', 'open_count', 'click_count', 'created_at']
     list_filter = ['status', 'category', 'template_slug']
     search_fields = ['to_email', 'subject']
