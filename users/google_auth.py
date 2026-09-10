@@ -1,5 +1,6 @@
 """Google OAuth sign-in using ID tokens from Google Identity Services."""
 
+import requests as http_requests
 from django.contrib.auth import get_user_model
 from google.auth.transport import requests as google_requests
 from google.oauth2 import id_token
@@ -16,6 +17,53 @@ def get_google_oauth_config():
         'enabled': bool(settings.enabled and settings.client_id),
         'client_id': settings.client_id or '',
     }
+
+
+def exchange_code_for_id_token(code: str, client_id: str, client_secret: str) -> dict:
+    """
+    Exchange authorization code for tokens using Google's token endpoint.
+    Returns the ID token claims after verification.
+    """
+    token_endpoint = 'https://oauth2.googleapis.com/token'
+    
+    token_data = {
+        'code': code,
+        'client_id': client_id,
+        'client_secret': client_secret,
+        'redirect_uri': 'postmessage',  # For popup flow
+        'grant_type': 'authorization_code',
+    }
+    
+    try:
+        response = http_requests.post(token_endpoint, data=token_data, timeout=10)
+        response.raise_for_status()
+        tokens = response.json()
+    except http_requests.RequestException as exc:
+        raise serializers.ValidationError({
+            'detail': f'Failed to exchange code for tokens: {exc}'
+        }) from exc
+    
+    if 'id_token' not in tokens:
+        raise serializers.ValidationError({
+            'detail': 'No ID token received from Google'
+        })
+    
+    # Verify the ID token
+    try:
+        idinfo = id_token.verify_oauth2_token(
+            tokens['id_token'],
+            google_requests.Request(),
+            client_id,
+        )
+    except ValueError as exc:
+        raise serializers.ValidationError({
+            'detail': f'Invalid ID token: {exc}'
+        }) from exc
+    
+    if idinfo.get('iss') not in ('accounts.google.com', 'https://accounts.google.com'):
+        raise serializers.ValidationError({'detail': 'Invalid Google token issuer.'})
+    
+    return idinfo
 
 
 def verify_google_id_token(token: str) -> dict:

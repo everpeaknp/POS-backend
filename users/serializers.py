@@ -479,13 +479,49 @@ class AccountDeleteSerializer(serializers.Serializer):
 
 
 class GoogleAuthSerializer(serializers.Serializer):
-    credential = serializers.CharField(write_only=True)
+    credential = serializers.CharField(write_only=True, required=False, allow_blank=True, allow_null=True)
+    code = serializers.CharField(write_only=True, required=False, allow_blank=True, allow_null=True)
 
     def validate(self, attrs):
-        from users.google_auth import verify_google_id_token, authenticate_or_create_google_user
+        from users.google_auth import (
+            verify_google_id_token,
+            exchange_code_for_id_token,
+            authenticate_or_create_google_user,
+            get_google_oauth_config,
+        )
         from users.auth_tokens import issue_tokens_for_user
+        from setting.models import GoogleOAuthSettings
 
-        idinfo = verify_google_id_token(attrs['credential'])
+        credential = attrs.get('credential')
+        code = attrs.get('code')
+
+        if not credential and not code:
+            raise serializers.ValidationError({
+                'detail': 'Either credential or code must be provided'
+            })
+
+        # Handle authorization code flow (popup)
+        if code:
+            config = get_google_oauth_config()
+            if not config['enabled']:
+                raise serializers.ValidationError({'detail': 'Google sign-in is not enabled.'})
+            
+            settings = GoogleOAuthSettings.get_solo()
+            client_secret = settings.get_client_secret()
+            if not client_secret:
+                raise serializers.ValidationError({
+                    'detail': 'Google OAuth is not fully configured on the server'
+                })
+            
+            idinfo = exchange_code_for_id_token(
+                code,
+                config['client_id'],
+                settings.client_secret
+            )
+        else:
+            # Handle ID token flow (direct credential)
+            idinfo = verify_google_id_token(credential)
+
         user = authenticate_or_create_google_user(idinfo)
         request = self.context.get('request')
         return issue_tokens_for_user(user, request)

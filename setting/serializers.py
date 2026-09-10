@@ -1,6 +1,22 @@
 from rest_framework import serializers
 
-from setting.models import SiteSettings
+from setting.models import DefaultAppearanceSettings, SiteSettings
+
+
+class DefaultAppearanceSettingsPublicSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = DefaultAppearanceSettings
+        fields = [
+            'theme',
+            'navbar_position',
+            'accent_color',
+            'sidebar_color',
+            'navbar_color',
+            'border_radius',
+            'compact_mode',
+            'smooth_animations',
+            'high_contrast',
+        ]
 
 
 class SiteSettingsPublicSerializer(serializers.ModelSerializer):
