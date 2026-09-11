@@ -435,3 +435,87 @@ class PaymentMethod(TenantModel):
     
     def __str__(self):
         return f"{self.name} ({self.get_method_type_display()})"
+
+
+class CashAccount(models.Model):
+    """
+    Cash Account - one per user (cashier)
+    Separate from Bank Accounts, tracks physical cash held by each user
+    """
+    user = models.OneToOneField(
+        'users.User',
+        on_delete=models.CASCADE,
+        related_name='cash_account',
+        help_text='The user/cashier who owns this cash account'
+    )
+    tenant = models.ForeignKey(
+        'tenants.Tenant',
+        on_delete=models.CASCADE,
+        related_name='cash_accounts'
+    )
+    balance = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        default=Decimal('0.00'),
+        help_text='Current cash balance for this user'
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        db_table = 'accounting_cash_accounts'
+        unique_together = [['tenant', 'user']]
+        indexes = [
+            models.Index(fields=['tenant', 'user']),
+        ]
+    
+    def __str__(self):
+        return f"Cash Account - {self.user.username} (Rs. {self.balance})"
+
+
+class CashTransaction(models.Model):
+    """
+    Cash Transaction Log - audit trail for cash account movements
+    Similar to BankTransaction but for cash accounts
+    """
+    TRANSACTION_TYPES = [
+        ('Credit', 'Credit (Money In)'),
+        ('Debit', 'Debit (Money Out)'),
+    ]
+    
+    tenant = models.ForeignKey(
+        'tenants.Tenant',
+        on_delete=models.CASCADE,
+        related_name='cash_transactions'
+    )
+    cash_account = models.ForeignKey(
+        CashAccount,
+        on_delete=models.CASCADE,
+        related_name='transactions'
+    )
+    date = models.DateField()
+    reference = models.CharField(
+        max_length=100,
+        help_text='Transaction reference (e.g., POS-000123)'
+    )
+    description = models.TextField()
+    type = models.CharField(max_length=10, choices=TRANSACTION_TYPES)
+    debit = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal('0.00'))
+    credit = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal('0.00'))
+    balance = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        help_text='Cash account balance after this transaction'
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    
+    class Meta:
+        db_table = 'accounting_cash_transactions'
+        ordering = ['-date', '-created_at']
+        indexes = [
+            models.Index(fields=['tenant', 'cash_account', 'date']),
+            models.Index(fields=['reference']),
+        ]
+    
+    def __str__(self):
+        return f"{self.type} - Rs. {self.credit or self.debit} - {self.reference}"

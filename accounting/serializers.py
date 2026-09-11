@@ -1,6 +1,6 @@
 from rest_framework import serializers
 from decimal import Decimal
-from .models import Account, JournalEntry, JournalLine, BankAccount, BankTransaction, TaxRule, VATReturn, FiscalYear, PaymentMethod
+from .models import Account, JournalEntry, JournalLine, BankAccount, BankTransaction, TaxRule, VATReturn, FiscalYear, PaymentMethod, CashAccount, CashTransaction
 from accounting.utils import generate_entry_number
 
 
@@ -334,3 +334,31 @@ class PaymentMethodSerializer(serializers.ModelSerializer):
             'created_at', 'updated_at'
         ]
         read_only_fields = ['id', 'linked_account_name', 'linked_account_code', 'method_type_display', 'created_at', 'updated_at']
+
+
+
+class CashAccountSerializer(serializers.ModelSerializer):
+    """Serializer for Cash Accounts"""
+    user_name = serializers.CharField(source='user.get_full_name', read_only=True)
+    user_username = serializers.CharField(source='user.username', read_only=True)
+    last_transaction_date = serializers.DateField(read_only=True)
+    
+    class Meta:
+        model = CashAccount
+        fields = [
+            'id', 'user', 'user_name', 'user_username', 'tenant', 'balance',
+            'last_transaction_date', 'created_at', 'updated_at'
+        ]
+        read_only_fields = ['id', 'user_name', 'user_username', 'balance', 'last_transaction_date', 'created_at', 'updated_at']
+
+
+class CashTransactionSerializer(serializers.ModelSerializer):
+    """Serializer for Cash Transactions"""
+    
+    class Meta:
+        model = CashTransaction
+        fields = [
+            'id', 'cash_account', 'date', 'reference', 'description', 'type',
+            'debit', 'credit', 'balance', 'created_at'
+        ]
+        read_only_fields = ['id', 'balance', 'created_at']

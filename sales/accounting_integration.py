@@ -239,11 +239,59 @@ def post_pos_sale(transaction, lines_with_products):
     # Determine the account to debit based on payment method
     cash_account = None
     
+    # Handle CASH payments separately - update user's CashAccount
+    if transaction.payment_method == 'cash' and transaction.cashier:
+        from accounting.models import CashAccount, CashTransaction
+        from django.db import transaction as db_transaction
+        from django.db.models import F
+        from django.utils import timezone
+        
+        # Get or create cash account for this cashier
+        cash_account_obj, created = CashAccount.objects.get_or_create(
+            tenant=transaction.tenant,
+            user=transaction.cashier,
+            defaults={'balance': Decimal('0.00')}
+        )
+        
+        # Atomically update balance and create transaction record
+        with db_transaction.atomic():
+            # Lock the cash account row for update
+            cash_account_obj = CashAccount.objects.select_for_update().get(pk=cash_account_obj.pk)
+            
+            # Calculate new balance for the transaction record
+            new_balance = cash_account_obj.balance + transaction.total
+            
+            try:
+                # Create cash transaction record
+                CashTransaction.objects.create(
+                    tenant=transaction.tenant,
+                    cash_account=cash_account_obj,
+                    date=transaction.date.date() if hasattr(transaction.date, 'date') else transaction.date,
+                    reference=transaction.transaction_number,
+                    description=f'POS Sale via Cash',
+                    type='Credit',
+                    debit=Decimal('0.00'),
+                    credit=transaction.total,
+                    balance=new_balance,
+                )
+                # Update cash account balance using F() expression
+                CashAccount.objects.filter(pk=cash_account_obj.pk).update(
+                    balance=F('balance') + transaction.total,
+                    updated_at=timezone.now()
+                )
+            except Exception as e:
+                import logging
+                logging.getLogger(__name__).error(f'Failed to create cash transaction: {e}')
+                raise
+        
+        # Still use GL Cash account for journal entries (existing behavior)
+        from accounting.services import get_cash_account
+        cash_account = get_cash_account(transaction.tenant)
     # Check if payment_method_ref is set (new payment method system)
-    if hasattr(transaction, 'payment_method_ref') and transaction.payment_method_ref:
+    elif hasattr(transaction, 'payment_method_ref') and transaction.payment_method_ref:
         cash_account = transaction.payment_method_ref.linked_account
     # Check if it's a digital wallet payment (eSewa/Khalti/FonePay) or bank transfer
-    elif transaction.payment_method in ['esewa', 'khalti', 'fonepay', 'bank_transfer']:
+    elif transaction.payment_method in ['esewa', 'khalti', 'fonepay', 'bank_transfer', 'card']:
         from accounting.models import BankAccount
         
         bank_account = None
@@ -264,7 +312,7 @@ def post_pos_sale(transaction, lines_with_products):
                 ).first()
         
         # For bank_transfer, check if POSSettings has a linked bank account, otherwise use any active account
-        elif transaction.payment_method == 'bank_transfer':
+        elif transaction.payment_method in ['bank_transfer', 'card']:
             # Try to get the linked bank account from POS Settings first
             from pos.models import POSSettings
             pos_settings = POSSettings.get_for_tenant(transaction.tenant)

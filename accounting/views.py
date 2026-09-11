@@ -14,7 +14,7 @@ from django.db import models
 from decimal import Decimal
 from datetime import date
 
-from accounting.models import Account, JournalEntry, JournalLine, BankAccount, BankTransaction, TaxRule, VATReturn, FiscalYear, PaymentMethod
+from accounting.models import Account, JournalEntry, JournalLine, BankAccount, BankTransaction, TaxRule, VATReturn, FiscalYear, PaymentMethod, CashAccount, CashTransaction
 from accounting.reports import (
     build_account_distribution,
     build_income_expense_breakdown,
@@ -41,7 +41,7 @@ from .utils import (
 from .serializers import (
     AccountSerializer, JournalEntrySerializer, BankAccountSerializer,
     BankTransactionSerializer, TaxRuleSerializer, VATReturnSerializer, FiscalYearSerializer,
-    PaymentMethodSerializer,
+    PaymentMethodSerializer, CashAccountSerializer, CashTransactionSerializer,
 )
 
 
@@ -1318,3 +1318,52 @@ class FiscalYearViewSet(viewsets.ModelViewSet):
             metadata={'fiscal_year_id': fy.id, 'label': fy.label},
         )
         return Response(FiscalYearSerializer(fy).data)
+
+
+
+@extend_schema_view(
+    list=extend_schema(tags=['Accounting - Cash Accounts'], summary='List cash accounts'),
+    retrieve=extend_schema(tags=['Accounting - Cash Accounts'], summary='Get cash account details'),
+)
+class CashAccountViewSet(viewsets.ReadOnlyModelViewSet):
+    """ViewSet for Cash Accounts - Read-only"""
+    serializer_class = CashAccountSerializer
+    permission_classes = [DynamicModulePermission]
+    permission_module = 'accounting'
+    filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
+    search_fields = ['user__username', 'user__first_name', 'user__last_name']
+    ordering_fields = ['balance', 'created_at', 'updated_at']
+    ordering = ['-updated_at']
+    
+    def get_queryset(self):
+        from django.db.models import Max
+        tenant = get_request_tenant(self.request.user)
+        if not tenant:
+            return CashAccount.objects.none()
+        
+        queryset = CashAccount.objects.annotate(
+            last_transaction_date=Max('transactions__date')
+        ).filter(tenant=tenant)
+        
+        # Admin sees all cash accounts, others see only their own
+        if self.request.user.role != 'admin':
+            queryset = queryset.filter(user=self.request.user)
+        
+        return queryset
+    
+    @extend_schema(
+        tags=['Accounting - Cash Accounts'],
+        summary='Get cash account statement',
+        description='Returns all transactions for this cash account'
+    )
+    @action(detail=True, methods=['get'])
+    def statement(self, request, pk=None):
+        """Get cash account statement"""
+        cash_account = self.get_object()
+        transactions = CashTransaction.objects.filter(
+            tenant=get_request_tenant(request.user),
+            cash_account=cash_account
+        ).order_by('-date', '-id')
+        
+        serializer = CashTransactionSerializer(transactions, many=True)
+        return Response(serializer.data)

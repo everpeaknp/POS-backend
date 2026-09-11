@@ -2,7 +2,7 @@ from django.urls import path
 from .views import (
     AccountViewSet, JournalEntryViewSet, BankAccountViewSet,
     BankTransactionViewSet, TaxRuleViewSet, VATReturnViewSet, FiscalYearViewSet,
-    PaymentMethodViewSet,
+    PaymentMethodViewSet, CashAccountViewSet,
 )
 
 urlpatterns = [
@@ -42,6 +42,11 @@ urlpatterns = [
     path('bank-accounts/<int:pk>/', BankAccountViewSet.as_view({'get': 'retrieve', 'put': 'update', 'patch': 'partial_update', 'delete': 'destroy'}), name='bank-account-detail'),
     path('bank-accounts/<int:pk>/statement/', BankAccountViewSet.as_view({'get': 'statement'}), name='bank-account-statement'),
     path('bank-accounts/<int:pk>/complete-reconciliation/', BankAccountViewSet.as_view({'post': 'complete_reconciliation_action'}), name='bank-account-complete-reconciliation'),
+    
+    # Cash Accounts
+    path('cash-accounts/', CashAccountViewSet.as_view({'get': 'list'}), name='cash-account-list'),
+    path('cash-accounts/<int:pk>/', CashAccountViewSet.as_view({'get': 'retrieve'}), name='cash-account-detail'),
+    path('cash-accounts/<int:pk>/statement/', CashAccountViewSet.as_view({'get': 'statement'}), name='cash-account-statement'),
     
     # Bank Transactions
     path('bank-transactions/', BankTransactionViewSet.as_view({'get': 'list', 'post': 'create'}), name='bank-transaction-list'),
