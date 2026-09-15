@@ -1,9 +1,16 @@
 from django.contrib import admin, messages
 from django.utils.html import format_html
+from django.contrib import admin
 
-from unfold.admin import ModelAdmin as UnfoldModelAdmin
-from unfold.admin import StackedInline as UnfoldStackedInline
-from unfold.admin import TabularInline as UnfoldTabularInline
+# Fallback to standard Django admin if unfold is not installed
+try:
+    from unfold.admin import ModelAdmin as UnfoldModelAdmin
+    from unfold.admin import StackedInline as UnfoldStackedInline
+    from unfold.admin import TabularInline as UnfoldTabularInline
+except ImportError:
+    UnfoldModelAdmin = admin.ModelAdmin
+    UnfoldStackedInline = admin.StackedInline
+    UnfoldTabularInline = admin.TabularInline
 
 from billing.account_limits import count_tenant_members
 from billing.models import Subscription

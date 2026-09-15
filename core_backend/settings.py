@@ -42,7 +42,7 @@ CORS_ALLOW_HEADERS = (
 # Application definition
 INSTALLED_APPS = [
     # Unfold must be before django.contrib.admin
-    'unfold',
+    # 'unfold',  # Disabled: optional admin UI enhancement, not installed
 
     'django.contrib.admin',
     'django.contrib.auth',
@@ -58,8 +58,8 @@ INSTALLED_APPS = [
     'corsheaders',
     'drf_spectacular',
     'django_filters',
-    'cloudinary_storage',
-    'cloudinary',
+    # 'cloudinary_storage',  # Disabled: optional for cloud uploads
+    # 'cloudinary',  # Disabled: optional for cloud uploads
     
     # Local apps - Core
     'core_backend',

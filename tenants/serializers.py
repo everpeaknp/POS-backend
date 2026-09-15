@@ -181,7 +181,7 @@ class TenantCreateSerializer(serializers.ModelSerializer):
         validated_data['plan_type'] = 'free'
         validated_data['is_active'] = True
         
-        # Set account_type based on modules if not already provided
+        # Only infer account_type from modules if it was NOT explicitly provided by frontend
         if 'account_type' not in validated_data or not validated_data.get('account_type'):
             modules = validated_data.get('active_modules', [])
             if 'personal_finance' in modules:
@@ -191,7 +191,9 @@ class TenantCreateSerializer(serializers.ModelSerializer):
             elif 'hardware' in modules:
                 validated_data['account_type'] = 'hardware'
             else:
+                # Default to 'organization' only if no special modules detected
                 validated_data['account_type'] = 'organization'
+        # else: account_type was provided by frontend - preserve it as-is (e.g., 'retail')
 
         tenant = super().create(validated_data)
 
