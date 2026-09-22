@@ -106,6 +106,13 @@ class Tenant(models.Model):
         help_text="List of active module names: ['construction', 'hardware', 'retail']"
     )
     
+    # Disabled Features
+    disabled_features = models.JSONField(
+        default=list,
+        blank=True,
+        help_text="Sidebar sub-feature hrefs turned off within an active module, e.g. ['/dashboard/sales/credit-notes']"
+    )
+    
     # Timestamps
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
